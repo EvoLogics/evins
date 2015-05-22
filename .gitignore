@@ -1,0 +1,8 @@
+ebin/*.beam
+*~
+src/*~
+src/core/*~
+tmp
+bugs
+src/fsm.app.src
+_rel

@@ -1,0 +1,14 @@
+{application,evins,
+             [{description,"EvoLogics intelligent Networking Software framework"},
+              {vsn,""},
+              {modules,[fsm_app]},
+              {registered,[]},
+              {applications,[
+			     kernel,
+			     stdlib,
+			     sasl,
+			     jsx,
+			     cowboy
+			    ]},
+              {mod,{fsm_app,["/usr/local/etc/fsm.conf"]}},
+              {start_phases,[]}]}.
