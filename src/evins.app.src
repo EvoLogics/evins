@@ -1,6 +1,6 @@
 {application,evins,
              [{description,"EvoLogics intelligent Networking Software framework"},
-              {vsn,""},
+              {vsn,"0.1"},
               {modules,[fsm_app]},
               {registered,[]},
               {applications,[
