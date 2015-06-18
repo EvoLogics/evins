@@ -38,6 +38,8 @@
 	 handle_handle_max_address/3, handle_handle_yar/3, handle_final/3,
 	 handle_request_pid/3, handle_handle_pid/3]).
 
+-define(EMSG, <<"ERROR WRONG FORMAT\r\n">>).
+
 %% states 
 %% idle | alarm | request_mode | handle_modem | request_local_address | request_max_address | handle_yar
 %% | handle_max_address | final
@@ -113,7 +115,7 @@
 	       ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> SM.
+init(SM)       -> evar(SM, raw_buffer, <<"">>), SM.
 trans()        -> ?TRANS.
 final()        -> [final].
 init_event()   -> internal.
@@ -146,15 +148,40 @@ handle_event(MM, SM, Term) ->
 	    exit(Reason);
 	{connected} ->
 	    SM;
-	{raw,Bin} ->
-	    case {SM#sm.state, Bin} of
-		{idle, <<"ERROR WRONG FORMAT\r\n">>} ->
+	{raw,Bin} when SM#sm.state == idle ->
+	    Raw_buffer = evar(SM,raw_buffer),
+	    Buffer = <<Raw_buffer/binary,Bin/binary>>,
+	    case match_message(Buffer,?EMSG) of
+		{ok,_,_} ->
 		    %% force to clean waitsync state
+		    evar(SM, raw_buffer, <<"">>),
 		    SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
 		    fsm:run_event(MM, SM1#sm{event=error}, {});
-		_ -> SM
-	    end
+		{more,_,Match_size} ->
+		    Part = binary:part(Buffer,{byte_size(Buffer),-Match_size}),
+		    evar(SM, raw_buffer, Part),
+		    ?INFO(?ID, "Partially matched part: ~p~n", [Part]),
+		    SM
+	    end;
+	{raw,_} ->
+	    SM
     end.
+
+match_message(Bin,Msg) when is_binary(Bin), is_binary(Msg) ->
+    match_message_helper(binary_to_list(Bin),binary_to_list(Msg),binary_to_list(Msg),0,0).
+
+match_message_helper([],_,Msg,Match_size,Unmatch_offset) when length(Msg) == Match_size ->
+    {ok,Unmatch_offset,Match_size};
+match_message_helper([],_,_,Match_size,Unmatch_offset) ->
+    {more,Unmatch_offset,Match_size};
+match_message_helper(Bin,[],Msg,Match_size,Unmatch_offset) ->
+    match_message_helper(Bin,Msg,Msg,0,Unmatch_offset+Match_size);
+match_message_helper([First|Bin_tail],[First|Msg_tail],Msg,Match_size,Unmatch_offset) ->
+    match_message_helper(Bin_tail,Msg_tail,Msg,Match_size+1,Unmatch_offset);
+match_message_helper(Bin,_,Msg,0,Unmatch_offset) ->
+    match_message_helper(tl(Bin),Msg,Msg,0,Unmatch_offset+1);
+match_message_helper(Bin,_,Msg,Match_size,Unmatch_offset) ->
+    match_message_helper(Bin,Msg,Msg,0,Unmatch_offset+Match_size).
 
 handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
     case Event of
