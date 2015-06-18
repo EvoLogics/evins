@@ -36,6 +36,7 @@
 %% iface = {IP,Port,Type} | {Port, PortSettings}
 
 -define(ANSWER_TIMEOUT, {s, 1}).
+-define(WAKEUP_TIMEOUT, {s, 6}).
 
 -define(IMSH_ANSWER_DELAY, 700000).
 -define(IMSH_SECOND_ANSWER_DELAY, 600000).
