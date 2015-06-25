@@ -79,137 +79,138 @@
 %% TODO: Max number protocol is p7, temporaly all bigger than 7, are equal 7
 
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-    fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+  fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
-    CurrentProtocol = parse_conf(ArgS, Share),
-    lists:foldr(fun(X,_)-> [PIDTmp, ParamsTmp, SMTmp] = conf_fsm(X), conf_protocol(CurrentProtocol, Share, X, PIDTmp, ParamsTmp, SMTmp) end, [], ?LIST_ALL_PROTOCOLS),
+  CurrentProtocol = parse_conf(ArgS, Share),
+  lists:foldr(fun(X,_)-> [PIDTmp, ParamsTmp, SMTmp] = conf_fsm(X), conf_protocol(CurrentProtocol, Share, X, PIDTmp, ParamsTmp, SMTmp) end, [], ?LIST_ALL_PROTOCOLS),
 
-    Module = conf_fsm(CurrentProtocol),
-    if Module =:= error ->  ?ERROR(Mod_ID, "!!! No NL protocol ID!~n", []);
-       true ->
-	    [_,_, SMN] = Module,
-        [{local_address, La}] = ets:lookup(Share, local_address),
-        DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
-	    Roles = fsm_worker:role_info(Role_IDs, [alh, nl]),
-        {ok,Ref} = dets:open_file(DetsName,[]),
-	    [#sm{roles = Roles, dets_share = Ref, module = SMN}]
-    end.
+  Module = conf_fsm(CurrentProtocol),
+  if Module =:= error ->
+    ?ERROR(Mod_ID, "!!! No NL protocol ID!~n", []);
+  true ->
+    [_,_, SMN] = Module,
+    [{local_address, La}] = ets:lookup(Share, local_address),
+    DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
+    Roles = fsm_worker:role_info(Role_IDs, [alh, nl]),
+    {ok,Ref} = dets:open_file(DetsName,[]),
+    [#sm{roles = Roles, dets_share = Ref, module = SMN}]
+  end.
 %%-------------------------------------- Parse config file ---------------------------------
 parse_conf(ArgS, Share) ->
-    [NL_Protocol] =     [Protocol_name   || {nl_protocol, Protocol_name} <- ArgS],
-    Addr_set =          [Addrs           || {local_addr, Addrs} <- ArgS],
-    Bll_addrs =         [Addrs           || {bll_addrs, Addrs} <- ArgS],
-    Routing_addrs =     [Addrs           || {routing, Addrs} <- ArgS],
-    Max_hops_set =      [Count_hops      || {max_hops, Count_hops} <- ArgS],
-    Max_rc_set  =       [Retry_count     || {max_retry_count, Retry_count} <- ArgS],
-    Prob_set  =         [P               || {probability, P} <- ArgS],
+  [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
+  Addr_set      = [Addrs          || {local_addr, Addrs} <- ArgS],
+  Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
+  Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
+  Max_hops_set  = [Count_hops     || {max_hops, Count_hops} <- ArgS],
+  Max_rc_set    = [Retry_count    || {max_retry_count, Retry_count} <- ArgS],
+  Prob_set      = [P              || {probability, P} <- ArgS],
 
-    Tmo_wv =            [Time            || {tmo_wv, Time} <- ArgS],
-    STmo_path =         [Time            || {stmo_path, Time} <- ArgS],
-    WTmo_path_set =     [Time            || {wtmo_path, Time} <- ArgS],
-    Tmo_Neighbour_set = [Time            || {tmo_neighbour, Time} <- ArgS],
-    Path_life_set     = [Time            || {path_life, Time} <- ArgS],
-    Neighbour_life_set= [Time            || {neighbour_life, Time} <- ArgS],
-    Tmo_dbl_wv_set =    [Time            || {tmo_dbl_wv, Time} <- ArgS],
+  Tmo_wv            = [Time || {tmo_wv, Time} <- ArgS],
+  STmo_path         = [Time || {stmo_path, Time} <- ArgS],
+  WTmo_path_set     = [Time || {wtmo_path, Time} <- ArgS],
+  Tmo_Neighbour_set = [Time || {tmo_neighbour, Time} <- ArgS],
+  Path_life_set     = [Time || {path_life, Time} <- ArgS],
+  Neighbour_life_set= [Time || {neighbour_life, Time} <- ArgS],
+  Tmo_dbl_wv_set    = [Time || {tmo_dbl_wv, Time} <- ArgS],
 
-    Addr                             = set_params(Addr_set, 1),
-    RTT                              = set_params(Max_hops_set, 60),
-    Max_Retry_count                  = set_params(Max_rc_set, 2),
-    WTmo_path                        = set_params(WTmo_path_set, 30),
-    Tmo_Neighbour                    = set_params(Tmo_Neighbour_set, 30),
-    Tmo_dbl_wv                       = set_params(Tmo_dbl_wv_set, 10),
-    Path_life                        = set_params(Path_life_set, 120),
-    Neighbour_life                   = set_params(Neighbour_life_set, 120),
+  Addr            = set_params(Addr_set, 1),
+  RTT             = set_params(Max_hops_set, 60),
+  Max_Retry_count = set_params(Max_rc_set, 2),
+  WTmo_path       = set_params(WTmo_path_set, 30),
+  Tmo_Neighbour   = set_params(Tmo_Neighbour_set, 30),
+  Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, 10),
+  Path_life       = set_params(Path_life_set, 120),
+  Neighbour_life  = set_params(Neighbour_life_set, 120),
 
-    {Wwv_tmo_start, Wwv_tmo_end}     = set_timeouts(Tmo_wv, {1,3}),
-    {Wack_tmo_start, Wack_tmo_end}   = set_timeouts(Tmo_wv, {1,3}),
-    {Spath_tmo_start, Spath_tmo_end} = set_timeouts(STmo_path, {2,4}),
-    Blacklist                        = set_blacklist(Bll_addrs, []),
-    Routing_table                    = set_routing(Routing_addrs, NL_Protocol, 255),
-    Probability                      = set_params(Prob_set, {0.4, 0.9}),
+  {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {1,3}),
+  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wv, {1,3}),
+  {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {2,4}),
+  Blacklist                       = set_blacklist(Bll_addrs, []),
+  Routing_table                   = set_routing(Routing_addrs, NL_Protocol, 255),
+  Probability                     = set_params(Prob_set, {0.4, 0.9}),
 
-    ets:insert(Share, [{nl_protocol, NL_Protocol}]),
-    ets:insert(Share, [{routing_table, Routing_table}]),
-    ets:insert(Share, [{local_address, Addr}]),
-    ets:insert(Share, [{blacklist, Blacklist}]),
-    ets:insert(Share, [{wwv_tmo,   {Wwv_tmo_start, Wwv_tmo_end} }]),
-    ets:insert(Share, [{wack_tmo,  {Wack_tmo_start, Wack_tmo_end} }]),
-    ets:insert(Share, [{spath_tmo, {Spath_tmo_start, Spath_tmo_end} }]),
-    ets:insert(Share, [{wpath_tmo, WTmo_path}]),
-    ets:insert(Share, [{neighbour_tmo, Tmo_Neighbour}]),
-    ets:insert(Share, [{max_rtt, 2 * RTT}]),
-    ets:insert(Share, [{path_life, Path_life}]),
-    ets:insert(Share, [{neighbour_life, Neighbour_life}]),
-    ets:insert(Share, [{max_pkg_id, 255}]),
-    ets:insert(Share, [{rtt, RTT}]),
-    ets:insert(Share, [{max_retry_count, Max_Retry_count}]),
-    ets:insert(Share, [{send_wv_dbl_tmo, Tmo_dbl_wv}]),
-    ets:insert(Share, [{probability, Probability}]),
-    NL_Protocol.
+  ets:insert(Share, [{nl_protocol, NL_Protocol}]),
+  ets:insert(Share, [{routing_table, Routing_table}]),
+  ets:insert(Share, [{local_address, Addr}]),
+  ets:insert(Share, [{blacklist, Blacklist}]),
+  ets:insert(Share, [{wwv_tmo,   {Wwv_tmo_start, Wwv_tmo_end} }]),
+  ets:insert(Share, [{wack_tmo,  {Wack_tmo_start, Wack_tmo_end} }]),
+  ets:insert(Share, [{spath_tmo, {Spath_tmo_start, Spath_tmo_end} }]),
+  ets:insert(Share, [{wpath_tmo, WTmo_path}]),
+  ets:insert(Share, [{neighbour_tmo, Tmo_Neighbour}]),
+  ets:insert(Share, [{max_rtt, 2 * RTT}]),
+  ets:insert(Share, [{path_life, Path_life}]),
+  ets:insert(Share, [{neighbour_life, Neighbour_life}]),
+  ets:insert(Share, [{max_pkg_id, 255}]),
+  ets:insert(Share, [{rtt, RTT}]),
+  ets:insert(Share, [{max_retry_count, Max_Retry_count}]),
+  ets:insert(Share, [{send_wv_dbl_tmo, Tmo_dbl_wv}]),
+  ets:insert(Share, [{probability, Probability}]),
+  NL_Protocol.
 
 conf_fsm(Protocol) ->
-    [{_, Decr}] = lists:filter(fun({PN,_})-> PN =:= Protocol end, ?PROTOCOL_CONF),
-    Decr.
+  [{_, Decr}] = lists:filter(fun({PN,_})-> PN =:= Protocol end, ?PROTOCOL_CONF),
+  Decr.
 
 conf_protocol(CurrentProtocol, Share, Protocol, Pid, Params, SMName) ->
-    if (CurrentProtocol =:= Protocol) ->
-	    ets:insert(Share, [{pid, Pid}]),
-	    ets:insert(Share, [{np,  Protocol}]);
-       true -> nothing
-    end,
-    parse_pr_params(Share, Params, Protocol),
-    SMName.
+  if (CurrentProtocol =:= Protocol) ->
+      ets:insert(Share, [{pid, Pid}]),
+      ets:insert(Share, [{np,  Protocol}]);
+    true -> nothing
+  end,
+  parse_pr_params(Share, Params, Protocol),
+  SMName.
 
 parse_pr_params(Share, Params, Protocol) ->
-    NP = #pr_conf{},
-    List_config = lists:foldr(
-		    fun(LP, A) ->
-			    R = lists:filter(fun(P)-> P =:= LP end, tuple_to_list(Params)),
-			    if R =/= [] -> [PR] = R, [PR | A];
-			       true -> A
-			    end
-		    end, [], ?LIST_ALL_PARAMS),
-    Config = lists:foldr(fun(X, NPP) ->
-				  setelement(get_nfield(X), NPP, true)
-			 end, NP, List_config),
-    ets:insert(Share, [{ {protocol_config, Protocol}, Config }]).
+  NP = #pr_conf{},
+  List_config = lists:foldr(
+    fun(LP, A) ->
+      R = lists:filter(fun(P)-> P =:= LP end, tuple_to_list(Params)),
+      if R =/= [] -> [PR] = R, [PR | A];
+      true -> A
+      end
+    end, [], ?LIST_ALL_PARAMS),
+  Config = lists:foldr(fun(X, NPP) ->
+      setelement(get_nfield(X), NPP, true)
+    end, NP, List_config),
+  ets:insert(Share, [{ {protocol_config, Protocol}, Config }]).
 
 get_nfield(Param) ->
-    {_, FNumber}=
-	lists:foldr(
-	  fun(X, {Found, Num}) ->
-		  case Param of
-		      X -> {f, Num};
-		      _ when Found =:= nf -> {Found, Num + 1};
-		      _ -> {Found, Num}
-		  end
-	  end, {nf, 1}, lists:reverse(?LIST_ALL_PARAMS)),
+  {_, FNumber}=
+    lists:foldr(
+      fun(X, {Found, Num}) ->
+        case Param of
+          X -> {f, Num};
+          _ when Found =:= nf -> {Found, Num + 1};
+          _ -> {Found, Num}
+        end
+      end, {nf, 1}, lists:reverse(?LIST_ALL_PARAMS)),
     FNumber + 1.
 
 set_blacklist(Bll_addrs, Default) ->
-    case Bll_addrs of
-        [] -> Default;
-        [Addrs] -> if is_tuple(Addrs) -> tuple_to_list(Addrs); true -> error end
-    end.
+  case Bll_addrs of
+    [] -> Default;
+    [Addrs] -> if is_tuple(Addrs) -> tuple_to_list(Addrs); true -> error end
+  end.
 
 set_params(Param, Default) ->
-    case Param of
-        []     -> Default;
-        [Value]-> Value
-    end.
+  case Param of
+    []     -> Default;
+    [Value]-> Value
+  end.
 
 set_timeouts(Tmo, Defaults) ->
-    case Tmo of
-        [] -> Defaults;
-        [{Start, End}]-> {Start, End}
-    end.
+  case Tmo of
+    [] -> Defaults;
+    [{Start, End}]-> {Start, End}
+  end.
 
 set_routing(Routing_addrs, NL_Protocol, Default) ->
-    case NL_Protocol of
-        _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs=/=[])) ->
-	    [TupleRouting] = Routing_addrs, [{255,255} | tuple_to_list(TupleRouting)];
-        _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs=:=[])) ->
-	    io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. \n!!! As a defualt value will be set 255 broadcast"), Default;
-        _ -> Default
-    end.
+  case NL_Protocol of
+    _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs=/=[])) ->
+      [TupleRouting] = Routing_addrs, [{255,255} | tuple_to_list(TupleRouting)];
+    _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs=:=[])) ->
+      io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. \n!!! As a defualt value will be set 255 broadcast"), Default;
+    _ -> Default
+  end.

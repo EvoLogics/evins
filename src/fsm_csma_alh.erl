@@ -103,37 +103,38 @@
 %%  ul - upper layer
 
 -define(TRANS, [
-		{idle, [
-			{internal, 	  idle},
-			{error,		  idle},
-			{answer_timeout,  idle},
-			{sendend,	  idle},
-			{recvend,	  idle},
-			{backoff_timeout, write_alh},
-			{rcv_ul,	  write_alh},
-			{sendstart,	  sp},
-			{recvstart,	  sp}
-		       ]},
+                {idle,
+                 [{internal, idle},
+                  {error, idle},
+                  {answer_timeout, idle},
+                  {sendend, idle},
+                  {recvend, idle},
+                  {backoff_timeout, write_alh},
+                  {rcv_ul, write_alh},
+                  {sendstart, sp},
+                  {recvstart, sp}
+                 ]},
 
-		{write_alh, [
-			     {data_sent, idle}
-			    ]},
+                {write_alh,
+                 [{data_sent, idle}
+                 ]},
 
-		{sp, [{answer_timeout,	sp},
-		      {backoff_timeout,	sp},
-		      {rcv_ul,		sp},
-		      {sendstart,	sp},
-		      {recvstart,	sp},
-		      {sendend,		idle},
-		      {recvend,		idle}
-		     ]},
+                {sp,
+                 [{answer_timeout, sp},
+                  {backoff_timeout, sp},
+                  {rcv_ul,  sp},
+                  {sendstart, sp},
+                  {recvstart, sp},
+                  {sendend, idle},
+                  {recvend, idle}
+                 ]},
 
-		{alarm,
-		 [{final, alarm}
-		 ]},
+                {alarm,
+                 [{final, alarm}
+                 ]},
 
-		{final, []}
-	       ]).
+                {final, []}
+               ]).
 
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       -> SM.
@@ -144,114 +145,113 @@ stop(_SM)      -> ok.
 
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
-    ?INFO(?ID, "HANDLE EVENT~n", []),
-    ?TRACE(?ID, "~p~n", [Term]),
-    case Term of
-	{timeout, Event} ->
-	    ?INFO(?ID, "timeout ~140p~n", [Event]),
-	    fsm:run_event(MM, SM#sm{event=Event}, {});
-	{connected} ->
-	    ?INFO(?ID, "connected ~n", []),
-	    SM;
-	{rcv_ul, {other, Msg}} ->
-	    fsm:send_at_command(SM, {at, binary_to_list(Msg), ""});
-	{rcv_ul, {command, C}} ->
-	    fsm:send_at_command(SM, {at, binary_to_list(C), ""});
-	{rcv_ul, {at,_,_,_,_}} ->
-	    fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
-	    SM;
-	{rcv_ul, Msg={at,_PID,_,_,_,_}} ->
-	    fsm:run_event(MM, SM#sm{event=rcv_ul}, {rcv_ul, Msg});
-	{async,_,{recvims,_,_,_,_,_,_,_,_,_}} ->
-	    SM;
-	{async, PID, Tuple={recvim,_,_,_,_,_,_,_,_,_}} ->
-	    [H | T] = tuple_to_list(Tuple),
-	    BPid=
-		case PID of
-		    {pid, NPid} -> <<"p", (integer_to_binary(NPid))/binary>>
-		end,
-	    fsm:cast(SM, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
-	    SM;
-	{async, Tuple} ->
-	    fsm:cast(SM, alh, {send, {async, Tuple} }),
-	    case Tuple of
-		{sendstart,_,_,_,_} -> fsm:run_event(MM, SM#sm{event=sendstart},{});
-		{sendend,_,_,_,_}   -> fsm:run_event(MM, SM#sm{event=sendend},{});
-		{recvstart} 	    -> fsm:run_event(MM, SM#sm{event=recvstart},{});
-		{recvend,_,_,_,_}   -> fsm:run_event(MM, SM#sm{event=recvend},{});
-		_ -> SM
-	    end;
-	{sync, _Req,Answer} ->
-	    fsm:cast(SM, alh, {send, {sync, Answer} }),
-	    SM;
-	UUg ->
-	    ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
-	    SM
-    end.
+  ?INFO(?ID, "HANDLE EVENT~n", []),
+  ?TRACE(?ID, "~p~n", [Term]),
+  case Term of
+    {timeout, Event} ->
+      ?INFO(?ID, "timeout ~140p~n", [Event]),
+      fsm:run_event(MM, SM#sm{event=Event}, {});
+    {connected} ->
+      ?INFO(?ID, "connected ~n", []),
+      SM;
+    {rcv_ul, {other, Msg}} ->
+      fsm:send_at_command(SM, {at, binary_to_list(Msg), ""});
+    {rcv_ul, {command, C}} ->
+      fsm:send_at_command(SM, {at, binary_to_list(C), ""});
+    {rcv_ul, {at,_,_,_,_}} ->
+      fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
+      SM;
+    {rcv_ul, Msg={at,_PID,_,_,_,_}} ->
+      fsm:run_event(MM, SM#sm{event=rcv_ul}, {rcv_ul, Msg});
+    {async,_,{recvims,_,_,_,_,_,_,_,_,_}} ->
+      SM;
+    {async, PID, Tuple={recvim,_,_,_,_,_,_,_,_,_}} ->
+      [H | T] = tuple_to_list(Tuple),
+      BPid=
+      case PID of
+        {pid, NPid} -> <<"p", (integer_to_binary(NPid))/binary>>
+      end,
+      fsm:cast(SM, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
+      SM;
+    {async, Tuple} ->
+      fsm:cast(SM, alh, {send, {async, Tuple} }),
+      case Tuple of
+        {sendstart,_,_,_,_} -> fsm:run_event(MM, SM#sm{event=sendstart},{});
+        {sendend,_,_,_,_} -> fsm:run_event(MM, SM#sm{event=sendend},{});
+        {recvstart}       -> fsm:run_event(MM, SM#sm{event=recvstart},{});
+        {recvend,_,_,_,_} -> fsm:run_event(MM, SM#sm{event=recvend},{});
+        _ -> SM
+      end;
+    {sync, _Req,Answer} ->
+      fsm:cast(SM, alh, {send, {sync, Answer} }),
+      SM;
+    UUg ->
+      ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
+      SM
+  end.
 
 handle_idle(_MM, SM, Term) ->
-    ?TRACE(?ID, "~120p~n", [Term]),
-    case SM#sm.event of
-	internal -> init_backoff(SM);
-	_ -> nothing
-    end,
-    SM#sm{event = eps}.
+  ?TRACE(?ID, "~120p~n", [Term]),
+  case SM#sm.event of
+    internal -> init_backoff(SM);
+    _ -> nothing
+  end,
+  SM#sm{event = eps}.
 
 handle_sp(_MM, SM, Term) ->
-    ?TRACE(?ID, "handle_sp ~120p~n", [Term]),
-    case Term of
-	{rcv_ul, Msg} ->
-	    nl_mac_hf:insertETS(SM, current_msg, Msg),
-	    case fsm:check_timeout(SM, backoff_timeout) of
-		false ->
-		    Backoff_tmp = change_backoff(SM, increment),
-		    fsm:set_timeout(SM#sm{event=eps}, {s, Backoff_tmp}, backoff_timeout);
-		true  ->
-		    fsm:cast(SM, alh,  {send, {sync, "OK"} }),
-		    SM#sm{event = eps}
-	    end;
-	_ when SM#sm.event =:= backoff_timeout ->
-	    Backoff_tmp = change_backoff(SM, increment),
-	    fsm:set_timeout(SM#sm{event=eps}, {s, Backoff_tmp}, backoff_timeout);
-	_ ->
-	    SM#sm{event = eps}
-    end.
+  ?TRACE(?ID, "handle_sp ~120p~n", [Term]),
+  case Term of
+    {rcv_ul, Msg} ->
+      nl_mac_hf:insertETS(SM, current_msg, Msg),
+      case fsm:check_timeout(SM, backoff_timeout) of
+        false ->
+          Backoff_tmp = change_backoff(SM, increment),
+          fsm:set_timeout(SM#sm{event=eps}, {s, Backoff_tmp}, backoff_timeout);
+        true  ->
+          fsm:cast(SM, alh,  {send, {sync, "OK"} }),
+          SM#sm{event = eps}
+      end;
+    _ when SM#sm.event =:= backoff_timeout ->
+      Backoff_tmp = change_backoff(SM, increment),
+      fsm:set_timeout(SM#sm{event=eps}, {s, Backoff_tmp}, backoff_timeout);
+    _ -> SM#sm{event = eps}
+  end.
 
 handle_write_alh(_MM, SM, Term) ->
-    ?TRACE(?ID, "~120p~n", [Term]),
-    SM1 = fsm:clear_timeout(SM, backoff_timeout),
-    change_backoff(SM, decrement),
-    case Term of
-	{rcv_ul, Msg} ->
-	    fsm:send_at_command(SM1, Msg), SM#sm{event = data_sent};
-	_ when SM#sm.event =:= backoff_timeout ->
-	    fsm:send_at_command(SM1, nl_mac_hf:readETS(SM1, current_msg)), SM#sm{event = data_sent}
-    end.
+  ?TRACE(?ID, "~120p~n", [Term]),
+  SM1 = fsm:clear_timeout(SM, backoff_timeout),
+  change_backoff(SM, decrement),
+  case Term of
+    {rcv_ul, Msg} ->
+      fsm:send_at_command(SM1, Msg), SM#sm{event = data_sent};
+    _ when SM#sm.event =:= backoff_timeout ->
+      fsm:send_at_command(SM1, nl_mac_hf:readETS(SM1, current_msg)), SM#sm{event = data_sent}
+  end.
 
 handle_final(_MM, SM, Term) ->
-    ?TRACE(?ID, "Final ~120p~n", [Term]).
+  ?TRACE(?ID, "Final ~120p~n", [Term]).
 
 %%--------------------------------------Helper functions--------------------------------------------------
 init_backoff(SM)->
-    nl_mac_hf:insertETS(SM, current_step, 0). % 2 ^ 0
+  nl_mac_hf:insertETS(SM, current_step, 0). % 2 ^ 0
 
 check_limit(SM, Current_Backoff, Current_Step) ->
-    case Current_Backoff of
-	Current_Backoff when ((Current_Backoff =< 200) and (Current_Backoff >= 1)) -> Current_Step;
-	Current_Backoff when (Current_Backoff > 200) -> Current_Step - 1;
-	Current_Backoff when (Current_Backoff < 1) -> init_backoff(SM)
-    end.
+  case Current_Backoff of
+    Current_Backoff when ((Current_Backoff =< 200) and (Current_Backoff >= 1)) -> Current_Step;
+    Current_Backoff when (Current_Backoff > 200) -> Current_Step - 1;
+    Current_Backoff when (Current_Backoff < 1) -> init_backoff(SM)
+  end.
 
 change_backoff(SM, Type) ->
-    Exp = nl_mac_hf:readETS(SM, current_step),
-    Current_Step =
-	case Type of
-	    increment -> Exp + 1;
-	    decrement -> case ( Exp - 1 > 0 ) of true -> Exp - 1; false -> 0 end
-	end,
-    Current_Backoff = math:pow(2, Current_Step),
-    NewStep= check_limit(SM, Current_Backoff, Current_Step),
-    nl_mac_hf:insertETS(SM, current_step, NewStep),
-    Val = math:pow(2, nl_mac_hf:readETS(SM, current_step)),
-    ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
-    Val.
+  Exp = nl_mac_hf:readETS(SM, current_step),
+  Current_Step =
+  case Type of
+    increment -> Exp + 1;
+    decrement -> case ( Exp - 1 > 0 ) of true -> Exp - 1; false -> 0 end
+  end,
+  Current_Backoff = math:pow(2, Current_Step),
+  NewStep= check_limit(SM, Current_Backoff, Current_Step),
+  nl_mac_hf:insertETS(SM, current_step, NewStep),
+  Val = math:pow(2, nl_mac_hf:readETS(SM, current_step)),
+  ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
+  Val.

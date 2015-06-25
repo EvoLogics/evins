@@ -37,60 +37,61 @@
 % csma aloha - carrer sense multiple access
 % cut lohi   - conservative unsynchronized tone lohi
 % aut lohi   - aggressive unsynchronized tone lohi
-% dacap 	 - distance aware collision avoidance
+% dacap      - distance aware collision avoidance
 
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-    fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+  fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
-	Module =
-	case parse_conf(ArgS, Share) of
-		csma_alh 	-> fsm_csma_alh;
-		cut_lohi	-> fsm_t_lohi;
-		dacap		-> fsm_dacap;
-		_         	-> error
-	end,
-	Roles = fsm_worker:role_info(Role_IDs, [at, alh]),
-    if Module =:= error -> ?ERROR(Mod_ID, "No MAC protocol ID!~n", []);
-        true            -> [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = Module}]
-    end.
+  Module =
+  case parse_conf(ArgS, Share) of
+    csma_alh    -> fsm_csma_alh;
+    cut_lohi    -> fsm_t_lohi;
+    dacap       -> fsm_dacap;
+    _           -> error
+  end,
+  Roles = fsm_worker:role_info(Role_IDs, [at, alh]),
+  if Module =:= error-> ?ERROR(Mod_ID, "No MAC protocol ID!~n", []);
+    true             -> [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = Module}]
+  end.
+
 
 parse_conf(ArgS, Share) ->
-    [Protocol]		 = [P 			|| {mac_protocol, P} <- ArgS],
-    SoundSpeedSet    = [Vel         || {sound_speed, Vel} <- ArgS],
-    PMaxSet    		 = [Time        || {prop_time_max, Time} <- ArgS],
-    TDectSet   		 = [Time        || {t_detect_time, Time} <- ArgS],
-    DistSet    		 = [D           || {distance, D} <- ArgS],
-    Tmo_backoff_set	 = [Time        || {tmo_backoff, Time} <- ArgS],
+  [Protocol]      = [P     || {mac_protocol, P} <- ArgS],
+  SoundSpeedSet   = [Vel   || {sound_speed, Vel} <- ArgS],
+  PMaxSet         = [Time  || {prop_time_max, Time} <- ArgS],
+  TDectSet        = [Time  || {t_detect_time, Time} <- ArgS],
+  DistSet         = [D     || {distance, D} <- ArgS],
+  Tmo_backoff_set = [Time  || {tmo_backoff, Time} <- ArgS],
 
-    PMax 		 = set_params(PMaxSet, 500), %ms
-    TDect 		 = set_params(TDectSet, 5),  %ms
-    Sound_speed  = set_params(SoundSpeedSet, 1500),  %m
-    U 			 = set_params(DistSet, 3000),  %m
-    Tmo_backoff  = set_timeouts(Tmo_backoff_set, {1,3}), %s
+  PMax        = set_params(PMaxSet, 500), %ms
+  TDect       = set_params(TDectSet, 5),  %ms
+  Sound_speed = set_params(SoundSpeedSet, 1500),  %m
+  U           = set_params(DistSet, 3000),  %m
+  Tmo_backoff = set_timeouts(Tmo_backoff_set, {1,3}), %s
 
-    ets:insert(Share, [{sound_speed, Sound_speed}]),
-    ets:insert(Share, [{pmax, PMax}]),
-    ets:insert(Share, [{tdetect, TDect}]),
+  ets:insert(Share, [{sound_speed, Sound_speed}]),
+  ets:insert(Share, [{pmax, PMax}]),
+  ets:insert(Share, [{tdetect, TDect}]),
 
-    case Protocol of
-		cut_lohi -> ets:insert(Share, [{cr_time, 2 * (PMax + TDect)}]);
-		aut_lohi -> ets:insert(Share, [{cr_time, (PMax + TDect)}]);
-		dacap 	 -> ets:insert(Share, [{tmo_backoff, Tmo_backoff}]),
-					ets:insert(Share, [{t_data, 1}]), 	  % duration of the data packet to be transmitted in s % !!!!!!!!!!!!!!!!!!! TODO
-					ets:insert(Share, [{u, U}]);		  % max distance between nodes in the network in m
-		_ 		 -> nothing
-    end,
-    Protocol.
+  case Protocol of
+    cut_lohi -> ets:insert(Share, [{cr_time, 2 * (PMax + TDect)}]);
+    aut_lohi -> ets:insert(Share, [{cr_time, (PMax + TDect)}]);
+    dacap    -> ets:insert(Share, [{tmo_backoff, Tmo_backoff}]),
+                ets:insert(Share, [{t_data, 1}]),     % duration of the data packet to be transmitted in s % !!!!!!!!!!!!!!!!!!! TODO
+                ets:insert(Share, [{u, U}]);          % max distance between nodes in the network in m
+    _        -> nothing
+  end,
+  Protocol.
 
 set_params(Param, Default) ->
-    case Param of
-        []     -> Default;
-        [Value]-> Value
-    end.
+  case Param of
+    []     -> Default;
+    [Value]-> Value
+  end.
 
 set_timeouts(Tmo, Defaults) ->
-    case Tmo of
-        []            -> Defaults;
-        [{Start, End}]-> {Start, End}
-    end.
+  case Tmo of
+    []            -> Defaults;
+    [{Start, End}]-> {Start, End}
+  end.
