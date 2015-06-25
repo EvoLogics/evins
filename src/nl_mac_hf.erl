@@ -685,7 +685,12 @@ bin_to_num(Bin) ->
     end.
 
 increase_pkgid(SM) ->
-    PkgID = readETS(SM, packet_id),
+    Max_pkg_id = readETS(SM, max_pkg_id),
+    PkgID =
+    case TmpPId = readETS(SM, packet_id) of
+        _ when TmpPId >= Max_pkg_id -> -1;
+        _ -> TmpPId
+    end,
     insertETS(SM, packet_id, PkgID + 1),
     PkgID.
 
