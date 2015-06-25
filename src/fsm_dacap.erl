@@ -73,7 +73,7 @@
 
 -define(TRANS, [
                 {idle,
-                 [{internal idle},
+                 [{internal, idle},
                   {send_rts, wcts},
                   {rcv_rts_fm, scts},
                   {rcv_cts_fm, idle},
@@ -83,15 +83,15 @@
                  ]},
 
                 {wcts,
-                 [{rcv_cts_fm,  ws_data},
+                 [{rcv_cts_fm, ws_data},
                   {rcv_rts_nfm, backoff},
                   {rcv_cts_nfm, backoff},
                   {error, idle},
-                  {wcts_end,  backoff}
+                  {wcts_end, backoff}
                  ]},
 
                 {ws_data,
-                 [{data_sent,  idle},
+                 [{data_sent, idle},
                   {error, idle},
                   {rcv_warn, idle},
                   {rcv_data, idle},
@@ -107,7 +107,7 @@
                  ]},
 
                 {wdata,
-                 [{error,  idle},
+                 [{error, idle},
                   {send_warn, backoff},
                   {send_cts, scts},
                   {rcv_data, idle},
