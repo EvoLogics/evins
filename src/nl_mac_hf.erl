@@ -1,30 +1,30 @@
 %% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
-%% 
-%% Redistribution and use in source and binary forms, with or without 
-%% modification, are permitted provided that the following conditions 
-%% are met: 
-%% 1. Redistributions of source code must retain the above copyright 
-%%    notice, this list of conditions and the following disclaimer. 
-%% 2. Redistributions in binary form must reproduce the above copyright 
-%%    notice, this list of conditions and the following disclaimer in the 
-%%    documentation and/or other materials provided with the distribution. 
-%% 3. The name of the author may not be used to endorse or promote products 
-%%    derived from this software without specific prior written permission. 
-%% 
-%% Alternatively, this software may be distributed under the terms of the 
-%% GNU General Public License ("GPL") version 2 as published by the Free 
-%% Software Foundation. 
-%% 
-%% THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR 
-%% IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES 
-%% OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. 
-%% IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, 
-%% INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT 
-%% NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
-%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY 
-%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
-%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF 
-%% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+%%
+%% Redistribution and use in source and binary forms, with or without
+%% modification, are permitted provided that the following conditions
+%% are met:
+%% 1. Redistributions of source code must retain the above copyright
+%%    notice, this list of conditions and the following disclaimer.
+%% 2. Redistributions in binary form must reproduce the above copyright
+%%    notice, this list of conditions and the following disclaimer in the
+%%    documentation and/or other materials provided with the distribution.
+%% 3. The name of the author may not be used to endorse or promote products
+%%    derived from this software without specific prior written permission.
+%%
+%% Alternatively, this software may be distributed under the terms of the
+%% GNU General Public License ("GPL") version 2 as published by the Free
+%% Software Foundation.
+%%
+%% THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+%% IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+%% OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+%% IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+%% INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+%% NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+%% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -module(nl_mac_hf). % network and mac layer helper functions
 
 -import(lists, [filter/2, foldl/3, map/2, member/2]).
@@ -35,7 +35,7 @@
 %% Convert types functions
 -export([convert_to_binary/1, covert_type_to_bin/1, convert_t/2, convert_la/3]).
 %% ETS functions
--export([insertETS/3, readETS/2, cleanETS/2]).
+-export([insertETS/3, readETS/2, cleanETS/2, init_dets/1, fill_dets/1]).
 %% handle events
 -export([event_params/3, clear_spec_timeout/2, clear_retry_timeout/2]).
 %% Math functions
@@ -67,7 +67,7 @@ convert_to_binary([H|T])->
 	    _     -> list_to_binary([string:to_upper(atom_to_list(H)), ","])
 	end,
     Last_el = hd(lists:reverse(T)),
-    list_to_binary([Header, 
+    list_to_binary([Header,
 		    lists:foldr(fun(X, A) ->
 					Bin = covert_type_to_bin(X),
 					Sign = if X=:=Last_el -> ""; true -> "," end,
@@ -225,7 +225,7 @@ send_nl_command(SM, Interface, Params={Flag,[IPacket_id, Real_src,_PAdditional]}
 	    Rout_addr = get_routing_addr(SM, Flag, Real_dst),
 	    [MAC_addr, MAC_real_src, MAC_real_dst] = addr_nl2mac(SM, [Rout_addr, Real_src, Real_dst]),
 	    ?TRACE(?ID, "Rout_addr ~p, MAC_addrm ~p, MAC_real_src ~p, MAC_real_dst ~p~n", [Rout_addr, MAC_addr, MAC_real_src, MAC_real_dst]),
-	    if ((MAC_addr =:= error) or (MAC_real_src =:= error) or (MAC_real_dst =:= error) 
+	    if ((MAC_addr =:= error) or (MAC_real_src =:= error) or (MAC_real_dst =:= error)
 		or ((MAC_real_dst =:= 255) and Protocol#pr_conf.br_na)) ->
 		    error;
 	       true ->
@@ -241,6 +241,7 @@ send_nl_command(SM, Interface, Params={Flag,[IPacket_id, Real_src,_PAdditional]}
 			    insertETS(SM, last_nl_sent, {Flag, Real_src, NLarp}),
 			    SM1 = fsm:cast(SM, Interface, {send, AT}),
 			    insertETS(SM1, last_retry, {Params, NL}),
+                fill_dets(SM),
 			    fsm:set_event(SM1, eps)
 		    end
 	    end
@@ -326,8 +327,8 @@ get_routing_addr(SM, Flag, AddrSrc) ->
     Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
     Routing_table = readETS(SM, routing_table),
     case NProtocol of
-    	NProtocol when ((NProtocol =:= staticr) or (NProtocol =:= staticrack) 
-			or (Protocol#pr_conf.pf and ((Flag =:= data) or (Flag =:= ack))) 
+        NProtocol when ((NProtocol =:= staticr) or (NProtocol =:= staticrack)
+			or (Protocol#pr_conf.pf and ((Flag =:= data) or (Flag =:= ack)))
 			or ( (Protocol#pr_conf.lo or Protocol#pr_conf.dbl) and (Flag =:= path)) ) ->
 	    find_in_routing_table(Routing_table, AddrSrc);
     	_ ->
@@ -486,7 +487,7 @@ proccess_relay(SM, Tuple = {send, Params = {Flag,[_,ISrc,PAdditional]}, {nl, sen
 	    [SM, {send, Params, {nl, send, IDst, fill_msg(?PATH_ADDIT, {check_dubl_in_path(BPath, BMAC_addr), ""})}}];
     	path ->
 	    case LNeighbours = get_current_neighbours(SM) of
-		no_neighbours -> 
+		no_neighbours ->
 		    [SM, not_relay];
 		_ ->
 		    Local_address = readETS(SM, local_address),
@@ -600,7 +601,7 @@ update_rout_table(SM, NRouting_table) ->
 	     end, SM, NRouting_table),
     {SMN2, FL} = lists:foldr(
 		   fun(X, {SMTmp, A}) ->
-			   case X of 
+			   case X of
 			       {From,_} ->
 				   case lists:keyfind(From, 1, NRouting_table) of
 				       false ->
@@ -687,6 +688,35 @@ increase_pkgid(SM) ->
     PkgID = readETS(SM, packet_id),
     insertETS(SM, packet_id, PkgID + 1),
     PkgID.
+
+init_dets(SM) ->
+    LA  = readETS(SM, local_address),
+    Ref = SM#sm.dets_share,
+    NL_protocol = readETS(SM, nl_protocol),
+    B = dets:lookup(Ref, NL_protocol),
+    SM1=
+    case B of
+        []  -> insertETS(SM, packet_id, 0);
+        [{NL_protocol, PkgID}] ->
+            dets:insert(Ref, {NL_protocol, PkgID + 1}),
+            insertETS(SM, packet_id, PkgID + 1);
+        _ -> dets:insert(Ref, {NL_protocol, 0}),
+            insertETS(SM, packet_id, 0)
+    end,
+
+    B1 = dets:lookup(Ref, NL_protocol),
+    ?INFO(?ID, "Init dets LA ~p ~p~n", [LA, B1]),
+    SM1#sm{dets_share = Ref}.
+
+fill_dets(SM) ->
+    LA  = readETS(SM, local_address),
+    Ref = SM#sm.dets_share,
+    NL_protocol = readETS(SM, nl_protocol),
+    Packet_id = readETS(SM, packet_id),
+    dets:insert(Ref, {NL_protocol, Packet_id}),
+    B = dets:lookup(Ref, NL_protocol),
+    ?INFO(?ID, "Fill_dets LA ~p ~p~n", [LA, B] ),
+    SM#sm{dets_share = Ref}.
 
 split_bin_comma(Bin) when is_binary(Bin) ->
     binary:split(Bin, <<",">>,[global]).
@@ -826,7 +856,7 @@ get_stat_data(SM, Qname) ->
 			{Role, Payload, Time, Length, State, TS, Dst, Count_hops} = X,
 			TRole = if Role =:= source -> "Source"; true -> "Relay" end,
 			BTime = list_to_binary(lists:flatten(io_lib:format("~.1f",[Time]))),
-			[list_to_binary(["\n ", TRole, " Data:",Payload, " Len:", covert_type_to_bin(Length), 
+			[list_to_binary(["\n ", TRole, " Data:",Payload, " Len:", covert_type_to_bin(Length),
 					 " Duration:", BTime, " State:", State, " Total:", integer_to_binary(TS),
 					 " Dst:", integer_to_binary(Dst), " Hops:", integer_to_binary(Count_hops)]) | A]
 		end,[],queue:to_list(PT)).
@@ -842,7 +872,7 @@ get_stat(SM, Qname) ->
 				paths -> "Path:";
 				st_neighbours -> "Neighbour:"
 			    end,
-			[list_to_binary(["\n ", TRole, " ", TVal, covert_type_to_bin(Val), 
+			[list_to_binary(["\n ", TRole, " ", TVal, covert_type_to_bin(Val),
 					 " Time:", BTime, " Count:", integer_to_binary(Count),
 					 " Total:", integer_to_binary(TS)]) | A]
 		end,[],queue:to_list(PT)).
