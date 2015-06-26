@@ -34,7 +34,7 @@
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
 
--export([handle_idle/3, handle_final/3]).
+-export([handle_idle/3, handle_alarm/3, handle_final/3]).
 -export([handle_swv/3, handle_rwv/3]).
 -export([handle_wack/3, handle_sack/3]).
 -export([handle_wpath/3, handle_spath/3]).
@@ -77,10 +77,10 @@
                   {error, idle},
                   {rcv_wv,  rwv},
                   {noack_data_sent, idle},
-                  {wait_ack,  wack},
+                  {wait_ack, wack},
                   {wait_pf, wpath},
                   {rcv_ack, idle},
-                  {rcv_path,  idle}
+                  {rcv_path, idle}
                  ]},
 
                 {rwv,
@@ -504,6 +504,10 @@ handle_wpath(_MM, SM, Term) ->
     _ ->
       SM#sm{event = eps}
   end.
+
+-spec handle_alarm(any(), any(), any()) -> no_return().
+handle_alarm(_MM, SM, _Term) ->
+    exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, _Term) ->
   ?INFO(?ID, "FINAL~n", []),

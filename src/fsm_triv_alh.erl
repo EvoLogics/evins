@@ -32,7 +32,7 @@
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
--export([handle_idle/3, handle_sp/3, handle_write_alh/3, handle_final/3]).
+-export([handle_idle/3, handle_alarm/3, handle_sp/3, handle_write_alh/3, handle_final/3]).
 
 -define(TRANS, [
                 {idle,
@@ -159,6 +159,10 @@ handle_write_alh(_MM, SM, Term) ->
   end,
   fsm:send_at_command(SM1, {at,{pid,0},"*SENDIM",255,noack,Payl}),
   SM1#sm{event = data_sent}.
+
+-spec handle_alarm(any(), any(), any()) -> no_return().
+handle_alarm(_MM, SM, _Term) ->
+  exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).

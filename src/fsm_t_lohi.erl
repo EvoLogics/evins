@@ -33,7 +33,7 @@
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
 
--export([handle_idle/3, handle_blocking_state/3, handle_backoff_state/3, handle_cr/3, handle_transmit_data/3, handle_final/3]).
+-export([handle_idle/3, handle_alarm/3, handle_blocking_state/3, handle_backoff_state/3, handle_cr/3, handle_transmit_data/3, handle_final/3]).
 
 %%  http://www.eecs.harvard.edu/~mdw/course/cs263/papers/t-lohi-infocom08.pdf
 %%  Comparison - http://www.isi.edu/~johnh/PAPERS/Syed08b.pdf
@@ -250,6 +250,10 @@ handle_transmit_data(_MM, SM, Term) ->
       fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, dp_ends);
     _ -> SM#sm{event = eps}
   end.
+
+-spec handle_alarm(any(), any(), any()) -> no_return().
+handle_alarm(_MM, SM, _Term) ->
+    exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
