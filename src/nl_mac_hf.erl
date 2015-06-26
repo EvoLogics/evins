@@ -57,8 +57,8 @@
 -export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
 convert_to_binary([])     -> nothing;
-convert_to_binary([H])     -> list_to_binary(string:to_upper(atom_to_list(H)));
-convert_to_binary([H|T])->
+convert_to_binary([H])    -> list_to_binary(string:to_upper(atom_to_list(H)));
+convert_to_binary([H|T])  ->
   Header =
   case H of
     at    -> list_to_binary(["AT"]);
@@ -71,7 +71,7 @@ convert_to_binary([H|T])->
   list_to_binary([Header,
                   lists:foldr(fun(X, A) ->
                                   Bin = covert_type_to_bin(X),
-                                  Sign = if X=:=Last_el -> ""; true -> "," end,
+                                  Sign = if X =:= Last_el -> ""; true -> "," end,
                                   [list_to_binary([Bin, Sign]) | A]
                               end, [], T)]).
 
@@ -121,21 +121,21 @@ event_params(SM, Term, Event) ->
 
 clear_spec_timeout(SM, Spec) ->
   TRefList = filter(
-               fun({E,TRef}) ->
+               fun({E, TRef}) ->
                    case E of
-                     {Spec,_} -> timer:cancel(TRef), false;
-                     _        -> true
+                     {Spec, _} -> timer:cancel(TRef), false;
+                     _  -> true
                    end
                end, SM#sm.timeouts),
   SM#sm{timeouts = TRefList}.
 
 clear_retry_timeout(SM, {PkgID, Src, Dst}) ->
   TRefList = filter(
-               fun({E,TRef}) ->
+               fun({E, TRef}) ->
                    case E of
                      {retry_timeout,{PkgID, Src, Dst}} -> timer:cancel(TRef), false;
                      {retry_timeout,{PkgID, Dst, Src}} -> timer:cancel(TRef), false;
-                     {retry_timeout,{PkgIDL,_,_}} when PkgID > PkgIDL -> timer:cancel(TRef), false;
+                     {retry_timeout,{PkgIDL, _, _}} when PkgID > PkgIDL -> timer:cancel(TRef), false;
                      _ -> true end end, SM#sm.timeouts),
   SM#sm{timeouts = TRefList}.
 
@@ -151,14 +151,15 @@ send_helpers(SM, Interface, MACP, Flag) ->
   {at, PID, SENDFLAG, IDst, TFlag, _} = MACP,
   Data=
   case Flag of
-    tone ->
-      <<"t">>;
-    rts ->
+    tone -> <<"t">>;
+    rts   ->
       C = readETS(SM, sound_speed),
-      U = case Val = readETS(SM, {u, IDst}) of
-            not_inside -> readETS(SM, u); % max distance between nodes in the network, in m
-            _      -> Val
-          end,
+      U =
+      case Val = readETS(SM, {u, IDst}) of
+        % max distance between nodes in the network, in m
+        not_inside -> readETS(SM, u);
+        _      -> Val
+      end,
       T_us = erlang:round( convert_t( (U / C), {s, us}) ), % to us
       integer_to_binary(T_us);
     warn ->
@@ -168,7 +169,7 @@ send_helpers(SM, Interface, MACP, Flag) ->
   send_mac(SM, Interface, Flag, Tuple).
 
 send_cts(SM, Interface, MACP, Timestamp, USEC, Dur) ->
-  {at, PID,_, IDst,_, _} = MACP,
+  {at, PID, _, IDst, _, _} = MACP,
   Tuple = {at, PID,"*SENDIMS", IDst, Timestamp + USEC, covert_type_to_bin(Dur + USEC)},
   send_mac(SM, Interface, cts, Tuple).
 
@@ -177,14 +178,13 @@ send_mac(SM, Interface, Flag, MACP) ->
   SM1 = fsm:cast(SM, Interface, {send, AT}),
   fsm:set_event(SM1, eps).
 
-send_ack(SM,  {send_ack, {_, [Packet_id,_, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src,_}}}, Count_hops) ->
+send_ack(SM,  {send_ack, {_, [Packet_id, _, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src, _}}}, Count_hops) ->
   send_nl_command(SM, alh, {ack, [Packet_id, Real_src, []]}, {nl, send, Real_dst, integer_to_binary(Count_hops)}).
 
-send_path(SM, {send_path, {Flag, [Packet_id,_, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src, Payload}}}) ->
+send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src, Payload}}}) ->
   BMAC_addr  = convert_la(SM, bin, mac),
   case readETS(SM, current_neighbours) of
-    not_inside ->
-      error;
+    not_inside -> error;
     _ ->
       BCN = neighbours_to_bin(SM, mac),
       [SMN, BMsg] =
@@ -197,7 +197,7 @@ send_path(SM, {send_path, {Flag, [Packet_id,_, _PAdditional]}, {async, {nl, recv
             path_addit -> parse_path(SM, Flag, ?PATH_ADDIT,  {Real_src, Real_dst, Payload});
             path     -> parse_path(SM, Flag, ?NEIGHBOUR_PATH, {Real_src, Real_dst, Payload})
           end,
-          CheckL = lists:foldr(fun(X,A)-> [bin_to_num(X)| A] end, [], split_bin_comma(BPath)),
+          CheckL = lists:foldr(fun(X, A)-> [bin_to_num(X) | A] end, [], split_bin_comma(BPath)),
           NBPath =
           case lists:member(BMAC_addr, CheckL) of
             true  -> path_to_bin_comma(lists:reverse(split_bin_comma(check_dubl_in_path(BPath, BMAC_addr))));
@@ -213,12 +213,13 @@ send_path(SM, {send_path, {Flag, [Packet_id,_, _PAdditional]}, {async, {nl, recv
 
 path_to_bin_comma(LPath) ->
   lists:foldr(
-    fun(X,A) ->
-        Sign = if byte_size(A)=:=0-> <<"">>; true-> <<",">> end,
+    fun(X, A) ->
+        Sign =
+        if byte_size(A) =:= 0 -> <<"">>; true-> <<",">> end,
         <<X/binary, Sign/binary, A/binary>>
     end, <<"">>, LPath).
 
-send_nl_command(SM, Interface, Params={Flag,[IPacket_id, Real_src,_PAdditional]}, NL) ->
+send_nl_command(SM, Interface, Params = {Flag, [IPacket_id, Real_src, _PAdditional]}, NL) ->
   Real_dst = get_dst_addr(NL),
   Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
   if Real_dst =:= wrong_format -> error;
@@ -260,14 +261,14 @@ nl2at (SM, Tuple) when is_tuple(Tuple)->
   ETSPID =  list_to_binary(["p", integer_to_binary(readETS(SM, pid))]),
   case Tuple of
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  ->
-      NewData = list_to_binary([flag2num(Flag), ",", BPacket_id, ",", MAC_real_src,",", MAC_real_dst,",", Data]),
+      NewData = list_to_binary([flag2num(Flag), ",", BPacket_id, ",", MAC_real_src, ",", MAC_real_dst, ",", Data]),
       {at,"*SENDIM", ETSPID, byte_size(NewData), IDst, noack, NewData};
     _ ->
       error
   end.
 
 check_dubl_in_path(BPath, BMAC_addr) ->
-  CheckL = lists:foldr(fun(X,A)-> [bin_to_num(X)| A] end, [], split_bin_comma(BPath)),
+  CheckL = lists:foldr(fun(X, A)-> [bin_to_num(X) | A] end, [], split_bin_comma(BPath)),
   case lists:member(binary_to_integer(BMAC_addr), CheckL) of
     true  -> BPath;
     false -> list_to_binary([BPath, ",", BMAC_addr])
@@ -291,22 +292,22 @@ add_to_table(SM, Table_name, El) ->
 get_dst_addr(NL) ->
   case NL of
     {nl, send, IDst,_}  -> IDst;
-    {at,_,_, IDst,_,_}  -> IDst;
-    _       -> wrong_format
+    {at, _, _, IDst, _, _}  -> IDst;
+    _   -> wrong_format
   end.
 
 set_dst_addr(NL, Addr) ->
   case NL of
     {nl, send,_, Data} -> {nl, send, Addr, Data};
-    _        -> wrong_format
+    _   -> wrong_format
   end.
 
 addr_nl2mac(SM, ListAddr) when is_list(ListAddr) ->
-  lists:foldr(fun(X,A) -> [addr_nl2mac(SM, X) | A] end, [], ListAddr);
+  lists:foldr(fun(X, A) -> [addr_nl2mac(SM, X) | A] end, [], ListAddr);
 addr_nl2mac(SM, SAddr) ->
   F = fun(Elem, Acc) ->
           {NL_addr, Mac_addr} = Elem,
-          if SAddr =:= NL_addr -> [Mac_addr|Acc]; true -> Acc end
+          if SAddr =:= NL_addr -> [Mac_addr | Acc]; true -> Acc end
       end,
   MAC_addr = lists:foldr(F, [], readETS(SM, table_nl_mac_addrs)),
   if MAC_addr =:= [] -> error;
@@ -314,11 +315,11 @@ addr_nl2mac(SM, SAddr) ->
   end.
 
 addr_mac2nl(SM, ListAddr) when is_list(ListAddr) ->
-  lists:foldr(fun(X,A) -> [addr_mac2nl(SM, X) | A] end, [], ListAddr);
+  lists:foldr(fun(X, A) -> [addr_mac2nl(SM, X) | A] end, [], ListAddr);
 addr_mac2nl(SM, SAddr) ->
   F = fun(Elem, Acc) ->
           {Nl_addr, Mac_addr} = Elem,
-          if SAddr =:= Mac_addr -> [Nl_addr|Acc]; true -> Acc end
+          if SAddr =:= Mac_addr -> [Nl_addr | Acc]; true -> Acc end
       end,
   NL_addr = lists:foldr(F, [], readETS(SM, table_nl_mac_addrs)),
   if NL_addr =:= [] -> error; true -> [Addr] = NL_addr, Addr end.
@@ -332,25 +333,26 @@ get_routing_addr(SM, Flag, AddrSrc) ->
                     or (Protocol#pr_conf.pf and ((Flag =:= data) or (Flag =:= ack)))
                     or ( (Protocol#pr_conf.lo or Protocol#pr_conf.dbl) and (Flag =:= path)) ) ->
       find_in_routing_table(Routing_table, AddrSrc);
-    _ ->
-      255
+    _ ->  255
   end.
 
 find_in_routing_table(255, _) -> 255;
-find_in_routing_table([],  _) -> no_routing_table;
+find_in_routing_table([], _) -> no_routing_table;
 find_in_routing_table(Routing_table, AddrSrc) ->
-  lists:foldr(fun(X, El) ->
-                  if is_tuple(X) -> case X of {AddrSrc, To} -> To; _-> El end;
-                     true -> X
-                  end
-              end, no_routing_table, Routing_table).
+  lists:foldr(
+    fun(X, El) ->
+      if is_tuple(X) -> case X of {AddrSrc, To} -> To; _-> El end;
+         true -> X
+      end
+    end, no_routing_table, Routing_table).
 
 convert_la(SM, Type, Format) ->
   LAddr  = readETS(SM, local_address),
-  CLAddr = case Format of
-             nl -> LAddr;
-             mac -> addr_nl2mac(SM, LAddr)
-           end,
+  CLAddr =
+  case Format of
+    nl -> LAddr;
+    mac -> addr_nl2mac(SM, LAddr)
+  end,
   case Type of
     bin -> integer_to_binary(CLAddr);
     integer -> CLAddr
@@ -372,7 +374,7 @@ fill_msg(Format, Tuple) ->
       list_to_binary(["p:", Path, ",a:", Additional])
   end.
 
-prepare_send_path(SM, [_,_, PAdditional], {async,{nl,recv, Real_dst, Real_src, Payload}}) ->
+prepare_send_path(SM, [_ , _, PAdditional], {async,{nl,recv, Real_dst, Real_src, Payload}}) ->
   Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
   BMAC_addr = convert_la(SM, bin, mac),
   {nl,send, IDst, Msg} = readETS(SM, current_pkg),
@@ -399,7 +401,7 @@ prepare_send_path(SM, [_,_, PAdditional], {async,{nl,recv, Real_dst, Real_src, P
 check_path(SM, Real_src, Real_dst, BPath) ->
   IDst = addr_nl2mac(SM, Real_dst),
   ISrc = addr_nl2mac(SM, Real_src),
-  ListPath  = lists:foldr(fun(X,A)-> [binary_to_integer(X)| A] end, [], split_bin_comma(BPath)),
+  ListPath  = lists:foldr(fun(X, A)-> [binary_to_integer(X) | A] end, [], split_bin_comma(BPath)),
   (lists:member(IDst, ListPath) and lists:member(ISrc, ListPath)).
 
 parse_path(SM, Flag, Temp, {ISrc, IDst, Payload}) ->
@@ -412,8 +414,7 @@ parse_path(SM, Flag, Temp, {ISrc, IDst, Payload}) ->
             ?NEIGHBOUR_PATH -> [_, P] = Bin, P;
             ?PATH_ADDIT -> [P, _] = Bin, P
           end;
-        nomatch ->
-          nothing
+        nomatch -> nothing
       end;
     data ->
       case re:run(Payload,?PATH_DATA,[dotall,{capture,[1,2],binary}]) of
@@ -426,7 +427,7 @@ parse_path(SM, Flag, Temp, {ISrc, IDst, Payload}) ->
   if BPath =:= nothing -> [SM, nothing];
      true ->
        MacLAddr = convert_la(SM, integer, mac),
-       ListPath = lists:foldr(fun(X,A)-> [bin_to_num(X)| A] end, [], split_bin_comma(BPath)),
+       ListPath = lists:foldr(fun(X, A)-> [bin_to_num(X) | A] end, [], split_bin_comma(BPath)),
        case lists:member(MacLAddr, ListPath) of
          true  -> proccess_and_update_path(SM, BPath, {ISrc, IDst, ListPath});
          false -> [SM, BPath]
@@ -453,12 +454,13 @@ proccess_relay(SM, Tuple = {send, Params = {Flag,[_,ISrc,PAdditional]}, {nl, sen
   Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
   case Flag of
     data when (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) ->
-      {match, [BPath, BData]} = re:run(Payload,?PATH_DATA,[dotall,{capture,[1,2],binary}]),
+      {match, [BPath, BData]} = re:run(Payload, ?PATH_DATA, [dotall,{capture, [1, 2], binary}]),
       NPayload = fill_msg(?PATH_DATA, {check_dubl_in_path(BPath, BMAC_addr), BData}),
-      [SMN1,_] = parse_path(SM, Flag, ?PATH_DATA, {ISrc, IDst, NPayload}),
+      [SMN1, _] = parse_path(SM, Flag, ?PATH_DATA, {ISrc, IDst, NPayload}),
       [SMN1, {send, Params, {nl, send, IDst, NPayload}}];
     data ->
-      [SMN,_] = parse_path(SM, Flag, ?PATH_DATA, {ISrc, IDst, Payload}), [SMN, Tuple];
+      [SMN, _] = parse_path(SM, Flag, ?PATH_DATA, {ISrc, IDst, Payload}),
+      [SMN, Tuple];
     neighbours ->
       case LNeighbours = get_current_neighbours(SM) of
         no_neighbours ->
@@ -467,7 +469,7 @@ proccess_relay(SM, Tuple = {send, Params = {Flag,[_,ISrc,PAdditional]}, {nl, sen
           [SM, {send, Params, {nl, send, IDst, fill_msg(?NEIGHBOURS, LNeighbours)}}]
       end;
     path_addit when Protocol#pr_conf.evo ->
-      {match, [BPath, AParams]} = re:run(Payload,?PATH_ADDIT,[dotall,{capture,[1,2],binary}]),
+      {match, [BPath, AParams]} = re:run(Payload, ?PATH_ADDIT, [dotall, {capture, [1, 2], binary}]),
       [BRssi, BIntegr] = split_bin_comma(AParams),
       DIRssi = bin_to_num(BRssi),
       DIIntegr = bin_to_num(BIntegr),
@@ -488,16 +490,15 @@ proccess_relay(SM, Tuple = {send, Params = {Flag,[_,ISrc,PAdditional]}, {nl, sen
       [SM, {send, Params, {nl, send, IDst, fill_msg(?PATH_ADDIT, {check_dubl_in_path(BPath, BMAC_addr), ""})}}];
     path ->
       case LNeighbours = get_current_neighbours(SM) of
-        no_neighbours ->
-          [SM, not_relay];
+        no_neighbours -> [SM, not_relay];
         _ ->
           Local_address = readETS(SM, local_address),
           MAC_addr = convert_la(SM, integer, mac),
-          {match, [RNeighbours, BPath]} = re:run(Payload,?NEIGHBOUR_PATH,[dotall,{capture,[1,2],binary}]),
+          {match, [RNeighbours, BPath]} = re:run(Payload, ?NEIGHBOUR_PATH, [dotall, {capture, [1, 2], binary}]),
           ListNeighbours = lists:foldr(fun(X,A)-> [binary_to_integer(X)| A] end, [], split_bin_comma(RNeighbours)),
           ListPath  = lists:foldr(fun(X,A)-> [binary_to_integer(X)| A] end, [], split_bin_comma(BPath)),
           %% save path and set path life
-          [SMN,_] = parse_path(SM, Flag, ?NEIGHBOUR_PATH, {ISrc, IDst, Payload}),
+          [SMN, _] = parse_path(SM, Flag, ?NEIGHBOUR_PATH, {ISrc, IDst, Payload}),
           %% check path, because of loopings (no dublicated addrs)
           Check_path = check_path(SM, ISrc, IDst, BPath),
           case (lists:member(MAC_addr, ListNeighbours)) of
@@ -507,13 +508,11 @@ proccess_relay(SM, Tuple = {send, Params = {Flag,[_,ISrc,PAdditional]}, {nl, sen
               case (lists:member(MAC_addr, ListNeighbours) and not(lists:member(MAC_addr, ListPath ))) of
                 true  when (ISrc =/= Local_address) ->
                   [SMN, {send, Params, {nl, send, IDst, fill_msg(?NEIGHBOUR_PATH, {LNeighbours, check_dubl_in_path(BPath, BMAC_addr)})}}];
-                _ ->
-                  [SMN, not_relay]
+                _ -> [SMN, not_relay]
               end
           end
       end;
-    _ ->
-      [SM, Tuple]
+    _ -> [SM, Tuple]
   end.
 
 proccess_and_update_path(SM, BPath, {ISrc, IDst, ListPath}) ->
@@ -533,13 +532,14 @@ proccess_and_update_path(SM, BPath, {ISrc, IDst, ListPath}) ->
   {LSrc, LDst} = lists:splitwith(fun(A) -> A =/= LAddr end, NLSortListPath),
   LengthLSrc  = length(LSrc),
   LengthLDst  = length(LDst),
-  LRevSrc   = lists:reverse(LSrc),
+  LRevSrc = lists:reverse(LSrc),
   SMN =
   case lists:member(LAddr, NLSortListPath) of
     true  when (( LengthLSrc =:= 1 ) and (LengthLDst =:= 1)) ->
-      [SM1, NList] = if (ISrc =:= LAddr) -> proccess_rout_table(SM, LDst, IDst, []);
-                        true -> proccess_rout_table(SM, LSrc, ISrc, [])
-                     end,
+      [SM1, NList] =
+      if (ISrc =:= LAddr) -> proccess_rout_table(SM, LDst, IDst, []);
+        true -> proccess_rout_table(SM, LSrc, ISrc, [])
+      end,
       update_rout_table(SM1, NList);
     true  when ( LengthLSrc =< 1 ) ->
       proccess_rout_table_helper(SM, lists:nth(2, LDst), LDst);
@@ -571,11 +571,13 @@ proccess_rout_table(SM, [H | T], NLFrom, Routing_table) ->
   proccess_rout_table(fsm:set_timeout(SM, {s, readETS(SM, path_life)}, {path_life, {H, NLFrom}}), T, NLFrom, [ {H, NLFrom} | Routing_table]).
 
 process_path_life(SM, Tuple) ->
-  NRouting_table = lists:foldr(
-                     fun(X,A) ->
-                         if (is_tuple(X) and (X =:= Tuple)) -> A;
-                            true-> [X|A] end
-                     end,[], readETS(SM, routing_table)),
+  NRouting_table =
+  lists:foldr(
+    fun(X,A) ->
+       if (is_tuple(X) and (X =:= Tuple)) -> A;
+        true-> [X|A]
+       end
+    end,[], readETS(SM, routing_table)),
   insertETS(SM, routing_table, NRouting_table).
 
 save_path(SM, {Flag,_} = Params, Tuple) ->
@@ -583,66 +585,69 @@ save_path(SM, {Flag,_} = Params, Tuple) ->
   case Flag of
     path_addit when Protocol#pr_conf.evo ->
       {async,{nl,recv,_,_,Payload}} = Tuple,
-      {match, [_, AParams]} = re:run(Payload,?PATH_ADDIT,[dotall,{capture,[1,2],binary}]),
+      {match, [_, AParams]} = re:run(Payload, ?PATH_ADDIT, [dotall, {capture, [1, 2], binary}]),
       [BRssi, BIntegr] = split_bin_comma(AParams),
       El = { bin_to_num(BRssi), bin_to_num(BIntegr), {Params, Tuple} },
       insertETS(SM, list_current_wvp, readETS(SM, list_current_wvp) ++ [El]);
-    _ ->
-      SM
+    _ -> SM
   end.
 
 update_rout_table(SM, NRouting_table) ->
   ORouting_table = readETS(SM, routing_table),
   LRouting_table = if ORouting_table =:= 255 -> [255]; true -> ORouting_table end,
-  SMN1 = lists:foldr(
-           fun(X, SMTmp) ->
-               if is_tuple(X) -> fsm:set_timeout(SMTmp, {s, readETS(SMTmp, path_life)}, {path_life, X});
-                  true-> SMTmp
-               end
-           end, SM, NRouting_table),
-  {SMN2, FL} = lists:foldr(
-                 fun(X, {SMTmp, A}) ->
-                     case X of
-                       {From,_} ->
-                         case lists:keyfind(From, 1, NRouting_table) of
-                           false ->
-                             {SMTmp, [X   | A]};
-                           Key ->
-                             SMTmp1 = if (X =:= Key) -> SMTmp; true -> fsm:clear_timeout(SMTmp, X) end,
-                             {SMTmp1, [Key | A]} end;     % new element, have to set new timeout, clear old
-                       _ -> {SMTmp, A}
-                     end
-                 end, {SMN1, []}, LRouting_table),
-  Routing_table = lists:reverse(lists:usort(sets:to_list(sets:from_list(FL ++ NRouting_table)))), % sort and delete dublicated
+  SMN1 =
+  lists:foldr(
+     fun(X, SMTmp) ->
+       if is_tuple(X) -> fsm:set_timeout(SMTmp, {s, readETS(SMTmp, path_life)}, {path_life, X});
+          true-> SMTmp
+       end
+     end, SM, NRouting_table),
+  {SMN2, FL} =
+  lists:foldr(
+     fun(X, {SMTmp, A}) ->
+       case X of
+         {From, _} ->
+           case lists:keyfind(From, 1, NRouting_table) of
+             false -> {SMTmp, [X | A]};
+             Key ->
+               SMTmp1 = if (X =:= Key) -> SMTmp; true -> fsm:clear_timeout(SMTmp, X) end,
+               % new element, have to set new timeout, clear old
+               {SMTmp1, [Key | A]} end;
+         _ -> {SMTmp, A}
+       end
+     end, {SMN1, []}, LRouting_table),
+  % sort and delete dublicated
+  Routing_table = lists:reverse(lists:usort(sets:to_list(sets:from_list(FL ++ NRouting_table)))),
   ?INFO(?ID, "+++ Updated routing table ~w ~n", [Routing_table]),
   insertETS(SMN2, routing_table, Routing_table),
   SMN2.
 
 get_current_neighbours(SM) ->
   case readETS(SM, current_neighbours) of
-    not_inside ->
-      no_neighbours;
-    _ ->
-      neighbours_to_bin(SM, mac)
+    not_inside -> no_neighbours;
+    _ -> neighbours_to_bin(SM, mac)
   end.
 
-process_pkg_id(SM, Tuple = {RemotePkgID,RecvNLSrc,RecvNLDst,_}) ->
+process_pkg_id(SM, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
   Local_address = readETS(SM, local_address),
   LocalPkgID = readETS(SM, packet_id),
   MoreRecent = sequence_more_recent(RemotePkgID, LocalPkgID, readETS(SM, max_pkg_id)),
-  PkgIDOld = if MoreRecent -> insertETS(SM, packet_id, RemotePkgID), false; true -> true end,
+  PkgIDOld =
+  if MoreRecent -> insertETS(SM, packet_id, RemotePkgID), false;
+    true -> true
+  end,
   %% not to relay packets with older ids
   case PkgIDOld of
-    true when ((RecvNLDst =/= Local_address) and (RecvNLSrc =/= Local_address)) ->
-      old_id;
-    true when (RecvNLSrc =:= Local_address) ->
-      proccessed;
+    true when ((RecvNLDst =/= Local_address) and
+              (RecvNLSrc =/= Local_address)) -> old_id;
+    true when (RecvNLSrc =:= Local_address) -> proccessed;
     _ ->
       Queue_ids = readETS(SM, queue_ids),
       NewQ =
       case queue:len(Queue_ids) of
         Len when Len >= 10 ->
-          {_, Queue_out} = queue:out(Queue_ids), Queue_out;
+          {_, Queue_out} = queue:out(Queue_ids),
+          Queue_out;
         _ ->
           Queue_ids
       end,
@@ -659,7 +664,9 @@ process_pkg_id(SM, Tuple = {RemotePkgID,RecvNLSrc,RecvNLDst,_}) ->
 %%--------------------------------------------------  RTT functions -------------------------------------------
 getRTT(SM, RTTTuple) ->
   CurrentRTT  = readETS(SM, RTTTuple),
-  if CurrentRTT =:= not_inside -> readETS(SM, rtt); true -> CurrentRTT end.
+  if CurrentRTT =:= not_inside -> readETS(SM, rtt);
+    true -> CurrentRTT
+  end.
 
 smooth_RTT(SM, Flag, RTTTuple={_,_,Dst}) ->
   ?TRACE(?ID, "RTT receiving AT command ~p~n", [RTTTuple]),
@@ -668,21 +675,30 @@ smooth_RTT(SM, Flag, RTTTuple={_,_,Dst}) ->
      true ->
        EndValMicro = timer:now_diff(erlang:now(), Time_send_msg),
        CurrentRTT = getRTT(SM, RTTTuple),
-       Smooth_RTT = if Flag =:= direct -> lerp( CurrentRTT, convert_t(EndValMicro, {us, s}), 0.05); true -> lerp(CurrentRTT, readETS(SM, rtt), 0.05) end,
+       Smooth_RTT =
+       if Flag =:= direct -> lerp( CurrentRTT, convert_t(EndValMicro, {us, s}), 0.05);
+        true -> lerp(CurrentRTT, readETS(SM, rtt), 0.05)
+       end,
        Max_rtt = readETS(SM, max_rtt),
        cleanETS(SM, {last_nl_sent_time, RTTTuple}),
-       Val = if Smooth_RTT > Max_rtt -> insertETS(SM, RTTTuple, Max_rtt), Max_rtt; true -> insertETS(SM, RTTTuple, Smooth_RTT), Smooth_RTT end,
+       Val =
+       if Smooth_RTT > Max_rtt -> insertETS(SM, RTTTuple, Max_rtt), Max_rtt;
+        true -> insertETS(SM, RTTTuple, Smooth_RTT),
+                Smooth_RTT
+       end,
        ?TRACE(?ID, "Smooth_RTT for Src ~p and Dst ~p is ~120p~n", [readETS(SM, local_address), Dst, Val])
   end.
 %%--------------------------------------------------  Other functions -------------------------------------------
 sequence_more_recent(S1, S2, Max) ->
-  if ((( S1 >= S2 ) and ( S1 - S2 =< Max/2 )) or (( S2 >= S1 ) and ( S2 - S1  > Max/2 ))) -> true; true -> false end.
+  if ((( S1 >= S2 ) and ( S1 - S2 =< Max / 2 )) or (( S2 >= S1 ) and ( S2 - S1  > Max / 2 ))) -> true;
+    true -> false
+  end.
 
 bin_to_num(Bin) ->
   N = binary_to_list(Bin),
   case string:to_float(N) of
-    {error,no_float} -> list_to_integer(N);
-    {F,_Rest} -> F
+    {error, no_float} -> list_to_integer(N);
+    {F, _Rest} -> F
   end.
 
 increase_pkgid(SM) ->
@@ -709,7 +725,6 @@ init_dets(SM) ->
     _ -> dets:insert(Ref, {NL_protocol, 0}),
          insertETS(SM, packet_id, 0)
   end,
-
   B1 = dets:lookup(Ref, NL_protocol),
   ?INFO(?ID, "Init dets LA ~p ~p~n", [LA, B1]),
   SM1#sm{dets_share = Ref}.
@@ -729,8 +744,11 @@ split_bin_comma(Bin) when is_binary(Bin) ->
 
 neighbours_to_bin(SM, Type) ->
   Current_neighbours = readETS(SM, current_neighbours),
-  lists:foldr(fun(X,A) ->
-                  Sign = if byte_size(A)=:=0-> ""; true-> "," end,
+  lists:foldr(fun(X, A) ->
+                  Sign =
+                  if byte_size(A) =:= 0-> "";
+                    true-> ","
+                  end,
                   case Type of
                     mac -> list_to_binary([integer_to_binary(addr_nl2mac(SM, X)), Sign, A]);
                     nl  -> list_to_binary([integer_to_binary(X), Sign, A])
@@ -746,7 +764,7 @@ routing_to_bin(SM) ->
     _ ->
       lists:foldr(
         fun(X,A) ->
-            Sign = if byte_size(A)=:=0-> ""; true-> "," end,
+            Sign = if byte_size(A) =:= 0-> ""; true -> "," end,
             case X of
               {From, To} ->
                 if (From =/= Local_address) -> list_to_binary([integer_to_binary(From),"->",integer_to_binary(To), Sign, A]);
@@ -762,8 +780,8 @@ add_item_to_queue(SM, Qname, Item, Max) ->
   Q = readETS(SM, Qname),
   NewQ=
   case queue:len(Q) of
-    Len when Len >= Max   ->  {_, Queue_out} = queue:out(Q), Queue_out;
-    _             ->  Q
+    Len when Len >= Max ->  {_, Queue_out} = queue:out(Q), Queue_out;
+    _ ->  Q
   end,
   insertETS(SM, Qname, queue:in(Item, NewQ)).
 %%--------------------------------------------------  command functions -------------------------------------------
@@ -784,19 +802,18 @@ process_command(SM, Command) ->
       [readETS(SM, st_neighbours), neighbours];
     {statistics,_,data} when Protocol#pr_conf.ack ->
       [readETS(SM, st_data), data];
-    {protocol,_,info} ->
+    {protocol, _,info} ->
       [readETS(SM, np), protocol_info];
-    {protocol,_,state} ->
+    {protocol, _,state} ->
       [readETS(SM, pr_state), protocol_state];  % check if needed
-    {protocol,_,states} ->
+    {protocol, _,states} ->
       Pr_states = readETS(SM, pr_states),
       [queue:to_list(Pr_states), protocols_state]; % check if needed
-    {protocol,_,neighbours} ->
+    {protocol, _,neighbours} ->
       [readETS(SM, current_neighbours), neighbours];
-    {protocol,_,routing} ->
+    {protocol, _,routing} ->
       [readETS(SM, routing_table), routing];
-    _ ->
-      [error, nothing]
+    _ -> [error, nothing]
   end,
   case Req of
     error ->
@@ -807,23 +824,23 @@ process_command(SM, Command) ->
       case Command of
         {fsm,_} ->
           if Asw =:= state ->
-               L = list_to_binary([atom_to_binary(SM#sm.state,utf8),"(",atom_to_binary(SM#sm.event,utf8),")"]),
+               L = list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")"]),
                fsm:cast(SM, nl, {send, {sync, {nl, fsm, Asw, L}} });
              true -> fsm:cast(SM, nl, {send, {sync, {nl, fsm, Asw, list_to_binary(Req)}} })
           end;
         {statistics,_,paths} when Protocol#pr_conf.pf ->
           fsm:cast(SM, nl, {send, {sync, {nl, statistics, paths, get_stat(SM, paths) }} });
-        {statistics,_,neighbours} ->
+        {statistics, _,neighbours} ->
           fsm:cast(SM, nl, {send, {sync, {nl, statistics, neighbours, get_stat(SM, st_neighbours) }} });
-        {statistics,_,data} when Protocol#pr_conf.ack ->
+        {statistics, _,data} when Protocol#pr_conf.ack ->
           fsm:cast(SM, nl, {send, {sync, {nl, statistics, data, get_stat_data(SM, st_data) }} });
         protocols ->
           fsm:cast(SM, nl, {send, {sync, {nl, Command, Req}} });
         {protocol, Name, info} ->
           fsm:cast(SM, nl, {send, {sync, {nl, protocol, Asw, get_protocol_info(SM, Name)}} });
-        {protocol,_, neighbours} ->
+        {protocol, _, neighbours} ->
           fsm:cast(SM, nl, {send, {sync, {nl, protocol, Asw, neighbours_to_bin(SM, nl)} }});
-        {protocol,_, routing} ->
+        {protocol, _, routing} ->
           fsm:cast(SM, nl, {send, {sync, {nl, protocol, Asw, routing_to_bin(SM)} }});
         {protocol, Name, state} ->
           L = list_to_binary([atom_to_binary(Name,utf8), ",", Req]),
@@ -849,7 +866,7 @@ update_states_list(SM) ->
   lists:filter(fun({St, _Descr}) -> St =:= SM#sm.state end, ?STATE_DESCR),
   insertETS(SM, pr_state, Msg),
   add_item_to_queue(SM, pr_states, Msg, 50),
-  add_item_to_queue(SM, last_states, list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8),")\n"]), 50).
+  add_item_to_queue(SM, last_states, list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")\n"]), 50).
 
 get_protocol_info(SM, Name) ->
   BName = atom_to_binary(Name, utf8),
@@ -858,30 +875,34 @@ get_protocol_info(SM, Name) ->
 
 get_stat_data(SM, Qname) ->
   PT = readETS(SM, Qname),
-  lists:foldr(fun(X,A) ->
-                  {Role, Payload, Time, Length, State, TS, Dst, Count_hops} = X,
-                  TRole = if Role =:= source -> "Source"; true -> "Relay" end,
-                  BTime = list_to_binary(lists:flatten(io_lib:format("~.1f",[Time]))),
-                  [list_to_binary(["\n ", TRole, " Data:",Payload, " Len:", covert_type_to_bin(Length),
-                                   " Duration:", BTime, " State:", State, " Total:", integer_to_binary(TS),
-                                   " Dst:", integer_to_binary(Dst), " Hops:", integer_to_binary(Count_hops)]) | A]
-              end,[],queue:to_list(PT)).
+  lists:foldr(
+    fun(X,A) ->
+      {Role, Payload, Time, Length, State, TS, Dst, Count_hops} = X,
+      TRole = if Role =:= source -> "Source"; true -> "Relay" end,
+      BTime = list_to_binary(lists:flatten(io_lib:format("~.1f",[Time]))),
+      [list_to_binary(
+        ["\n ", TRole, " Data:",Payload, " Len:", covert_type_to_bin(Length),
+         " Duration:", BTime, " State:", State, " Total:", integer_to_binary(TS),
+         " Dst:", integer_to_binary(Dst), " Hops:", integer_to_binary(Count_hops)]) | A]
+    end,[],queue:to_list(PT)).
 
 get_stat(SM, Qname) ->
   PT = readETS(SM, Qname),
-  lists:foldr(fun(X,A) ->
-                  {Role, Val, Time, Count, TS}=X,
-                  TRole = if Role =:= source -> "Source"; true -> "Relay" end,
-                  BTime = list_to_binary(lists:flatten(io_lib:format("~.1f",[Time]))),
-                  TVal =
-                  case Qname of
-                    paths -> "Path:";
-                    st_neighbours -> "Neighbour:"
-                  end,
-                  [list_to_binary(["\n ", TRole, " ", TVal, covert_type_to_bin(Val),
-                                   " Time:", BTime, " Count:", integer_to_binary(Count),
-                                   " Total:", integer_to_binary(TS)]) | A]
-              end,[],queue:to_list(PT)).
+  lists:foldr(
+    fun(X,A) ->
+      {Role, Val, Time, Count, TS}=X,
+      TRole = if Role =:= source -> "Source"; true -> "Relay" end,
+      BTime = list_to_binary(lists:flatten(io_lib:format("~.1f", [Time]))),
+      TVal =
+      case Qname of
+        paths -> "Path:";
+        st_neighbours -> "Neighbour:"
+      end,
+      [list_to_binary(
+        ["\n ", TRole, " ", TVal, covert_type_to_bin(Val),
+         " Time:", BTime, " Count:", integer_to_binary(Count),
+         " Total:", integer_to_binary(TS)]) | A]
+    end, [], queue:to_list(PT)).
 
 analyse(SM, QName, BPath, {Real_src, Real_dst}) ->
   Local_address = readETS(SM, local_address),
@@ -897,19 +918,20 @@ analyse(SM, QName, BPath, {Real_src, Real_dst}) ->
       if BPath =:= nothing -> <<>>;
          true ->
            SPath = lists:foldr(
-                     fun(X,A) ->
+                     fun(X, A) ->
                          [binary_to_integer(X)| A]
                      end, [], split_bin_comma(BPath)),
            lists:foldr(
-             fun(X,A) ->
-                 Sign = if byte_size(A)=:=0-> ""; true-> "," end,
+             fun(X, A) ->
+                 Sign =
+                 if byte_size(A) =:= 0 -> "";
+                  true -> ","
+                 end,
                  list_to_binary([ integer_to_binary(addr_mac2nl(SM, X)), Sign, A])
              end, <<>>, lists:reverse(SPath))
       end;
-    st_neighbours ->
-      BPath;
-    st_data ->
-      BPath
+    st_neighbours -> BPath;
+    st_data -> BPath
   end,
   case T of
     not_inside  when QName =/= st_data ->
@@ -930,8 +952,7 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
   case queue:len(Q) of
     Len when Len >= Max ->
       {_, Queue_out} = queue:out(Q), Queue_out;
-    _ ->
-      Q
+    _ -> Q
   end,
   case Qname of
     st_data ->
@@ -939,16 +960,19 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
     _ ->
       {R, NP, NT, _, NewTS} = Item,
       L =
-      lists:foldr(fun({Role, P, T, Count, TS},A)->
-                      if R =:= Role ->
-                           case P of
-                             NP when T > 0    -> [{Role, P, (T+NT)/2, Count + 1, TS} | A];
-                             NP when T =:= 0.0 -> [{Role, P, T, Count + 1, TS} | A];
-                             _  when T >= 0     -> [{Role, P, T, Count, TS} | A]
-                           end;
-                         true -> [{Role, P, T, Count, TS} | A] end end,[],queue:to_list(NewQ)),
+      lists:foldr(
+        fun({Role, P, T, Count, TS},A)->
+          if R =:= Role ->
+               case P of
+                 NP when T > 0 -> [{Role, P, (T + NT) / 2, Count + 1, TS} | A];
+                 NP when T =:= 0.0 -> [{Role, P, T, Count + 1, TS} | A];
+                 _  when T >= 0 -> [{Role, P, T, Count, TS} | A]
+               end;
+             true -> [{Role, P, T, Count, TS} | A]
+          end
+        end,[],queue:to_list(NewQ)),
       QQ =
-      case L=:= queue:to_list(NewQ) of
+      case L =:= queue:to_list(NewQ) of
         true  -> queue:in(Item, NewQ);
         false -> queue:from_list(L)
       end,
