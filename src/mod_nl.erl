@@ -83,17 +83,17 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   CurrentProtocol = parse_conf(ArgS, Share),
-  lists:foldr(fun(X,_)-> [PIDTmp, ParamsTmp, SMTmp] = conf_fsm(X), conf_protocol(CurrentProtocol, Share, X, PIDTmp, ParamsTmp, SMTmp) end, [], ?LIST_ALL_PROTOCOLS),
+  lists:foldr(fun(X, _)-> [PIDTmp, ParamsTmp, SMTmp] = conf_fsm(X), conf_protocol(CurrentProtocol, Share, X, PIDTmp, ParamsTmp, SMTmp) end, [], ?LIST_ALL_PROTOCOLS),
 
   Module = conf_fsm(CurrentProtocol),
   if Module =:= error ->
     ?ERROR(Mod_ID, "!!! No NL protocol ID!~n", []);
   true ->
-    [_,_, SMN] = Module,
+    [_, _, SMN] = Module,
     [{local_address, La}] = ets:lookup(Share, local_address),
     DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
     Roles = fsm_worker:role_info(Role_IDs, [alh, nl]),
-    {ok,Ref} = dets:open_file(DetsName,[]),
+    {ok, Ref} = dets:open_file(DetsName,[]),
     [#sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
 %%-------------------------------------- Parse config file ---------------------------------
@@ -150,7 +150,7 @@ parse_conf(ArgS, Share) ->
   NL_Protocol.
 
 conf_fsm(Protocol) ->
-  [{_, Decr}] = lists:filter(fun({PN,_})-> PN =:= Protocol end, ?PROTOCOL_CONF),
+  [{_, Decr}] = lists:filter(fun({PN, _})-> PN =:= Protocol end, ?PROTOCOL_CONF),
   Decr.
 
 conf_protocol(CurrentProtocol, Share, Protocol, Pid, Params, SMName) ->
@@ -208,9 +208,9 @@ set_timeouts(Tmo, Defaults) ->
 
 set_routing(Routing_addrs, NL_Protocol, Default) ->
   case NL_Protocol of
-    _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs=/=[])) ->
+    _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs =/= [])) ->
       [TupleRouting] = Routing_addrs, [{255,255} | tuple_to_list(TupleRouting)];
-    _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs=:=[])) ->
+    _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs =:= [])) ->
       io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. \n!!! As a defualt value will be set 255 broadcast"), Default;
     _ -> Default
   end.

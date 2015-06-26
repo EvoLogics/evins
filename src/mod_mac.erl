@@ -45,10 +45,10 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   Module =
   case parse_conf(ArgS, Share) of
-    csma_alh    -> fsm_csma_alh;
-    cut_lohi    -> fsm_t_lohi;
-    dacap       -> fsm_dacap;
-    _           -> error
+    csma_alh  -> fsm_csma_alh;
+    cut_lohi  -> fsm_t_lohi;
+    dacap     -> fsm_dacap;
+    _         -> error
   end,
   Roles = fsm_worker:role_info(Role_IDs, [at, alh]),
   if Module =:= error-> ?ERROR(Mod_ID, "No MAC protocol ID!~n", []);
