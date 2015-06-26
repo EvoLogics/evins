@@ -31,9 +31,9 @@
 -include("fsm.hrl").
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
--export([init/1,handle_event/3,stop/1]).
+-export([init/1, handle_event/3, stop/1]).
 
--export([handle_idle/3, handle_sp/3, handle_write_alh/3, handle_final/3]).
+-export([handle_idle/3, handle_alarm/3, handle_sp/3, handle_write_alh/3, handle_final/3]).
 
 %%  CSMA-Aloha [1] (Carrier-Sense Multiple Access-Aloha) is an Aloha
 %%  enhancement whereby short random channel sensing periods precede
@@ -150,7 +150,7 @@ handle_event(MM, SM, Term) ->
   case Term of
     {timeout, Event} ->
       ?INFO(?ID, "timeout ~140p~n", [Event]),
-      fsm:run_event(MM, SM#sm{event=Event}, {});
+      fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
@@ -158,16 +158,16 @@ handle_event(MM, SM, Term) ->
       fsm:send_at_command(SM, {at, binary_to_list(Msg), ""});
     {rcv_ul, {command, C}} ->
       fsm:send_at_command(SM, {at, binary_to_list(C), ""});
-    {rcv_ul, {at,_,_,_,_}} ->
+    {rcv_ul, {at, _, _, _, _}} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
-    {rcv_ul, Msg={at,_PID,_,_,_,_}} ->
-      fsm:run_event(MM, SM#sm{event=rcv_ul}, {rcv_ul, Msg});
-    {async,_,{recvims,_,_,_,_,_,_,_,_,_}} ->
+    {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
+      fsm:run_event(MM, SM#sm{event = rcv_ul}, {rcv_ul, Msg});
+    {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
-    {async, PID, Tuple={recvim,_,_,_,_,_,_,_,_,_}} ->
+    {async, PID, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
       [H | T] = tuple_to_list(Tuple),
-      BPid=
+      BPid =
       case PID of
         {pid, NPid} -> <<"p", (integer_to_binary(NPid))/binary>>
       end,
@@ -176,10 +176,10 @@ handle_event(MM, SM, Term) ->
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       case Tuple of
-        {sendstart,_,_,_,_} -> fsm:run_event(MM, SM#sm{event=sendstart},{});
-        {sendend,_,_,_,_} -> fsm:run_event(MM, SM#sm{event=sendend},{});
-        {recvstart}       -> fsm:run_event(MM, SM#sm{event=recvstart},{});
-        {recvend,_,_,_,_} -> fsm:run_event(MM, SM#sm{event=recvend},{});
+        {sendstart, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = sendstart},{});
+        {sendend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = sendend},{});
+        {recvstart}       -> fsm:run_event(MM, SM#sm{event = recvstart},{});
+        {recvend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = recvend},{});
         _ -> SM
       end;
     {sync, _Req,Answer} ->
@@ -206,14 +206,14 @@ handle_sp(_MM, SM, Term) ->
       case fsm:check_timeout(SM, backoff_timeout) of
         false ->
           Backoff_tmp = change_backoff(SM, increment),
-          fsm:set_timeout(SM#sm{event=eps}, {s, Backoff_tmp}, backoff_timeout);
+          fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
         true  ->
           fsm:cast(SM, alh,  {send, {sync, "OK"} }),
           SM#sm{event = eps}
       end;
     _ when SM#sm.event =:= backoff_timeout ->
       Backoff_tmp = change_backoff(SM, increment),
-      fsm:set_timeout(SM#sm{event=eps}, {s, Backoff_tmp}, backoff_timeout);
+      fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
     _ -> SM#sm{event = eps}
   end.
 
@@ -227,6 +227,10 @@ handle_write_alh(_MM, SM, Term) ->
     _ when SM#sm.event =:= backoff_timeout ->
       fsm:send_at_command(SM1, nl_mac_hf:readETS(SM1, current_msg)), SM#sm{event = data_sent}
   end.
+
+-spec handle_alarm(any(), any(), any()) -> no_return().
+handle_alarm(_MM, SM, _Term) ->
+    exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
@@ -250,7 +254,7 @@ change_backoff(SM, Type) ->
     decrement -> case ( Exp - 1 > 0 ) of true -> Exp - 1; false -> 0 end
   end,
   Current_Backoff = math:pow(2, Current_Step),
-  NewStep= check_limit(SM, Current_Backoff, Current_Step),
+  NewStep = check_limit(SM, Current_Backoff, Current_Step),
   nl_mac_hf:insertETS(SM, current_step, NewStep),
   Val = math:pow(2, nl_mac_hf:readETS(SM, current_step)),
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
