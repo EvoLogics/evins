@@ -33,15 +33,15 @@
 
 -export([start/3, stop/1, to_term/3, from_term/2, ctrl/2, split/2]).
 
--record(config, {filter,mode,waitsync,request,telegram,eol,ext_networking,pid}).
+-record(config, {filter, mode, waitsync, request, telegram, eol, ext_networking, pid}).
 
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-  Cfg = #config{filter=nl,mode=data,waitsync=no,request="",telegram="",eol="\n",ext_networking=no,pid=0},
+  Cfg = #config{filter = nl, mode = data, waitsync = no, request = "", telegram = "", eol = "\n", ext_networking = no, pid = 0},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
-ctrl(_,Cfg) -> Cfg.
+ctrl(_, Cfg) -> Cfg.
 
 to_term(Tail, Chunk, Cfg) ->
   role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
@@ -60,13 +60,13 @@ from_term_helper(Tuple,_,_) when is_tuple(Tuple) ->
   end.
 
 split(L, Cfg) ->
-  case re:run(L,"\n") of
-    {match, [{_,_}]} ->
-      case re:run(L,"^(NL,send,)(.*)",[dotall,{capture,[1,2],binary}]) of
-        {match, [<<"NL,send,">>,P]}	-> nl_send_extract(P,Cfg);
+  case re:run(L, "\n") of
+    {match, [{_, _}]} ->
+      case re:run(L, "^(NL,send,)(.*)", [dotall, {capture, [1, 2], binary}]) of
+        {match, [<<"NL,send,">>,P]}	-> nl_send_extract(P, Cfg);
         nomatch ->
-          case re:run(L,"^(NL,get,)(.*?)[\n]+(.*)",[dotall,{capture,[1,2,3],binary}]) of
-            {match, [<<"NL,get,">>,P,L1]} -> [ param_extract(P)| split(L1,Cfg)];
+          case re:run(L,"^(NL,get,)(.*?)[\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+            {match, [<<"NL,get,">>, P, L1]} -> [ param_extract(P) | split(L1, Cfg)];
             nomatch -> [ {nl, error} ]
           end
       end;
@@ -75,20 +75,19 @@ split(L, Cfg) ->
 
 nl_send_extract(P, Cfg) ->
   try
-    {match, [ProtocolID, BDst, PayloadTail]} = re:run(P,"([^,]*),([^,]*),(.*)",[dotall,{capture,[1,2,3],binary}]),
+    {match, [ProtocolID, BDst, PayloadTail]} = re:run(P,"([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3], binary}]),
     PLLen = byte_size(PayloadTail),
     IDst = binary_to_integer(BDst),
     AProtocolID = binary_to_atom(ProtocolID, utf8),
     case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
       true ->
         OPLLen = PLLen - 1,
-        {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)",[dotall,{capture,[1,2],binary}]),
+        {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
         Tuple = {nl, send, IDst, Payload},
         [{rcv_ul, AProtocolID, Tuple} | split(Tail1,Cfg)];
-      false ->
-        [{nl,error}]
+      false -> [{nl, error}]
     end
-  catch error:_Reason -> [{nl,error}]
+  catch error: _Reason -> [{nl, error}]
   end.
 
 param_extract(P) ->
@@ -96,47 +95,47 @@ param_extract(P) ->
     protocols ->
       {rcv_ul, get, protocols};
     _ ->
-    case re:run(P,"(protocol,|fsm,|stats,)(.*)",[dotall,{capture,[1,2],binary}]) of
+    case re:run(P,"(protocol,|fsm,|stats,)(.*)", [dotall, {capture, [1, 2], binary}]) of
       {match, [<<"protocol,">>, Name]} -> protocol_extract(Name);
       {match, [<<"fsm,">>, Name]} -> state_extract(Name);
       {match, [<<"stats,">>, Name]} -> stat_extract(Name);
-      nomatch -> {nl,error}
+      nomatch -> {nl, error}
     end
   end.
 
 protocol_extract(P) ->
   try
-    {match, [Name, Command]} = re:run(P,"([^,]*),(.*)",[dotall,{capture,[1,2],binary}]),
+    {match, [Name, Command]} = re:run(P,"([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]),
     case lists:member(NPA = binary_to_atom(Name, utf8), ?LIST_ALL_PROTOCOLS) of
       true ->
         case CPA = binary_to_atom(Command, utf8) of
           _ when CPA =:= info; CPA =:= state; CPA =:= states; CPA =:= neighbours; CPA =:= routing ->
             {rcv_ul, get, {protocol, NPA, CPA} };
-          _ -> {nl,error}
+          _ -> {nl, error}
         end;
-      false -> {nl,error}
+      false -> {nl, error}
     end
-  catch error:_Reason -> {nl,error}
+  catch error: _Reason -> {nl, error}
   end.
 
 state_extract(Name) ->
   case NPA = binary_to_atom(Name, utf8) of
     _ when NPA =:= state; NPA =:= states ->
       {rcv_ul, get, {fsm, NPA} };
-    _ -> {nl,error}
+    _ -> {nl, error}
   end.
 
 stat_extract(P) ->
   try
-    {match, [Name, Command]} = re:run(P,"([^,]*),(.*)",[dotall,{capture,[1,2],binary}]),
+    {match, [Name, Command]} = re:run(P,"([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]),
     case lists:member(NPA = binary_to_atom(Name, utf8), ?LIST_ALL_PROTOCOLS) of
       true ->
         case CPA = binary_to_atom(Command, utf8) of
           _ when CPA =:= paths; CPA =:= neighbours; CPA =:= data ->
             {rcv_ul, get, {statistics, NPA, CPA} };
-          _ -> {nl,error}
+          _ -> {nl, error}
         end;
-      false -> {nl,error}
+      false -> {nl, error}
     end
-  catch error:_Reason -> {nl,error}
+  catch error: _Reason -> {nl, error}
   end.
