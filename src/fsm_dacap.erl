@@ -173,9 +173,9 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, T = {at, _PID, _, IDst, _, _}} ->
       if State =:= idle->
            nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0}),
-           if IDst =:= 255 ->  fsm:cast(SM, at, {send, T});
-              true -> nl_mac_hf:insertETS(SM, current_pkg, T),
-                      fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, T})
+           if IDst =:= 255 -> fsm:send_at_command(SM, T);
+            true -> nl_mac_hf:insertETS(SM, current_pkg, T),
+                    fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, T})
            end;
          true -> fsm:cast(SM, alh,  {send, {sync, "OK"} }), SM
       end;
