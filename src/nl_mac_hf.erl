@@ -175,9 +175,9 @@ send_cts(SM, Interface, MACP, Timestamp, USEC, Dur) ->
 
 send_mac(SM, _Interface, Flag, MACP) ->
   AT = mac2at(Flag, MACP),
-  SM1 = fsm:send_at_command(SM, AT),
+  fsm:send_at_command(SM, AT).
   %SM1 = fsm:cast(SM, Interface, {send, AT}),
-  fsm:set_event(SM1, eps).
+  %fsm:set_event(SM1, eps).
 
 send_ack(SM,  {send_ack, {_, [Packet_id, _, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src, _}}}, Count_hops) ->
   send_nl_command(SM, alh, {ack, [Packet_id, Real_src, []]}, {nl, send, Real_dst, integer_to_binary(Count_hops)}).

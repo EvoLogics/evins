@@ -87,6 +87,7 @@
                  [{rcv_cts_fm, ws_data},
                   {rcv_rts_nfm, backoff},
                   {rcv_cts_nfm, backoff},
+                  {rcv_rts_fm, scts}, % test!!!!
                   {error, idle},
                   {wcts_end, backoff}
                  ]},
@@ -146,12 +147,12 @@ stop(_SM)      -> ok.
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
+  io:format("*************** ~p St ~p Term ~p ~n", [?ID, SM#sm.state, Term]),
   State = SM#sm.state,
   case Term of
     {timeout, Event} ->
       ?INFO(?ID, "timeout ~140p~n", [Event]),
       case Event of
-        answer_timeout -> SM;
         wcts_end ->
           fsm:run_event(MM, SM#sm{event = wcts_end}, wcts_end);
         send_data ->
@@ -199,11 +200,11 @@ handle_event(MM, SM, Term) ->
         data ->
           SM1 = fsm:clear_timeout(SM, no_data),
           fsm:run_event(MM, SM1#sm{event = rcv_data}, {});
-        rts_fm when State =:= wdata ->
-          SM1 = fsm:send_at_command(SM, {at, "?CLOCK", ""}),
-          STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
+        rts_fm when State =:= wdata; State =:= wcts ->
+          %SM1 = fsm:send_at_command(SM, {at, "?CLOCK", ""}),
           nl_mac_hf:send_helpers(SM, at, nl_mac_hf:readETS(SM, wait_data), warn),
-          fsm:run_event(MM, SM1#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}}, {});
+          STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
+          fsm:run_event(MM, SM#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}}, {});
         rts_fm ->
           SM1 = fsm:send_at_command(SM, {at, "?CLOCK", ""}),
           STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
@@ -214,7 +215,7 @@ handle_event(MM, SM, Term) ->
           SM1 = fsm:set_timeout(SM, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end),
           fsm:run_event(MM, SM1#sm{event = rcv_rts_nfm}, {});
         cts_nfm when ((State =:= wcts) and Tmo_defer_trans) ->
-          fsm:run_event(MM, SM#sm{event = eps}, {});
+          SM;
         cts_nfm ->
           SM1 = fsm:set_timeout(SM, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end),
           fsm:run_event(MM, SM1#sm{event = rcv_cts_nfm}, {});
@@ -238,18 +239,21 @@ handle_event(MM, SM, Term) ->
           nl_mac_hf:insertETS(SM, cts_rts_time_total, {Timestemp1 - TDur, 0}), SM;
         _ -> SM
       end;
+    {sync, _, {error, _}} ->
+      fsm:run_event(MM, SM#sm{event = alarm}, {});
     {sync, Req, Answer} ->
-      fsm:cast(SM, alh, {send, {sync, Answer} }),
-      [Param_Term, SM1] = nl_mac_hf:event_params(SM, Term, rcv_rts_fm),
+      SMAT = fsm:clear_timeout(SM, answer_timeout),
+      fsm:cast(SMAT, alh, {send, {sync, Answer} }),
+      [Param_Term, SM1] = nl_mac_hf:event_params(SMAT, Term, rcv_rts_fm),
       case Param_Term of
         {rcv_rts_fm, STuple} when Req =:= "?CLOCK" ->
           Timestemp2 = list_to_integer(Answer),
           case nl_mac_hf:readETS(SM1, cts_rts_time_total) of
             {Timestemp1, 0} ->
               SM2 = nl_mac_hf:send_cts(SM, at, STuple, Timestemp2, 1000000, Timestemp2 - Timestemp1),
-              {at,_,_,IDst,_,_} = STuple,
-              C = nl_mac_hf:readETS(SM, sound_speed),
-              U = get_distance(SM, IDst),
+              {at, _, _, IDst, _, _} = STuple,
+              C = nl_mac_hf:readETS(SM2, sound_speed),
+              U = get_distance(SM2, IDst),
               T = U/C,
               Tmin = T,
               SM3 = fsm:set_timeout(SM2, {s, 2 * T - Tmin}, tmo_send_warn),
@@ -326,11 +330,16 @@ handle_ws_data(_MM, SMP, Term) ->
   [Param_Term, SM] = nl_mac_hf:event_params(SMP, Term, rcv_cts_fm),
   ?TRACE(?ID, "~120p~n", [Term]),
   SM1 = fsm:clear_timeout(SM, wcts_end),
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Param_Term of
     {rcv_cts_fm, RTmo, Src} ->
       update_wcts(SM1, RTmo, Src),
       Wcts_time = calc_wcts(SM, Src),
       fsm:set_timeout(SM1#sm{event = eps}, {s, Wcts_time}, send_data);
+    send_data when Answer_timeout =:= true->
+      % if answer_timeout exists, it means, that channel is busy
+      % try to send data once more in 100 ms
+      fsm:set_timeout(SM1#sm{event = eps}, {ms, 100}, send_data);
     send_data ->
       SM2 = nl_mac_hf:send_mac(SM1, at, data, nl_mac_hf:readETS(SM, current_pkg)),
       nl_mac_hf:cleanETS(SM2, current_pkg),
@@ -367,6 +376,7 @@ handle_wdata(_MM, SM, Term) ->
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
+    init:stop(),
     exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
@@ -445,7 +455,7 @@ process_recv(SM, T) ->
   if Dst =:= 255 ->
        [SM, {raw, {Len, Src, Dst, P1, P2, P3, P4, P5, Payl}}];
      true ->
-       case re:run(Payl,"([^,]*),(.*)",[dotall,{capture,[1,2],binary}]) of
+       case re:run(Payl, "([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]) of
          {match, [BFlag, Data]} ->
            Flag = nl_mac_hf:num2flag(BFlag, mac),
            ShortTuple = {Len - 2, Src, Dst, P1, P2, P3, P4, P5, Data},
