@@ -353,7 +353,7 @@ handle_swv(_MM, SMP, Term) ->
   case Param_Term of
     {send, Params={_,[_,ISrc,_]}, Tuple={nl,send,Idst,_}} ->
       SM1 = nl_mac_hf:send_nl_command(SM, alh, Params, Tuple),
-      if SM1 =:= error -> fsm:cast(SM, nl, {send, {nl,error}}), SM#sm{event=error, event_params={error,{ISrc, Idst}}};
+      if SM1 =:= error -> fsm:cast(SM, nl, {send, {nl, error}}), SM#sm{event=error, event_params = {error, {ISrc, Idst}}};
          true -> process_send_flag(SM, Params, Tuple)
       end;
     {relay_wv, SendTuple} ->
@@ -369,11 +369,11 @@ handle_rwv(_MM, SM, Term) ->
   case Term of
     {relay_wv, Params, Tuple} ->
       SM#sm{event = relay_wv, event_params = {relay_wv, {send, Params, Tuple}} };
-    {dst_reached, Params={Flag,_}, Tuple={async,{nl,recv,ISrc,IDst,Payload}}} ->
+    {dst_reached, Params={Flag, _}, Tuple={async, {nl, recv, ISrc, IDst, Payload}}} ->
       if Flag =:= data ->
-           case re:run(Payload,?PATH_DATA,[dotall,{capture,[1,2],binary}]) of
+           case re:run(Payload,?PATH_DATA, [dotall, {capture, [1, 2], binary}]) of
              {match, [_, NData]} ->
-               fsm:cast(SM, nl, {send, {async,{nl,recv,ISrc,IDst,NData}}});
+               fsm:cast(SM, nl, {send, {async, {nl, recv, ISrc, IDst, NData}}});
              nomatch ->
                fsm:cast(SM, nl, {send, Tuple})
            end;
@@ -392,7 +392,7 @@ handle_sack(_MM, SM, Term) ->
       [SM1,_] =
       if (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) ->
            BMAC_addr = nl_mac_hf:convert_la(SM, bin, mac),
-           {match, [BPath, BData]} = re:run(Payload,?PATH_DATA,[dotall,{capture,[1,2],binary}]),
+           {match, [BPath, BData]} = re:run(Payload,?PATH_DATA,[dotall, {capture, [1, 2], binary}]),
            NPayload = nl_mac_hf:fill_msg(?PATH_DATA, {nl_mac_hf:check_dubl_in_path(BPath, BMAC_addr), BData}),
            nl_mac_hf:parse_path(SM, Flag, ?PATH_DATA, {ISrc, IDst, NPayload});
          true ->
@@ -601,6 +601,7 @@ process_recv(SM, L) ->
        %%----------- black list----------
        case lists:member(NLSrcAT, Blacklist) of
          false ->
+           %fsm:cast(SM, nl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
            Params = [NLSrcAT, NLDstAT, IRssi, IIntegrity],
            [SMN, RTuple] = parse_rcv(SM, Params, PayloadTail),
            form_rcv_tuple(SMN, RTuple);
