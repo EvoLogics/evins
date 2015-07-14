@@ -459,7 +459,7 @@ bes_split(L) ->
 		more           -> [{more,L}]
 	    end;
 	nomatch ->	
-	    case re:run(L,"([^+]*)(\\\+{3}(AT.*?:\\d*|AT[^:]{0,10}:?|AT?|A?)|\\\+{0,2})",[{capture,[1,2],binary}]) of
+           case re:run(L,"(.*?[^+]*)(\\\+{3}(AT.*?:\\d*|AT[^:]{0,10}:?|AT?|A?)|\\\+{0,2})$",[dotall,{capture,[1,2],binary}]) of
 		{match, [Bin, <<>>]}          -> [{raw,Bin}];
 		{match, [<<>>, MaybeBESPart]} -> [{more,MaybeBESPart}];
 		{match, [Bin, MaybeBESPart]}  -> [{raw,Bin},{more,MaybeBESPart}]
