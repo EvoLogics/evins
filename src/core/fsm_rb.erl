@@ -33,6 +33,7 @@
 
 -export([list_tail/2,show_tail/2,grep_tail/2,grep_after/2]).
 
+-define(REPORT_WIN,10000).
 %%%-----------------------------------------------------------------
 %%% Report Browser Tool.
 %%% Formats Error reports written by log_mf_h
@@ -318,7 +319,13 @@ handle_call({add_report, [Bin, Offset, File]}, _From, #state{data = Data, order 
     {Last_no,_,_,_,_,_} = Last,
     {{Date,Time},{Type,Pid,_Report}} = binary_to_term(Bin),
     Ref = {Last_no-1,Type,pid_to_list(Pid),date_str(Date,Time),File,Offset},
-    {reply, ok, State#state{data = [Ref|RData], order = reverse}};
+
+    WData = case Last_no of
+		_ when Last_no < -?REPORT_WIN -> lists:droplast(RData);
+		_ -> RData
+	    end,
+
+    {reply, ok, State#state{data = [Ref|WData], order = reverse}};
 handle_call(last_no, _From, State) ->
     #state{data = Data, device = Device} = reverse_order(State),
     {Last_no,_,_,_,_,_} = hd(Data),
