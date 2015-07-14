@@ -58,6 +58,7 @@
 	  id,
 	  table,
 	  share,
+	  dets_share,
 	  roles,
 	  module,
 	  env = #{}, %% big state of the fsm
