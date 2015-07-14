@@ -66,7 +66,7 @@
 %% overhears a CTS within the next tmin seconds after sending an RTS.
 %%
 %%  Abbreviation:
-%%  rts   - request to sebd
+%%  rts   - request to send
 %%  cts   - clear to send
 %%  wcts  - wait cts
 %%  ws_data   - wait send data
@@ -79,6 +79,8 @@
                   {rcv_rts_fm, scts},
                   {rcv_cts_fm, idle},
                   {rcv_data, idle},
+                  {rcv_warn, backoff}, % test!!!!
+                  {backoff_end, idle},  % test!!!!
                   {rcv_rts_nfm, backoff},
                   {rcv_cts_nfm, backoff}
                  ]},
@@ -88,7 +90,9 @@
                   {rcv_rts_nfm, backoff},
                   {rcv_cts_nfm, backoff},
                   {rcv_rts_fm, scts}, % test!!!!
+                  {rcv_data, idle}, % test!!!!
                   {error, idle},
+                  {rcv_warn, idle},  % test!!!!
                   {wcts_end, backoff}
                  ]},
 
@@ -105,6 +109,8 @@
                 {scts,
                  [{error, idle},
                   {rcv_rts_fm, scts},
+                  {rcv_cts_fm, scts}, % test!!!!
+                  {wcts_end, scts}, % test!!!!
                   {cts_sent, wdata}
                  ]},
 
@@ -113,6 +119,7 @@
                   {send_warn, backoff},
                   {send_cts, scts},
                   {rcv_data, idle},
+                  {rcv_warn, wdata},  % test!!!!
                   {rcv_rts_fm, scts},
                   {rcv_rts_nfm, wdata},
                   {rcv_cts_nfm, wdata},
@@ -126,6 +133,7 @@
                   {rcv_rts_nfm, backoff},
                   {rcv_cts_nfm, backoff},
                   {rcv_cts_fm, backoff},
+                  {rcv_warn, idle},  % test!!!!
                   {rcv_data, idle},
                   {backoff_end, idle}
                  ]},
@@ -159,6 +167,9 @@ handle_event(MM, SM, Term) ->
           fsm:run_event(MM, SM#sm{event = send_data}, send_data);
         tmo_send_warn -> SM;
         tmo_defer_trans -> SM;
+        answer_timeout ->
+          ?ERROR(?ID, "~s: Modem nor answered with sync message more than:~p~n", [?MODULE, ?ANSWER_TIMEOUT]),
+          SM;
         _ -> fsm:run_event(MM, SM#sm{event = Event}, {})
       end;
     {connected} ->
