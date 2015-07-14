@@ -29,12 +29,18 @@
 -behaviour(role_worker).
 -export([start/3, stop/1, to_term/3, from_term/2, ctrl/2]).
 
+-include("fsm.hrl").
+
 -record(config, {filter,mode,waitsync,request,telegram,eol,ext_networking,pid}).
 
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-    Cfg = #config{filter=at,mode=data,waitsync=no,request="",telegram="",eol="\n",ext_networking=no,pid=0},
+	EOL = case lists:keyfind(eol,1,MM#mm.params) of
+	    {eol,Other} -> Other;
+	    _ -> "\n"
+	end,
+    Cfg = #config{filter=at,mode=data,waitsync=no,request="",telegram="",eol=EOL,ext_networking=no,pid=0},
     role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
 ctrl({filter, F}, Cfg)         -> Cfg#config{filter = F};

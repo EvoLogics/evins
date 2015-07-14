@@ -123,7 +123,12 @@ handle_info(Info, #modstate{mod_id = ID} = State) ->
 
 terminate(Reason, #modstate{mod_id = ID, sup_id = Sup_ID, share = Share}) ->
     gen_event:notify(error_logger, {fsm_core, self(), {ID, {terminate, Reason}}}),
-    ok = supervisor:terminate_child(Sup_ID, {fsm, ID}),
+    case supervisor:terminate_child(Sup_ID, {fsm, ID}) of
+	ok ->
+	    nothing;
+	{error, not_found} ->
+	    gen_event:notify(error_logger, {fsm_core, self(), {ID, {error, child_not_found}}})
+    end,
     ets:delete(Share),
     ok.
 
