@@ -106,7 +106,6 @@
                 {idle,
                  [{internal, idle},
                   {error, idle},
-                  {answer_timeout, idle},
                   {sendend, idle},
                   {recvend, idle},
                   {backoff_timeout, write_alh},
@@ -120,8 +119,7 @@
                  ]},
 
                 {sp,
-                 [{answer_timeout, sp},
-                  {backoff_timeout, sp},
+                 [{backoff_timeout, sp},
                   {rcv_ul,  sp},
                   {sendstart, sp},
                   {recvstart, sp},
@@ -150,7 +148,10 @@ handle_event(MM, SM, Term) ->
   case Term of
     {timeout, Event} ->
       ?INFO(?ID, "timeout ~140p~n", [Event]),
-      fsm:run_event(MM, SM#sm{event = Event}, {});
+      case Event of
+        answer_timeout -> SM;
+        _ -> fsm:run_event(MM, SM#sm{event = Event}, {})
+      end;
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
@@ -223,9 +224,11 @@ handle_write_alh(_MM, SM, Term) ->
   change_backoff(SM, decrement),
   case Term of
     {rcv_ul, Msg} ->
-      fsm:send_at_command(SM1, Msg), SM#sm{event = data_sent};
+      fsm:send_at_command(SM1, Msg),
+      SM#sm{event = data_sent};
     _ when SM#sm.event =:= backoff_timeout ->
-      fsm:send_at_command(SM1, nl_mac_hf:readETS(SM1, current_msg)), SM#sm{event = data_sent}
+      fsm:send_at_command(SM1, nl_mac_hf:readETS(SM1, current_msg)),
+      SM#sm{event = data_sent}
   end.
 
 -spec handle_alarm(any(), any(), any()) -> no_return().

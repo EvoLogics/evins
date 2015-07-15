@@ -32,12 +32,14 @@
 
 -export([start/3, stop/1, to_term/3, from_term/2, ctrl/2, split/2]).
 
--record(config, {filter, mode, waitsync, request, telegram, eol, ext_networking, pid}).
+-record(config, {filter, mode, waitsync, request,
+                 telegram, eol, ext_networking, pid}).
 
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-  Cfg = #config{filter = at, mode = data, waitsync = no, request = "", telegram = "", eol = "\n", ext_networking = no, pid = 0},
+  Cfg = #config{filter = at, mode = data, waitsync = no, request = "",
+                telegram = "", eol = "\n", ext_networking = no, pid = 0},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
 ctrl(_, Cfg) -> Cfg.
@@ -73,23 +75,27 @@ from_term_helper(Tuple, _, _) when  is_tuple(Tuple) ->
       {"OTHER", singleline, [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), ?EOL_SEND]}
   end.
 
+patter_matcher(L, Pattern, Count_el) ->
+  Seq = lists:seq(1, Count_el, 1),
+  re:run(L, Pattern, [dotall, {capture, Seq, binary}]).
+
 split(L, Cfg) ->
   case re:run(L, "\r\n") of
     {match, [{_, _}]} ->
-    case re:run(L,"^(RECVIM,p|RECVIM,|RECVIMS,p|RECVIMS,)(.*)", [dotall, {capture, [1, 2], binary}]) of
+    case patter_matcher(L, "^(RECVIM,p|RECVIM,|RECVIMS,p|RECVIMS,)(.*)", 2) of
       {match, [<<"RECVIM,p">>, P]}  -> recvim_extract(L, P, pid);
       {match, [<<"RECVIM,">>, P]}   -> recvim_extract(L, P, nopid);
       {match, [<<"RECVIMS,p">>, P]} -> recvims_extract(L, P, pid);
       {match, [<<"RECVIMS,">>, P]}  -> recvims_extract(L, P, nopid);
       nomatch ->
-      case re:run(L,"^(DELIVEREDIM,|FAILEDIM,|OK|BUSY|ERROR)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+      case patter_matcher(L, "^(DELIVEREDIM,|FAILEDIM,|OK|BUSY|ERROR)(.*?)[\r\n]+(.*)", 3) of
         {match, [<<"DELIVEREDIM,">>, P, L1]}  -> [deliveredim_extract(P)	| split(L1, Cfg)];
         {match, [<<"FAILEDIM,">>, P, L1]} -> [failedim_extract(P)	| split(L1, Cfg)];
         {match, [<<"OK">>, P, L1]}    -> [ok_extract(P)		| split(L1, Cfg)];
         {match, [<<"BUSY">>, P, L1]}  -> [busy_extract(P)		| split(L1, Cfg)];
         {match, [<<"ERROR">>, P, L1]} -> [error_extract(P)		| split(L1, Cfg)];
         nomatch	->
-        case re:run(L,"(.*?)[\r\n]+(.*)",[dotall, {capture, [1, 2], binary}]) of
+        case patter_matcher(L,"(.*?)[\r\n]+(.*)", 2) of
           {match, [P, L1]} ->
           [{ignore, P} | split(L1, Cfg) ]
         end
@@ -99,16 +105,16 @@ split(L, Cfg) ->
     case re:run(L, "\n") of
       {match, [{_, _}]} ->
       %% Temporary only instant messages can be used!
-        case re:run(L,"^(AT[*]SENDIM,p|AT[*]SENDIM,|AT[*]SENDIMS,p|AT[*]SENDIMS,)(.*)",[dotall, {capture, [1, 2], binary}]) of
+        case patter_matcher(L, "^(AT[*]SENDIM,p|AT[*]SENDIM,|AT[*]SENDIMS,p|AT[*]SENDIMS,)(.*)", 2) of
           {match, [<<"AT*SENDIM,p">>, P]}	-> sendim_extract(L, P, Cfg, pid);
           {match, [<<"AT*SENDIM,">>, P]}	  -> sendim_extract(L, P, Cfg, nopid);
           {match, [<<"AT*SENDIMS,p">>, P]}	-> sendims_extract(L, P, Cfg, pid);
           {match, [<<"AT*SENDIMS,">>, P]}	-> sendims_extract(L, P, Cfg, nopid);
           nomatch ->
-            case re:run(L,"^(AT)(.*?)[\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+            case patter_matcher(L, "^(AT)(.*?)[\n]+(.*)", 3) of
               {match, [<<"AT">>, P, L1]} -> [{rcv_ul, {command, P} } | split(L1, Cfg)];
               nomatch ->
-                case re:run(L,"(.*?)[\n]+(.*)", [dotall, {capture, [1, 2], binary}]) of
+                case patter_matcher(L,"(.*?)[\n]+(.*)", 2) of
                 {match, [P, L1]} -> [ {rcv_ul, {other, P}}| split(L1, Cfg)];
                 nomatch 		-> [{more, L}]
               end
@@ -122,10 +128,10 @@ sendim_extract(L, P, Cfg, IfPid) ->
   try
     [Params, BPid] =
     if IfPid =:= nopid ->
-      {match, T} = re:run(P,"([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+      {match, T} = patter_matcher(P, "([^,]*),([^,]*),([^,]*),(.*)", 4),
       [T, nopid];
     true ->
-      {match, [PPid | T]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4, 5], binary}]),
+      {match, [PPid | T]} = patter_matcher(P, "([^,]*),([^,]*),([^,]*),([^,]*),(.*)", 5),
       [T, PPid]
     end,
     [BLen, BDst, BFlag, PayloadTail] = Params,
@@ -134,7 +140,8 @@ sendim_extract(L, P, Cfg, IfPid) ->
     IDst = binary_to_integer(BDst),
     OPLLen = PLLen - 1,
     if Len  =< PLLen ->
-      {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
+      {match, [Payload, Tail1]} =
+      patter_matcher(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", 2),
       TFlag = binary_to_atom(BFlag, utf8),
       Tuple =
       if IfPid =:= nopid ->
@@ -159,10 +166,10 @@ sendims_extract(L, P, Cfg, IfPid) ->
   try
     [Params, BPid] =
     if IfPid =:= nopid ->
-      {match, T} = re:run(P,"([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+      {match, T} = patter_matcher(P, "([^,]*),([^,]*),([^,]*),(.*)", 4),
       [T, nopid];
     true ->
-      {match, [PPid | T]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4, 5], binary}]),
+      {match, [PPid | T]} = patter_matcher(P, "([^,]*),([^,]*),([^,]*),([^,]*),(.*)", 5),
       [T, PPid]
     end,
     [BLen,BDst,BTimeStamp,PayloadTail] = Params,
@@ -172,7 +179,8 @@ sendims_extract(L, P, Cfg, IfPid) ->
     OPLLen = PLLen - 1,
     if
       Len  =< PLLen ->
-      {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
+      {match, [Payload, Tail1]} =
+      patter_matcher(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", 2),
       TimeStamp = binary_to_integer(BTimeStamp),
       Tuple =
       if IfPid =:= nopid ->
@@ -195,11 +203,13 @@ recvim_extract(L, P, IfPid) ->
   try
     [BPid, Params] =
     if IfPid =:= nopid ->
-      {match, T} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
-      [dotall, {capture, [1, 2, 3, 4, 5, 6, 7, 8, 9], binary}]), [nopid, T];
+      RecvimStr = "([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
+      {match, T} = patter_matcher(P, RecvimStr, 9),
+      [nopid, T];
     true ->
-      {match, [H| T]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
-      [dotall, {capture, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],binary}]), [H, T]
+      RecvimStrPid = "([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
+      {match, [H | T]} = patter_matcher(P, RecvimStrPid, 10),
+      [H, T]
     end,
     [BLen, BSrc, BDst, BFlag, BDuration, BRssi, BIntegrity, BVelocity, PayloadTail] = Params,
     Len = binary_to_integer(BLen),
@@ -207,7 +217,8 @@ recvim_extract(L, P, IfPid) ->
     TFlag = binary_to_atom(BFlag, utf8),
     if
       Len + 2 =< PLLen ->
-      {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(Len) ++ "})\r\n(.*)", [dotall, {capture, [1, 2], binary}]),
+      {match, [Payload, Tail1]} =
+      patter_matcher(PayloadTail, "^(.{" ++ integer_to_list(Len) ++ "})\r\n(.*)", 2),
       if IfPid =:= nopid ->
         [{async, {recvim, Len, bin_to_num(BSrc), bin_to_num(BDst), TFlag,
         bin_to_num(BDuration), bin_to_num(BRssi), bin_to_num(BIntegrity),
@@ -227,11 +238,13 @@ recvims_extract(L,P,IfPid) ->
   try
     [BPid, Params] =
     if IfPid =:= nopid ->
-      {match, T} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
-      [dotall, {capture, [1, 2, 3, 4, 5, 6, 7, 8, 9], binary}]), [nopid, T];
+      RecvimStr = "([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
+      {match, T} = patter_matcher(P, RecvimStr, 9),
+      [nopid, T];
     true ->
-      {match, [H| T]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
-      [dotall, {capture, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], binary}]), [H, T]
+      RecvimStrPid = "([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
+      {match, [H | T]} = patter_matcher(P, RecvimStrPid, 10),
+      [H, T]
     end,
     [BLen, BSrc, BDst, BTimeStamp, BDuration, BRssi, BIntegrity, BVelocity, PayloadTail] = Params,
     Len = binary_to_integer(BLen),
@@ -239,7 +252,8 @@ recvims_extract(L,P,IfPid) ->
     TimeStamp = binary_to_integer(BTimeStamp),
     if
       Len + 2 =< PLLen ->
-      {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(Len) ++ "})\r\n(.*)", [dotall, {capture, [1, 2], binary}]),
+      {match, [Payload, Tail1]} =
+      patter_matcher(PayloadTail, "^(.{" ++ integer_to_list(Len) ++ "})\r\n(.*)", 2),
       if IfPid =:= nopid ->
         [{async, {recvims, Len, bin_to_num(BSrc), bin_to_num(BDst), TimeStamp,
         bin_to_num(BDuration), bin_to_num(BRssi), bin_to_num(BIntegrity),
@@ -257,14 +271,14 @@ recvims_extract(L,P,IfPid) ->
 
 deliveredim_extract(P)->
   try
-    {match, [BDst]} = re:run(P,"([^,]*)", [dotall, {capture, [1], binary}]),
+    {match, [BDst]} = patter_matcher(P, "([^,]*)", 1),
     {async, {deliveredim, BDst}}
   catch error: _Reason -> {sync, "*SENDIM", {error, ?ERROR_WRONG}}
   end.
 
 failedim_extract(P)->
   try
-    {match, [BDst]} = re:run(P,"([^,]*)", [dotall, {capture, [1], binary}]),
+    {match, [BDst]} = patter_matcher(P, "([^,]*)", 1),
     {async, {failedim, BDst}}
   catch error: _Reason -> {sync, "*SENDIM", {error, ?ERROR_WRONG}}
   end.
@@ -277,14 +291,14 @@ ok_extract(_P)->
 
 busy_extract(P)->
   try
-    {match, [Msg]} = re:run(P,"([^,]*)", [dotall, {capture, [1], binary}]),
+    {match, [Msg]} = patter_matcher(P, "([^,]*)", 1),
     {sync, {busy, Msg}}
   catch error: _Reason -> {sync, "*SENDIM", {error, ?ERROR_WRONG}}
   end.
 
 error_extract(P)->
   try
-    {match, [Msg]} = re:run(P,"([^,]*)", [dotall, {capture, [1], binary}]),
+    {match, [Msg]} = patter_matcher(P, "([^,]*)", 1),
     {sync, {error, Msg}}
   catch error: _Reason -> {sync, "*SENDIM", {error, ?ERROR_WRONG}}
   end.

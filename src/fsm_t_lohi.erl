@@ -159,9 +159,9 @@ handle_event(MM, SM, Term) ->
         idle -> fsm:run_event(MM, SM#sm{event = transmit_ct}, {send_tone, Msg});
         _ -> fsm:cast(SM, alh,  {send, {sync, "OK"} }), SM
       end;
-    {async, _, {recvims, _, _, _, _, _, _, _, _, _}} -> SM;
-    T =
-    {async, PID, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
+      {async, _, {recvims, _, _, _, _, _, _, _, _, _}} -> SM;
+      T =
+      {async, PID, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
       [H |_] = tuple_to_list(Tuple),
       BPid=
       case PID of
@@ -190,7 +190,7 @@ handle_event(MM, SM, Term) ->
       case Tuple of
         {sendstart, _, _, _, _} -> fsm:run_event(MM, SMN#sm{event = rcv_ct}, {});
         {sendend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = end_of_frame}, {});
-        {recvstart}	-> fsm:run_event(MM, SMN#sm{event=rcv_ct},{});
+        {recvstart}	-> fsm:run_event(MM, SMN#sm{event = rcv_ct},{});
         {recvend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = end_of_frame}, {});
         _ -> SM
       end;

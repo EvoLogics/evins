@@ -107,6 +107,7 @@ parse_conf(ArgS, Share) ->
   Prob_set      = [P              || {probability, P} <- ArgS],
 
   Tmo_wv            = [Time || {tmo_wv, Time} <- ArgS],
+  Tmo_wack          = [Time || {tmo_wack, Time} <- ArgS],
   STmo_path         = [Time || {stmo_path, Time} <- ArgS],
   WTmo_path_set     = [Time || {wtmo_path, Time} <- ArgS],
   Tmo_Neighbour_set = [Time || {tmo_neighbour, Time} <- ArgS],
@@ -116,7 +117,7 @@ parse_conf(ArgS, Share) ->
 
   Addr            = set_params(Addr_set, 1),
   RTT             = set_params(Max_hops_set, 60),
-  Max_Retry_count = set_params(Max_rc_set, 2),
+  Max_Retry_count = set_params(Max_rc_set, 1),
   WTmo_path       = set_params(WTmo_path_set, 30),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, 30),
   Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, 10),
@@ -124,7 +125,7 @@ parse_conf(ArgS, Share) ->
   Neighbour_life  = set_params(Neighbour_life_set, 120),
 
   {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {1,3}),
-  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wv, {1,3}),
+  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {1,3}),
   {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {2,4}),
   Blacklist                       = set_blacklist(Bll_addrs, []),
   Routing_table                   = set_routing(Routing_addrs, NL_Protocol, 255),
@@ -208,9 +209,10 @@ set_timeouts(Tmo, Defaults) ->
 
 set_routing(Routing_addrs, NL_Protocol, Default) ->
   case NL_Protocol of
-    _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs =/= [])) ->
-      [TupleRouting] = Routing_addrs, [{255,255} | tuple_to_list(TupleRouting)];
     _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs =:= [])) ->
-      io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. \n!!! As a defualt value will be set 255 broadcast"), Default;
+      io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a defualt value will be set 255 broadcast ~n",[]),
+      Default;
+    _ when (Routing_addrs =/= []) ->
+      [TupleRouting] = Routing_addrs, [{255,255} | tuple_to_list(TupleRouting)];
     _ -> Default
   end.
