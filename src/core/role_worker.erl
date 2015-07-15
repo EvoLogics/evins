@@ -64,10 +64,10 @@ start(Behaviour, Role_ID, Mod_ID, MM) ->
 start(Behaviour, Role_ID, Mod_ID, MM, Cfg) ->
     gen_event:notify(error_logger, {fsm_core, self(), {Role_ID, {start, Mod_ID}}}),
     Ret = gen_server:start_link({local, Role_ID}, ?MODULE,
-				#ifstate{behaviour = Behaviour, id = Role_ID, module_id = Mod_ID, mm = MM, cfg = Cfg}, []),
+                                #ifstate{behaviour = Behaviour, id = Role_ID, module_id = Mod_ID, mm = MM, cfg = Cfg}, []),
     case Ret of
-	{error, Reason} ->  error_logger:error_report({error, Reason, Mod_ID, Role_ID});
-	_ -> nothing
+        {error, Reason} ->  error_logger:error_report({error, Reason, Mod_ID, Role_ID});
+        _ -> nothing
     end,
     Ret.
 
@@ -95,30 +95,30 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {port,Port,PortSetti
 init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts}}} = State) ->
     gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {socket,IP,Port,Opts}}}}),
     Type = case Opts of
-	       L when is_list(L) ->
-		   Tserver = [server || server <- L],
-		   Tclient = [client || client <- L],
-		   case {Tserver, Tclient} of
-		       {[server],[]} -> server;
-		       {[],[client]} -> client;
-		       _ ->
-			   ?ERROR(ID, "Undefined connection type: ~p, set to client per default~n", [L]),
-			   client
-		   end;
-	       A -> A
-	   end,
+               L when is_list(L) ->
+                   Tserver = [server || server <- L],
+                   Tclient = [client || client <- L],
+                   case {Tserver, Tclient} of
+                       {[server],[]} -> server;
+                       {[],[client]} -> client;
+                       _ ->
+                           ?ERROR(ID, "Undefined connection type: ~p, set to client per default~n", [L]),
+                           client
+                   end;
+               A -> A
+           end,
     Pkt = case Opts of
-	      L1 when is_list(L1) ->
-		  case [X || {packet, X} <- L1] of
-		      [] -> {packet, 0};
-		      [X] -> {packet, X}
-		  end;
-	      _ -> {packet, 0}
-	  end,
+              L1 when is_list(L1) ->
+                  case [X || {packet, X} <- L1] of
+                      [] -> {packet, 0};
+                      [X] -> {packet, X}
+                  end;
+              _ -> {packet, 0}
+          end,
     SOpts = case Type of
-		client -> [{keepalive, true}, {send_timeout, 1000}, binary, {active, true}, Pkt];
-		server -> [{keepalive, true}, {send_timeout, 1000}, binary, {ip, IP}, {active, true}, {reuseaddr, true}, {backlog, 0}, Pkt]
-	    end,
+                client -> [{keepalive, true}, {send_timeout, 1000}, binary, {active, true}, Pkt];
+                server -> [{keepalive, true}, {send_timeout, 1000}, binary, {ip, IP}, {active, true}, {reuseaddr, true}, {backlog, 0}, Pkt]
+            end,
     Self = self(),
     gen_server:cast(Mod_ID, {Self, ID, ok}),
     connect(State#ifstate{type = Type, opt = SOpts}).
@@ -132,28 +132,28 @@ connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) -
 connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, opt = SOpts} = State) ->
     gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
     case gen_tcp:connect(IP, Port, SOpts, 1000) of
-	{ok, Socket} ->
-	    {ok, State#ifstate{socket = Socket}};
-	{error, econnrefused} ->
-	    gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
-	    {ok, _} = timer:send_after(1000, timeout),
-	    {ok, State};
-	Error ->
-	    gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
-	    error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Error]),
-	    {ok, _} = timer:send_after(1000, timeout),
-	    {ok, State}
+        {ok, Socket} ->
+            {ok, State#ifstate{socket = Socket}};
+        {error, econnrefused} ->
+            gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
+            {ok, _} = timer:send_after(1000, timeout),
+            {ok, State};
+        Error ->
+            gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
+            error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Error]),
+            {ok, _} = timer:send_after(1000, timeout),
+            {ok, State}
     end;
 
 connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = server, opt = SOpts} = State) ->
     gen_event:notify(error_logger, {fsm_core, self(), {ID, {listening, IP, Port}}}),
     case gen_tcp:listen(Port, SOpts) of
-	{ok, LSock} ->
-	    {ok, Ref} = prim_inet:async_accept(LSock, -1),
-	    {ok, State#ifstate{listener = LSock, acceptor = Ref}};
-	{error, Reason} ->
-	    error_logger:error_report([{file,?MODULE,?LINE},{id, ID}, {IP,Port,Reason}]),
-	    {stop, Reason}
+        {ok, LSock} ->
+            {ok, Ref} = prim_inet:async_accept(LSock, -1),
+            {ok, State#ifstate{listener = LSock, acceptor = Ref}};
+        {error, Reason} ->
+            error_logger:error_report([{file,?MODULE,?LINE},{id, ID}, {IP,Port,Reason}]),
+            {stop, Reason}
     end.
 
 handle_call(Request, From, #ifstate{id = ID} = State) ->
@@ -163,9 +163,9 @@ handle_call(Request, From, #ifstate{id = ID} = State) ->
 handle_cast({fsm, Pid, ok}, #ifstate{id = ID, mm = MM, type = Type} = State) ->
     gen_event:notify(error_logger, {fsm_core, self(), {ID, {fsm, Pid, ok}}}),
     case Type of
-	    client ->
-		    gen_server:cast(Pid, {chan, MM, {connected}});
-	    _ -> ok
+            client ->
+                    gen_server:cast(Pid, {chan, MM, {connected}});
+            _ -> ok
     end,
     {noreply, State#ifstate{fsm_pid = Pid}};
 
@@ -217,22 +217,22 @@ handle_info({inet_async, LSock, Ref, {ok, NewCliSocket}},
             #ifstate{id = ID, fsm_pid = FSM, listener = LSock, acceptor = Ref, socket = CliSocket, mm = MM} = State) ->
     gen_event:notify(error_logger, {fsm_core, self(), {ID, {accepting, LSock, NewCliSocket}}}),
     case CliSocket of 
-	nothing -> nothing;
-	_ -> ok = gen_tcp:close(CliSocket)
+        nothing -> nothing;
+        _ -> ok = gen_tcp:close(CliSocket)
     end,
     try
         case set_sockopt(LSock, NewCliSocket) of
-	    ok              -> ok;
-	    {error, Reason} -> exit({set_sockopt, Reason})
+            ok              -> ok;
+            {error, Reason} -> exit({set_sockopt, Reason})
         end,
-	gen_server:cast(FSM, {chan, MM, {connected}}),
+        gen_server:cast(FSM, {chan, MM, {connected}}),
         %% Signal the network driver that we are ready to accept another connection
         {ok, NewRef} =  prim_inet:async_accept(LSock, -1),
-	gen_event:notify(error_logger, {fsm_core, self(), {ID, {accepting, ok}}}),
+        gen_event:notify(error_logger, {fsm_core, self(), {ID, {accepting, ok}}}),
         {noreply, State#ifstate{acceptor=NewRef, socket = NewCliSocket}}
     catch exit:Why ->
-	    error_logger:error_report([{file,?MODULE,?LINE},{id, ID},"Error in async accept",Why]),
-	    {stop, Why, State}
+            error_logger:error_report([{file,?MODULE,?LINE},{id, ID},"Error in async accept",Why]),
+            {stop, Why, State}
     end;
  
 handle_info({inet_async, LSock, Ref, Error}, #ifstate{id = ID, listener=LSock, acceptor=Ref} = State) ->
@@ -252,8 +252,8 @@ handle_info({bridge,Term}, #ifstate{fsm_pid = FSM, mm = MM} = State) ->
 handle_info(timeout, #ifstate{id = ID, type = client} = State) ->
     gen_event:notify(error_logger, {fsm_core, self(), {ID, timeout}}),
     case connect(State) of
-	{ok, NewState} -> {noreply, NewState};
-	{stop, Reason} -> {stop, Reason, State}
+        {ok, NewState} -> {noreply, NewState};
+        {stop, Reason} -> {stop, Reason, State}
     end;
 
 handle_info({Port, closed}, #ifstate{id = ID, fsm_pid = FSM, port = Port, mm = MM} = State) ->
@@ -302,18 +302,18 @@ code_change(_, State, _) ->
 to_term(Module, Tail, Chunk, Cfg) ->
     Answers = Module:split(list_to_binary([Tail,Chunk]), Cfg),
     [TermList, ErrorList, MoreList] = 
-	lists:foldr(fun(Elem, [TermList, ErrorList, MoreList]) ->
-			    case Elem of
-				{more, <<>>} ->
-				    [TermList, ErrorList, MoreList];
-				{more, MoreElem} -> 
-				    [TermList, ErrorList, [MoreElem|MoreList]];
-				{error, _} ->
-				    [TermList, [Elem|ErrorList], MoreList];
-				_ ->
-				    [[Elem | TermList], ErrorList, MoreList]
-			    end
-		    end, [[],[],[]], Answers),
+        lists:foldr(fun(Elem, [TermList, ErrorList, MoreList]) ->
+                            case Elem of
+                                {more, <<>>} ->
+                                    [TermList, ErrorList, MoreList];
+                                {more, MoreElem} -> 
+                                    [TermList, ErrorList, [MoreElem|MoreList]];
+                                {error, _} ->
+                                    [TermList, [Elem|ErrorList], MoreList];
+                                _ ->
+                                    [[Elem | TermList], ErrorList, MoreList]
+                            end
+                    end, [[],[],[]], Answers),
     [TermList, ErrorList, [], list_to_binary(MoreList), Cfg].
 
 %%%------------------------------------------------------------------------
@@ -325,19 +325,19 @@ to_term(Module, Tail, Chunk, Cfg) ->
 set_sockopt(LSock, CliSocket) ->
     true = inet_db:register_socket(CliSocket, inet_tcp),
     case prim_inet:getopts(LSock, [active, nodelay, keepalive, delay_send, priority, tos]) of
-	{ok, Opts} ->
-	    case prim_inet:setopts(CliSocket, Opts) of
-		ok    -> ok;
-		Error -> gen_tcp:close(CliSocket), Error
+        {ok, Opts} ->
+            case prim_inet:setopts(CliSocket, Opts) of
+                ok    -> ok;
+                Error -> gen_tcp:close(CliSocket), Error
         end;
-	Error ->
-	    gen_tcp:close(CliSocket), Error
+        Error ->
+            gen_tcp:close(CliSocket), Error
     end.
 
 process_bin(Bin, #ifstate{behaviour = B, fsm_pid = FSM, cfg = Cfg, tail = Tail, mm = MM} = State) ->
     [TermList, ErrorList, Raw, More, NewCfg] = B:to_term(Tail, Bin, Cfg),
     Terms = if byte_size(Raw) > 0 -> TermList ++ ErrorList ++ [{raw, Raw}];
-	       true -> TermList ++ ErrorList
-	    end,
+               true -> TermList ++ ErrorList
+            end,
     lists:foreach(fun(Term) -> gen_server:cast(FSM, {chan, MM, Term}) end, Terms),
     {noreply, State#ifstate{cfg = NewCfg, tail = More}}.
