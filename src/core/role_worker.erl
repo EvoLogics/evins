@@ -184,18 +184,24 @@ handle_cast({send, Term}, #ifstate{mm = #mm{iface = {erlang,_,M2,I2}}} = State) 
     {noreply, State};
     
 handle_cast({send, Term}, #ifstate{behaviour = B, mm = MM, port = Port, socket = Socket, fsm_pid = FSM, cfg = Cfg} = State) ->
+    Self = self(),
     case B:from_term(Term, Cfg) of
-	[Bin, NewCfg] ->
-	    case MM#mm.iface of
-		{socket,_,_,_} -> catch gen_tcp:send(Socket, Bin);
-		{port,_,_} -> catch Port ! {self(), {command, Bin}};
-		{erlang,_,_,_} -> todo
-	    end,
-	    {noreply, State#ifstate{cfg = NewCfg}};
-	{error, Reason} ->
-	    Self = self(),
-	    gen_server:cast(FSM, {chan_error, Self, Reason}),
-	    {noreply, State}
+        [Bin, NewCfg] ->
+            case MM#mm.iface of
+                {socket,_,_,_} when Socket == nothing ->
+                    gen_server:cast(FSM, {chan_error, Self, {MM#mm.iface, disconnected}});
+                {socket,_,_,_} ->
+                    gen_tcp:send(Socket, Bin);
+                {port,_,_} when Port == nothing -> 
+                    gen_server:cast(FSM, {chan_error, Self, {MM#mm.iface, disconnected}});
+                {port,_,_} ->
+                    Port ! {self(), {command, Bin}};
+                {erlang,_,_,_} -> todo
+            end,
+            {noreply, State#ifstate{cfg = NewCfg}};
+        {error, Reason} ->
+            gen_server:cast(FSM, {chan_error, Self, Reason}),
+            {noreply, State}
     end;
 
 handle_cast(close, #ifstate{id = ID, port = Port} = State) ->
