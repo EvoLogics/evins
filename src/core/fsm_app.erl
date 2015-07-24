@@ -31,16 +31,16 @@
 -export([start/2, stop/1]).
 
 start(_Type, _Args) ->
-    case error_logger:delete_report_handler(log_mf_h) of
-	{_,Dir,MaxB,MaxF,_,_,_,_,Fun} ->
-	    error_logger:add_report_handler(fsm_log_mf_h,fsm_log_mf_h:init(Dir,MaxB,MaxF,Fun));
-	_ ->
-	    ok
-    end,
-    {ok, Fabric_config} = application:get_env(evins, fabric_config),
-    {ok, User_config} = application:get_env(evins, user_config),
-    fsm_supervisor:start_link([Fabric_config, User_config]).
+  case error_logger:delete_report_handler(log_mf_h) of
+    {_,Dir,MaxB,MaxF,_,_,_,_,Fun} ->
+      error_logger:add_report_handler(fsm_log_mf_h,fsm_log_mf_h:init(Dir,MaxB,MaxF,Fun));
+    _ ->
+      ok
+  end,
+  {ok, Fabric_config} = application:get_env(evins, fabric_config),
+  {ok, User_config} = application:get_env(evins, user_config),
+  fsm_supervisor:start_link([Fabric_config, User_config]).
 
 stop(_State) ->
-    ok.
-    
+  ok.
+

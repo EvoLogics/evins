@@ -29,7 +29,7 @@
 
 -export([format/5, format/6, format/7, id/0, timestamp_string/0]).
 -import(mix, [microseconds/0]).
-     
+
 -define(NONE,    "\e[0m").
 -define(RED,     "\e[0;31m").
 -define(LRED,    "\e[1;31m").
@@ -44,29 +44,29 @@
 -define(WHITE,   "\e[1;37m").
 
 id() ->
-    case [X || {registered_name,X} <- process_info(self())] of
-	[Name] -> Name;
-	_ -> nn %% no name
-    end.
+  case [X || {registered_name,X} <- process_info(self())] of
+    [Name] -> Name;
+    _ -> nn %% no name
+  end.
 
 intfmt(W,V) ->
-    lists:flatten(io_lib:format("~*.*.0s",[W,W,integer_to_list(V)])).
+  lists:flatten(io_lib:format("~*.*.0s",[W,W,integer_to_list(V)])).
 
 timestamp_string() ->
-    {M, S, U} = os:timestamp(),
-    lists:flatten(io_lib:format("~p.~s.~s", [M, intfmt(6,S), intfmt(6,U)])).
+  {M, S, U} = os:timestamp(),
+  lists:flatten(io_lib:format("~p.~s.~s", [M, intfmt(6,S), intfmt(6,U)])).
 
 format(Module, Line, ID, Format, Color) ->
-    format_helper(Module, Line, ID, standard_io, Format, [], Color).
+  format_helper(Module, Line, ID, standard_io, Format, [], Color).
 
 format(Module, Line, ID, Format, Data, Color) ->
-    format_helper(Module, Line, ID, standard_io, Format, Data, Color).
+  format_helper(Module, Line, ID, standard_io, Format, Data, Color).
 
 format(Module, Line, ID, IoDevice, Format, Data, Color) ->
-    format_helper(Module, Line, ID, IoDevice, Format, Data, Color).
+  format_helper(Module, Line, ID, IoDevice, Format, Data, Color).
 
 format_helper(Module, Line, ID, _IoDevice, Format, Data, Color) ->
-    Timestamp = os:timestamp(),
-    Message = lists:flatten(io_lib:format(Format,Data)),
-    gen_event:notify(error_logger, {fsm_progress, self(), {Color, ID, Module, Line, Timestamp, Message}}).
+  Timestamp = os:timestamp(),
+  Message = lists:flatten(io_lib:format(Format,Data)),
+  gen_event:notify(error_logger, {fsm_progress, self(), {Color, ID, Module, Line, Timestamp, Message}}).
 

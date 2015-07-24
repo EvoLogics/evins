@@ -57,33 +57,33 @@
                   {error, request_mode},
                   {answer_timeout, alarm}
                  ]},
-                
+
                 {alarm, 
                  [{final, alarm}
                  ]},
-                
+
                 {request_mode,
                  [{rcv, handle_modem},
                   {answer_timeout, alarm}
                  ]},
-                
+
                 {handle_modem,
                  [{internal, request_local_address},
                   {wrong_receive, request_mode}
                  ]},
-                
+
                 {request_local_address,
                  [{rcv, request_max_address},
                   {wrong_receive, idle},
                   {answer_timeout, alarm}
                  ]},
-                
+
                 {request_max_address,
                  [{rcv, handle_max_address},
                   {wrong_receive, request_local_address},
                   {answer_timeout, alarm}
                  ]},
-               
+
                 {handle_max_address,
                  [{wrong_receive, request_max_address},
                   {yet_another_request, request_pid},
@@ -94,8 +94,8 @@
                  [{rcv, handle_pid},
                   {answer_timeout, alarm},
                   {wrong_receive, alarm}
-                ]},
-                
+                 ]},
+
                 {handle_pid,
                  [{wrong_receive, alarm},
                   {yet_another_request, handle_yar},
@@ -109,7 +109,7 @@
                   {answer_timeout, alarm},
                   {final, final}
                  ]},
-                
+
                 {final,
                  []}
                ]).
@@ -123,162 +123,162 @@ stop(_SM)      -> ok.
 
 %% evar - external var (or persistent?)
 evar(SM, Name) ->
-    case ets:lookup(SM#sm.share, Name) of
-        [{_, Value}] -> Value;
-        _ -> nothingl
-    end.
+  case ets:lookup(SM#sm.share, Name) of
+    [{_, Value}] -> Value;
+    _ -> nothingl
+  end.
 
 %% update evar
 evar(SM, Name, Value) ->
-    ets:insert(SM#sm.share, {Name, Value}).
+  ets:insert(SM#sm.share, {Name, Value}).
 
 handle_event(MM, SM, Term) ->
-    case Term of
-        {sync,_Req,Answer} -> 
-            case Answer of
-                {error, _}        -> fsm:run_event(MM, SM#sm{event=error}, Term);
-                S when is_list(S) -> fsm:run_event(MM, SM#sm{event=rcv}, Term)
-            end;
-        {timeout,Event} ->
-            fsm:run_event(MM, SM#sm{event=Event}, {});
-        {async,_Notif} -> 
-            SM;
-        {error,Reason} ->
-            ?WARNING(?ID, "error ~p~n", [Reason]),
-            exit(Reason);
-        {connected} ->
-            SM;
-        {raw,Bin} when SM#sm.state == idle ->
-            Raw_buffer = evar(SM,raw_buffer),
-            Buffer = <<Raw_buffer/binary,Bin/binary>>,
-            case match_message(Buffer,?EMSG) of
-                {ok,_,_} ->
-                    %% force to clean waitsync state
-                    evar(SM, raw_buffer, <<"">>),
-                    SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
-                    fsm:run_event(MM, SM1#sm{event=error}, {});
-                {more,_,Match_size} ->
-                    Part = binary:part(Buffer,{byte_size(Buffer),-Match_size}),
-                    evar(SM, raw_buffer, Part),
-                    ?INFO(?ID, "Partially matched part: ~p~n", [Part]),
-                    SM
-            end;
-        {raw,_} ->
-            SM;
-        _Other ->
-            ?ERROR(?ID, "Unhandled event: ~150p~n", [_Other])
-    end.
+  case Term of
+    {sync,_Req,Answer} -> 
+      case Answer of
+        {error, _}        -> fsm:run_event(MM, SM#sm{event=error}, Term);
+        S when is_list(S) -> fsm:run_event(MM, SM#sm{event=rcv}, Term)
+      end;
+    {timeout,Event} ->
+      fsm:run_event(MM, SM#sm{event=Event}, {});
+    {async,_Notif} -> 
+      SM;
+    {error,Reason} ->
+      ?WARNING(?ID, "error ~p~n", [Reason]),
+      exit(Reason);
+    {connected} ->
+      SM;
+    {raw,Bin} when SM#sm.state == idle ->
+      Raw_buffer = evar(SM,raw_buffer),
+      Buffer = <<Raw_buffer/binary,Bin/binary>>,
+      case match_message(Buffer,?EMSG) of
+        {ok,_,_} ->
+          %% force to clean waitsync state
+          evar(SM, raw_buffer, <<"">>),
+          SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
+          fsm:run_event(MM, SM1#sm{event=error}, {});
+        {more,_,Match_size} ->
+          Part = binary:part(Buffer,{byte_size(Buffer),-Match_size}),
+          evar(SM, raw_buffer, Part),
+          ?INFO(?ID, "Partially matched part: ~p~n", [Part]),
+          SM
+      end;
+    {raw,_} ->
+      SM;
+    _Other ->
+      ?ERROR(?ID, "Unhandled event: ~150p~n", [_Other])
+  end.
 
 match_message(Bin,Msg) when is_binary(Bin), is_binary(Msg) ->
-    match_message_helper(binary_to_list(Bin),binary_to_list(Msg),binary_to_list(Msg),0,0).
+  match_message_helper(binary_to_list(Bin),binary_to_list(Msg),binary_to_list(Msg),0,0).
 
 match_message_helper([],_,Msg,Match_size,Unmatch_offset) when length(Msg) == Match_size ->
-    {ok,Unmatch_offset,Match_size};
+  {ok,Unmatch_offset,Match_size};
 match_message_helper([],_,_,Match_size,Unmatch_offset) ->
-    {more,Unmatch_offset,Match_size};
+  {more,Unmatch_offset,Match_size};
 match_message_helper(Bin,[],Msg,Match_size,Unmatch_offset) ->
-    match_message_helper(Bin,Msg,Msg,0,Unmatch_offset+Match_size);
+  match_message_helper(Bin,Msg,Msg,0,Unmatch_offset+Match_size);
 match_message_helper([First|Bin_tail],[First|Msg_tail],Msg,Match_size,Unmatch_offset) ->
-    match_message_helper(Bin_tail,Msg_tail,Msg,Match_size+1,Unmatch_offset);
+  match_message_helper(Bin_tail,Msg_tail,Msg,Match_size+1,Unmatch_offset);
 match_message_helper(Bin,_,Msg,0,Unmatch_offset) ->
-    match_message_helper(tl(Bin),Msg,Msg,0,Unmatch_offset+1);
+  match_message_helper(tl(Bin),Msg,Msg,0,Unmatch_offset+1);
 match_message_helper(Bin,_,Msg,Match_size,Unmatch_offset) ->
-    match_message_helper(Bin,Msg,Msg,0,Unmatch_offset+Match_size).
+  match_message_helper(Bin,Msg,Msg,0,Unmatch_offset+Match_size).
 
 handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
-    case Event of
-        internal      ->
-            %% must be run optionally!
-            evar(SM, yars, [{at,"@ZF","1"},{at, "@ZX","1"},{at,"@ZU","1"}]),
-            AT = {at, "?MODE", ""},
-            fsm:set_event(
-              fsm:set_timeout(
-                fsm:cast(fsm:clear_timeouts(SM), at, {send, AT}), ?WAKEUP_TIMEOUT, answer_timeout), eps);
-        wrong_receive -> fsm:set_event(SM, eps);
-        _             -> fsm:set_event(SM#sm{state = alarm}, internal)
-    end.
+  case Event of
+    internal      ->
+      %% must be run optionally!
+      evar(SM, yars, [{at,"@ZF","1"},{at, "@ZX","1"},{at,"@ZU","1"}]),
+      AT = {at, "?MODE", ""},
+      fsm:set_event(
+        fsm:set_timeout(
+          fsm:cast(fsm:clear_timeouts(SM), at, {send, AT}), ?WAKEUP_TIMEOUT, answer_timeout), eps);
+    wrong_receive -> fsm:set_event(SM, eps);
+    _             -> fsm:set_event(SM#sm{state = alarm}, internal)
+  end.
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
-    exit({alarm, SM#sm.module}).
+  exit({alarm, SM#sm.module}).
 
 handle_request_mode(_MM, SM, _Term) ->
-    case SM#sm.event of
-        error ->
-            SM1 = fsm:cast(SM, at, {ctrl, {mode, command}}),
-            fsm:send_at_command(fsm:clear_timeouts(SM1), {at, "?MODE", ""});
-        _     -> SM#sm{event = internal, state = alarm}
-    end.
-             
+  case SM#sm.event of
+    error ->
+      SM1 = fsm:cast(SM, at, {ctrl, {mode, command}}),
+      fsm:send_at_command(fsm:clear_timeouts(SM1), {at, "?MODE", ""});
+    _     -> SM#sm{event = internal, state = alarm}
+  end.
+
 handle_handle_modem(_MM, SM, Term) ->
-    case {SM#sm.event, Term} of
-        {rcv, {sync, "?MODE", "AT"}} ->
-            SM1 = fsm:send_at_command(SM, {at, "O", ""}),
-            fsm:cast(SM1#sm{event = internal}, at, {ctrl, {mode, data}});
-        {rcv, {sync, "?MODE", "NET"}} ->
-            fsm:cast(SM#sm{event = internal}, at, {ctrl, {filter, net}});
-        {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
-        _                   -> SM#sm{event = internal, state = alarm}
-    end.
+  case {SM#sm.event, Term} of
+    {rcv, {sync, "?MODE", "AT"}} ->
+      SM1 = fsm:send_at_command(SM, {at, "O", ""}),
+      fsm:cast(SM1#sm{event = internal}, at, {ctrl, {mode, data}});
+    {rcv, {sync, "?MODE", "NET"}} ->
+      fsm:cast(SM#sm{event = internal}, at, {ctrl, {filter, net}});
+    {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
+    _                   -> SM#sm{event = internal, state = alarm}
+  end.
 
 handle_request_local_address(_MM, SM, _Term) ->
-    case SM#sm.event of
-        Event when Event =:= internal; Event =:= rcv ->
-            fsm:send_at_command(fsm:clear_timeouts(SM), {at, "?AL", ""});
-        wrong_receive -> SM#sm{event = eps};
-        _             -> SM#sm{event = internal, state = alarm}
-    end.
+  case SM#sm.event of
+    Event when Event =:= internal; Event =:= rcv ->
+      fsm:send_at_command(fsm:clear_timeouts(SM), {at, "?AL", ""});
+    wrong_receive -> SM#sm{event = eps};
+    _             -> SM#sm{event = internal, state = alarm}
+  end.
 
 handle_request_max_address(_MM, SM, Term) ->
-    case {SM#sm.event, Term} of
-        {rcv, {sync, "?AL", Answer}} when is_list(Answer) ->
-            evar(SM, local_address, list_to_integer(Answer)),
-            %% todo: сохранение параметра
-            fsm:send_at_command(fsm:clear_timeouts(SM), {at, "?AM", ""});
-        {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
-        _                   -> SM#sm{event = internal, state = alarm}
-    end.
+  case {SM#sm.event, Term} of
+    {rcv, {sync, "?AL", Answer}} when is_list(Answer) ->
+      evar(SM, local_address, list_to_integer(Answer)),
+      %% todo: сохранение параметра
+      fsm:send_at_command(fsm:clear_timeouts(SM), {at, "?AM", ""});
+    {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
+    _                   -> SM#sm{event = internal, state = alarm}
+  end.
 
 handle_handle_max_address(_MM, SM, Term) ->
-    case {SM#sm.event, Term} of
-        {rcv, {sync, "?AM", Answer}} when is_list(Answer) ->
-            evar(SM, max_address, list_to_integer(Answer)),
-            fsm:clear_timeouts(SM#sm{event = yet_another_request});
-        {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
-        _                   -> SM#sm{event = internal, state = alarm}
-    end.
+  case {SM#sm.event, Term} of
+    {rcv, {sync, "?AM", Answer}} when is_list(Answer) ->
+      evar(SM, max_address, list_to_integer(Answer)),
+      fsm:clear_timeouts(SM#sm{event = yet_another_request});
+    {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
+    _                   -> SM#sm{event = internal, state = alarm}
+  end.
 
 handle_request_pid(_MM, SM, Term) ->
-    case {SM#sm.event, Term} of
-        {yet_another_request, _} ->
-            fsm:send_at_command(SM#sm{event = eps}, {at, "?PID", ""});
-        _                   -> SM#sm{event = internal, state = alarm}
-    end.
+  case {SM#sm.event, Term} of
+    {yet_another_request, _} ->
+      fsm:send_at_command(SM#sm{event = eps}, {at, "?PID", ""});
+    _                   -> SM#sm{event = internal, state = alarm}
+  end.
 
 handle_handle_pid(MM, SM, Term) ->
-    case {SM#sm.event, Term} of
-        {rcv, {sync, "?PID", Answer}} when is_list(Answer) ->
-            evar(SM, {pid, MM}, list_to_integer(Answer)),
-            fsm:clear_timeouts(SM#sm{event = yet_another_request});
-        {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
-        _                   -> SM#sm{event = internal, state = alarm}
-    end.
+  case {SM#sm.event, Term} of
+    {rcv, {sync, "?PID", Answer}} when is_list(Answer) ->
+      evar(SM, {pid, MM}, list_to_integer(Answer)),
+      fsm:clear_timeouts(SM#sm{event = yet_another_request});
+    {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
+    _                   -> SM#sm{event = internal, state = alarm}
+  end.
 
 handle_handle_yar(_MM, SM, Term) ->
-    case {SM#sm.event, Term} of
-        {yet_another_request, _} ->
-            L = evar(SM, yars),
-            case L of
-                [] -> SM#sm{event = final};
-                nothing -> SM#sm{event = final};
-                _ ->
-                    evar(SM, yars, tl(L)),
-                    fsm:send_at_command(fsm:clear_timeouts(SM), hd(L))
-            end;
-        {rcv, {sync, _, "OK"}} -> SM#sm{event = yet_another_request};
-        {rcv, {sync, _, _}}    -> SM#sm{event = wrong_receive};
-        _                      -> SM#sm{event = internal, state = alarm}
-    end.
+  case {SM#sm.event, Term} of
+    {yet_another_request, _} ->
+      L = evar(SM, yars),
+      case L of
+        [] -> SM#sm{event = final};
+        nothing -> SM#sm{event = final};
+        _ ->
+          evar(SM, yars, tl(L)),
+          fsm:send_at_command(fsm:clear_timeouts(SM), hd(L))
+      end;
+    {rcv, {sync, _, "OK"}} -> SM#sm{event = yet_another_request};
+    {rcv, {sync, _, _}}    -> SM#sm{event = wrong_receive};
+    _                      -> SM#sm{event = internal, state = alarm}
+  end.
 
 handle_final(_MM, SM, _Term) ->
-    fsm:clear_timeouts(SM#sm{event = eps}).
+  fsm:clear_timeouts(SM#sm{event = eps}).

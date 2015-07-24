@@ -34,13 +34,13 @@
 %%-----------------------------------------------------------------
 
 -record(state, {dir    :: file:filename(),
-		maxB   :: b(),
-		maxF   :: f(),
-		curB   :: b(),
-		curF   :: f(),
-		cur_fd :: file:fd(),
-		index = [],  %% Seems unused - take out??
-		pred   :: pred()}).
+                maxB   :: b(),
+                maxF   :: f(),
+                curB   :: b(),
+                curF   :: f(),
+                cur_fd :: file:fd(),
+                index = [],  %% Seems unused - take out??
+                pred   :: pred()}).
 
 %%%-----------------------------------------------------------------
 %%% This module implements an event handler that writes events
@@ -70,19 +70,19 @@
 
 
 -spec init(Dir, MaxBytes, MaxFiles) -> Args when
-      Dir :: file:filename(),
-      MaxBytes :: non_neg_integer(), % b()
-      MaxFiles :: 1..255, % f()
-      Args :: args().
+    Dir :: file:filename(),
+    MaxBytes :: non_neg_integer(), % b()
+    MaxFiles :: 1..255, % f()
+    Args :: args().
 
 init(Dir, MaxB, MaxF) -> init(Dir, MaxB, MaxF, fun(_) -> true end).
 
 -spec init(Dir, MaxBytes, MaxFiles, Pred) -> Args when
-      Dir :: file:filename(),
-      MaxBytes :: non_neg_integer(), % b()
-      MaxFiles :: 1..255, % f()
-      Pred :: fun((Event :: term()) -> boolean()), % pred()
-      Args :: args().
+    Dir :: file:filename(),
+    MaxBytes :: non_neg_integer(), % b()
+    MaxFiles :: 1..255, % f()
+    Pred :: fun((Event :: term()) -> boolean()), % pred()
+    Args :: args().
 
 init(Dir, MaxB, MaxF, Pred) -> {Dir, MaxB, MaxF, Pred}.
 
@@ -93,17 +93,17 @@ init(Dir, MaxB, MaxF, Pred) -> {Dir, MaxB, MaxF, Pred}.
 -spec init({file:filename(), non_neg_integer(), f(), pred()}) -> {'ok', #state{}} | {'error', term()}.
 
 init({Dir, MaxB, MaxF, Pred}) when is_integer(MaxF), MaxF > 0, MaxF < 256 -> 
-    First = 
-	case read_index_file(Dir) of
-	    {ok, LastWritten} -> inc(LastWritten, MaxF);
-	    _ -> 1
-	end,
-    case catch file_open(Dir, First) of
-	{ok, Fd} ->
-	    {ok, #state{dir = Dir, maxB = MaxB, maxF = MaxF, pred = Pred,
-			curF = First, cur_fd = Fd, curB = 0}};
-	Error -> Error
-    end.
+  First = 
+    case read_index_file(Dir) of
+      {ok, LastWritten} -> inc(LastWritten, MaxF);
+      _ -> 1
+    end,
+  case catch file_open(Dir, First) of
+    {ok, Fd} ->
+      {ok, #state{dir = Dir, maxB = MaxB, maxF = MaxF, pred = Pred,
+                  curF = First, cur_fd = Fd, curB = 0}};
+    Error -> Error
+  end.
 
 %%-----------------------------------------------------------------
 %% The handle_event/2 function may crash!  In this case, this
@@ -117,87 +117,87 @@ init({Dir, MaxB, MaxF, Pred}) when is_integer(MaxF), MaxF > 0, MaxF < 256 ->
 -spec handle_event(term(), #state{}) -> {'ok', #state{}}.
 
 handle_event(Event, State) ->
-    #state{curB = CurB, maxB = MaxB, curF = CurF, maxF = MaxF,
-	   dir = Dir, cur_fd = CurFd, pred = Pred} = State,
-    case catch Pred(Event) of
-	true -> 
-	    Bin = term_to_binary(tag_event(Event)),
-	    Size = byte_size(Bin),
-	    NewState =
-		if
-		    CurB + Size < MaxB -> State;
-		    true ->
-			ok = file:close(CurFd),
-			NewF = inc(CurF, MaxF),
-			{ok, NewFd} = file_open(Dir, NewF),
-			State#state{cur_fd = NewFd, curF = NewF, curB = 0}
-		end,
-	    [Hi,Lo] = put_int16(Size),
-            case file:write(NewState#state.cur_fd, [Hi, Lo, Bin]) of
-                ok ->
-		    catch gen_server:call(rb_server, {add_report, [Bin, NewState#state.curB, integer_to_list(NewState#state.curF)]}, 1000),
-                    ok;
-                {error, Reason} ->
-                    exit({file_exit, Reason})
-            end,
-	    {ok, NewState#state{curB = NewState#state.curB + Size + 2}};
-	_ ->
-	    {ok, State}
-    end.
+  #state{curB = CurB, maxB = MaxB, curF = CurF, maxF = MaxF,
+         dir = Dir, cur_fd = CurFd, pred = Pred} = State,
+  case catch Pred(Event) of
+    true -> 
+      Bin = term_to_binary(tag_event(Event)),
+      Size = byte_size(Bin),
+      NewState =
+        if
+          CurB + Size < MaxB -> State;
+          true ->
+            ok = file:close(CurFd),
+            NewF = inc(CurF, MaxF),
+            {ok, NewFd} = file_open(Dir, NewF),
+            State#state{cur_fd = NewFd, curF = NewF, curB = 0}
+        end,
+      [Hi,Lo] = put_int16(Size),
+      case file:write(NewState#state.cur_fd, [Hi, Lo, Bin]) of
+        ok ->
+          catch gen_server:call(rb_server, {add_report, [Bin, NewState#state.curB, integer_to_list(NewState#state.curF)]}, 1000),
+          ok;
+        {error, Reason} ->
+          exit({file_exit, Reason})
+      end,
+      {ok, NewState#state{curB = NewState#state.curB + Size + 2}};
+    _ ->
+      {ok, State}
+  end.
 
 -spec handle_info(term(), #state{}) -> {'ok', #state{}}.
 
 handle_info({emulator, GL, Chars}, State) ->
-    handle_event({emulator, GL, Chars}, State);
+  handle_event({emulator, GL, Chars}, State);
 handle_info(_, State) ->
-    {ok, State}.
+  {ok, State}.
 
 -spec terminate(term(), #state{}) -> #state{}.
 
 terminate(_, State) ->
-    ok = file:close(State#state.cur_fd),
-    State.
+  ok = file:close(State#state.cur_fd),
+  State.
 
 -spec handle_call('null', #state{}) -> {'ok', 'null', #state{}}.
 
 handle_call(null, State) ->
-    {ok, null, State}.
+  {ok, null, State}.
 
 -spec code_change(term(), #state{}, term()) -> {'ok', #state{}}.
 
 code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
+  {ok, State}.
 
 %%-----------------------------------------------------------------
 %% Misc local functions
 %%-----------------------------------------------------------------
 
 file_open(Dir, FileNo) ->
-    case file:open(Dir ++ [$/ | integer_to_list(FileNo)], [raw, write]) of
-	{ok, Fd} ->
-	    write_index_file(Dir, FileNo),
-	    {ok, Fd};
-	_ -> 
-	    exit(file_open)
-    end.
+  case file:open(Dir ++ [$/ | integer_to_list(FileNo)], [raw, write]) of
+    {ok, Fd} ->
+      write_index_file(Dir, FileNo),
+      {ok, Fd};
+    _ -> 
+      exit(file_open)
+  end.
 
 put_int16(I) ->
-    [((I band 16#ff00) bsr 8),I band 16#ff].
+  [((I band 16#ff00) bsr 8),I band 16#ff].
 
 tag_event(Event) ->
-    {erlang:localtime(), Event}.
+  {erlang:localtime(), Event}.
 
 read_index_file(Dir) ->
-    case file:open(Dir ++ "/index", [raw, read]) of
-	{ok, Fd} ->
-	    Res = case catch file:read(Fd, 1) of
-		      {ok, [Index]} -> {ok, Index};
-		      _ -> error
-		  end,
-	    ok = file:close(Fd),
-	    Res;
-	_ -> error
-    end.
+  case file:open(Dir ++ "/index", [raw, read]) of
+    {ok, Fd} ->
+      Res = case catch file:read(Fd, 1) of
+              {ok, [Index]} -> {ok, Index};
+              _ -> error
+            end,
+      ok = file:close(Fd),
+      Res;
+    _ -> error
+  end.
 
 %%-----------------------------------------------------------------
 %% Write the index file.  This file contains one binary with
@@ -207,19 +207,19 @@ read_index_file(Dir) ->
 %%-----------------------------------------------------------------
 
 write_index_file(Dir, Index) ->
-    File = Dir ++ "/index",
-    TmpFile = File ++ ".tmp",
-    case file:open(TmpFile, [raw, write]) of
-	{ok, Fd} ->
-	    ok = file:write(Fd, [Index]),
-	    ok = file:close(Fd),
-	    ok = file:rename(TmpFile,File),
-	    ok;
-	_ -> exit(write_index_file)
-    end.
+  File = Dir ++ "/index",
+  TmpFile = File ++ ".tmp",
+  case file:open(TmpFile, [raw, write]) of
+    {ok, Fd} ->
+      ok = file:write(Fd, [Index]),
+      ok = file:close(Fd),
+      ok = file:rename(TmpFile,File),
+      ok;
+    _ -> exit(write_index_file)
+  end.
 
 inc(N, Max) ->
-    if
-	N < Max -> N + 1;
-	true -> 1
-    end.
+  if
+    N < Max -> N + 1;
+    true -> 1
+  end.

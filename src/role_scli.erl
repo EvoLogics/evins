@@ -32,16 +32,16 @@
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-    role_worker:start(?MODULE, Role_ID, Mod_ID, MM).
+  role_worker:start(?MODULE, Role_ID, Mod_ID, MM).
 
 ctrl(_,Cfg) -> Cfg.
-     
+
 to_term(Tail, Chunk, Cfg) ->
-    role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
+  role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
 
 split(L, _Cfg) ->
-    Lst = lists:reverse(re:split(L,"\n")),
-    lists:reverse([{more, hd(Lst)} | tl(Lst)]).
+  Lst = lists:reverse(re:split(L,"\n")),
+  lists:reverse([{more, hd(Lst)} | tl(Lst)]).
 
 from_term({string, S}, Cfg) -> [list_to_binary(S ++ "\n"), Cfg];
 from_term({binary, B}, Cfg) -> [B, Cfg];
