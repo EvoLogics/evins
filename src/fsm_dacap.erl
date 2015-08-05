@@ -86,7 +86,8 @@
                  ]},
 
                 {wcts,
-                 [{rcv_cts_fm, ws_data},
+                 [{send_rts, wcts},  % test!!!!
+                  {rcv_cts_fm, ws_data},
                   {rcv_rts_nfm, backoff},
                   {rcv_cts_nfm, backoff},
                   {rcv_rts_fm, scts}, % test!!!!
@@ -135,6 +136,7 @@
                   {rcv_cts_fm, backoff},
                   {rcv_warn, idle},  % test!!!!
                   {rcv_data, idle},
+                  {no_data, idle}, % test!!!!
                   {backoff_end, idle}
                  ]},
 
@@ -161,14 +163,25 @@ handle_event(MM, SM, Term) ->
     {timeout, Event} ->
       ?INFO(?ID, "timeout ~140p~n", [Event]),
       case Event of
+        {send_rts, IDst, Msg} when State =:= wcts ->
+          fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, Msg});
+        {send_rts, _, _} ->
+          SM;
         wcts_end ->
           fsm:run_event(MM, SM#sm{event = wcts_end}, wcts_end);
-        send_data ->
+        send_data when State =:= ws_data->
           fsm:run_event(MM, SM#sm{event = send_data}, send_data);
-        tmo_send_warn -> SM;
+        send_data ->
+          SM;
+        send_warn when State =:= backoff ->
+          fsm:run_event(MM, SM#sm{state = backoff}, send_warn);
+        send_warn ->
+          SM;
+        tmo_send_warn ->
+          fsm:run_event(MM, SM#sm{state = backoff}, send_warn);
         tmo_defer_trans -> SM;
         answer_timeout ->
-          ?ERROR(?ID, "~s: Modem nor answered with sync message more than:~p~n", [?MODULE, ?ANSWER_TIMEOUT]),
+          ?ERROR(?ID, "~s: Modem not answered with sync message more than:~p~n", [?MODULE, ?ANSWER_TIMEOUT]),
           SM;
         _ -> fsm:run_event(MM, SM#sm{event = Event}, {})
       end;
@@ -211,13 +224,14 @@ handle_event(MM, SM, Term) ->
         data ->
           SM1 = fsm:clear_timeout(SM, no_data),
           fsm:run_event(MM, SM1#sm{event = rcv_data}, {});
-        rts_fm when State =:= wdata; State =:= wcts ->
+        %rts_fm when State =:= wdata; State =:= wcts ->
           %SM1 = fsm:send_at_command(SM, {at, "?CLOCK", ""}),
-          nl_mac_hf:send_helpers(SM, at, nl_mac_hf:readETS(SM, wait_data), warn),
-          STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
-          fsm:run_event(MM, SM#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}}, {});
+          %nl_mac_hf:send_helpers(SM, at, nl_mac_hf:readETS(SM, wait_data), warn),
+          %STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
+          %fsm:run_event(MM, SM#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}}, {});
         rts_fm ->
-          SM1 = fsm:send_at_command(SM, {at, "?CLOCK", ""}),
+          SM2 = fsm:clear_timeout(SM, tmo_send_warn),
+          SM1 = fsm:send_at_command(SM2, {at, "?CLOCK", ""}),
           STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
           fsm:run_event(MM, SM1#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}}, {});
         cts_fm ->
@@ -251,7 +265,8 @@ handle_event(MM, SM, Term) ->
         _ -> SM
       end;
     {sync, _, {error, _}} ->
-      fsm:run_event(MM, SM#sm{event = alarm}, {});
+      SMAT = fsm:clear_timeout(SM, answer_timeout),
+      fsm:run_event(MM, SMAT#sm{event = alarm}, {});
     {sync, Req, Answer} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
       fsm:cast(SMAT, alh, {send, {sync, Answer} }),
@@ -299,7 +314,10 @@ handle_idle(_MM, SM, Term) ->
 
 handle_wcts(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Term of
+    {send_rts, IDst, Msg} when Answer_timeout =:= true->
+      fsm:set_timeout(SM, {ms, 50}, {send_rts, IDst, Msg});
     {send_rts, IDst, Msg} ->
       SM1 = nl_mac_hf:send_helpers(SM, at, Msg, rts),
       if SM1 =:= error -> SM#sm{event = error};
@@ -349,8 +367,8 @@ handle_ws_data(_MM, SMP, Term) ->
       fsm:set_timeout(SM1#sm{event = eps}, {s, Wcts_time}, send_data);
     send_data when Answer_timeout =:= true->
       % if answer_timeout exists, it means, that channel is busy
-      % try to send data once more in 100 ms
-      fsm:set_timeout(SM1#sm{event = eps}, {ms, 100}, send_data);
+      % try to send data once more in 50 ms
+      fsm:set_timeout(SM1#sm{event = eps}, {ms, 50}, send_data);
     send_data ->
       SM2 = nl_mac_hf:send_mac(SM1, at, data, nl_mac_hf:readETS(SM, current_pkg)),
       nl_mac_hf:cleanETS(SM2, current_pkg),
@@ -364,17 +382,11 @@ handle_ws_data(_MM, SMP, Term) ->
 
 handle_backoff(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Term of
-    wcts_end ->
-      fsm:set_timeout(SM#sm{event = eps}, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end);
-    _ -> SM#sm{event = eps}
-  end.
-
-handle_wdata(_MM, SM, Term) ->
-  ?TRACE(?ID, "~120p~n", [Term]),
-  Tmo_send_warn = fsm:check_timeout(SM, tmo_send_warn),
-  case SM#sm.event of
-    rcv_rts_nfm when Tmo_send_warn =:= true ->
+    send_warn when Answer_timeout =:= true->
+      fsm:set_timeout(SM#sm{event = eps}, {ms, 50}, send_warn);
+    send_warn ->
       STuple = nl_mac_hf:readETS(SM, wait_data),
       SM1 = nl_mac_hf:send_helpers(SM, at, STuple, warn),
       if SM1 =:= error -> SM#sm{event = error};
@@ -382,8 +394,26 @@ handle_wdata(_MM, SM, Term) ->
            SM2 = fsm:set_timeout(SM1, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end),
            SM2#sm{event = send_warn}
       end;
+    wcts_end ->
+      fsm:set_timeout(SM#sm{event = eps}, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end);
     _ -> SM#sm{event = eps}
   end.
+
+handle_wdata(_MM, SM, Term) ->
+  ?TRACE(?ID, "~120p~n", [Term]),
+  % Tmo_send_warn = fsm:check_timeout(SM, tmo_send_warn),
+  % case SM#sm.event of
+  %   rcv_rts_nfm when Tmo_send_warn =:= true ->
+  %     STuple = nl_mac_hf:readETS(SM, wait_data),
+  %     SM1 = nl_mac_hf:send_helpers(SM, at, STuple, warn),
+  %     if SM1 =:= error -> SM#sm{event = error};
+  %        true ->
+  %          SM2 = fsm:set_timeout(SM1, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end),
+  %          SM2#sm{event = send_warn}
+  %     end;
+  %   _ -> SM#sm{event = eps}
+  % end.
+  SM#sm{event = eps}.
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
