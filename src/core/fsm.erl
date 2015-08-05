@@ -82,6 +82,10 @@ handle_cast({chan_closed, MM}, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_closed, MM}}}),
   {noreply, SM};
 
+handle_cast({chan_error, MM, Reason}, #sm{module = Module} = SM) ->
+  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_error, MM, Reason}}}),
+  {noreply, Module:handle_event(MM, SM, {connection_error, Reason})};
+
 handle_cast({chan_closed_client, MM}, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_closed_client, MM}}}),
   {noreply, SM};
@@ -166,7 +170,7 @@ check_timeout(#sm{timeouts = Timeouts}, Event) ->
   length(lists:filter(fun({E,_}) -> Event =:= E end, Timeouts)) =:= 1.
 
 clear_timeouts(SM) ->
-  true = lists:all(fun(A) -> A == {ok, cancel} end,            
+  true = lists:all(fun(A) -> A == {ok, cancel} end,
                    lists:map(fun({_,Ref}) -> timer:cancel(Ref) end, SM#sm.timeouts)),
   SM#sm{timeouts = []}.
 
