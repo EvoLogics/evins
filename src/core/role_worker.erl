@@ -78,8 +78,8 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {cowboy,I,P}}} = Sta
   gen_server:cast(Mod_ID, {Self, ID, ok}),
   {ok, State};    
 
-init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {erlang,I1,M2,I2}}} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {erlang,I1,M2,I2}}}}),
+init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {erlang,Target}}} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {erlang,Target}}}}),
   process_flag(trap_exit, true),
   Self = self(),
   gen_server:cast(Mod_ID, {Self, ID, ok}),
@@ -178,8 +178,7 @@ handle_cast({send, Term}, #ifstate{behaviour = B, cfg = Cfg, mm = #mm{iface = {c
   NewCfg = B:from_term(Term, Cfg),
   {noreply, State#ifstate{cfg = NewCfg}};
 
-handle_cast({send, Term}, #ifstate{mm = #mm{iface = {erlang,_,M2,I2}}} = State) ->
-  Target = list_to_atom(lists:flatten(io_lib:format("~p_~p",[M2,I2]))), 
+handle_cast({send, Term}, #ifstate{mm = #mm{iface = {erlang,Target}}} = State) ->
   Target ! {bridge, Term},
   {noreply, State};
 

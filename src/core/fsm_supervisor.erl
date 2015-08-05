@@ -63,21 +63,32 @@ check_port_name({spawn_executable, FileName}) when is_list(FileName) -> ok;
 check_port_name({fd, In, Out}) when is_number(In), is_number(Out) -> ok;
 check_port_name(X) -> {error, {badPort, X}}.
 
-check_list_term({role,Role,iface,{cowboy,Address,Port}}) when is_atom(Role), is_list(Address), is_integer(Port) ->
+check_list_term({role,Role,iface,{cowboy,Address,Port}})
+  when is_atom(Role), is_list(Address), is_integer(Port) ->
   ok;
-check_list_term({role,Role,params,Params,iface,{cowboy,Address,Port}}) when is_atom(Role), is_list(Params), is_list(Address), is_integer(Port) ->
+check_list_term({role,Role,params,Params,iface,{cowboy,Address,Port}})
+  when is_atom(Role), is_list(Params), is_list(Address), is_integer(Port) ->
   ok;
-check_list_term({role,Role,iface,{erlang,id,EID,target,Module_ID,TID}}) when is_atom(Role), is_atom(EID), is_atom(Module_ID), is_atom(TID) ->
+check_list_term({role,Role,iface,{erlang,id,EID,target,{Module_ID,TID}}})
+  when is_atom(Role), is_atom(EID), is_atom(Module_ID), is_atom(TID) ->
   ok;
-check_list_term({role,Role,params,Params,iface,{erlang,id,EID,target,Module_ID,TID}}) when is_atom(Role), is_list(Params), is_atom(EID), is_atom(Module_ID), is_atom(TID) ->
+check_list_term({role,Role,iface,{erlang,id,EID,target,{Module_ID,TID,Remote}}})
+  when is_atom(Role), is_atom(EID), is_atom(Module_ID), is_atom(TID), is_atom(Remote)->
   ok;
-check_list_term({role,Role,iface,{socket,Address,Port,TCPRole}}) when is_atom(Role), is_list(Address), is_integer(Port), is_atom(TCPRole) ->
+check_list_term({role,Role,params,Params,iface,{erlang,id,EID,target,Module_ID,TID}})
+  when is_atom(Role), is_list(Params), is_atom(EID), is_atom(Module_ID), is_atom(TID) ->
   ok;
-check_list_term({role,Role,params,Params,iface,{socket,Address,Port,TCPRole}}) when is_atom(Role), is_list(Params), is_list(Address), is_integer(Port), is_atom(TCPRole) ->
+check_list_term({role,Role,iface,{socket,Address,Port,TCPRole}})
+  when is_atom(Role), is_list(Address), is_integer(Port), is_atom(TCPRole) ->
   ok;
-check_list_term({role,Role,iface,{port,PortName,PortSettings}}) when is_atom(Role), is_list(PortSettings) ->
+check_list_term({role,Role,params,Params,iface,{socket,Address,Port,TCPRole}})
+  when is_atom(Role), is_list(Params), is_list(Address), is_integer(Port), is_atom(TCPRole) ->
+  ok;
+check_list_term({role,Role,iface,{port,PortName,PortSettings}})
+  when is_atom(Role), is_list(PortSettings) ->
   check_port_name(PortName);
-check_list_term({role,Role,params,Params,iface,{port,PortName,PortSettings}}) when is_atom(Role), is_list(Params), is_list(PortSettings) ->
+check_list_term({role,Role,params,Params,iface,{port,PortName,PortSettings}})
+  when is_atom(Role), is_list(Params), is_list(PortSettings) ->
   check_port_name(PortName);
 check_list_term({mfa,M,F,A}) when is_atom(M), is_atom(F), is_list(A) ->
   ok;

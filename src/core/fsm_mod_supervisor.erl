@@ -45,28 +45,38 @@ init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
   Roles = 
     [{R,{cowboy,I,P},[]}       || {role,R,iface,{cowboy,I,P}} <- ConfigData] ++
     [{R,{cowboy,I,P},[E]}      || {role,R,params,E,iface,{cowboy,I,P}} <- ConfigData] ++
-    [{R,{erlang,I1,M2,I2},[]}  || {role,R,iface,{erlang,id,I1,target,M2,I2}} <- ConfigData] ++
-    [{R,{erlang,I1,M2,I2},[E]} || {role,R,params,E,iface,{erlang,id,I1,target,M2,I2}} <- ConfigData] ++
+    [{R,{erlang,I1,Target},[]} || {role,R,iface,{erlang,id,I1,target,Target}} <- ConfigData] ++
+    [{R,{erlang,I1,Target},[E]}|| {role,R,params,E,iface,{erlang,id,I1,target,Target}} <- ConfigData] ++
     [{R,{socket,I,P,T},[]}     || {role,R,iface,{socket,I,P,T}} <- ConfigData] ++
     [{R,{socket,I,P,T},E}      || {role,R,params,E,iface,{socket,I,P,T}} <- ConfigData] ++  
-    [{R,{port,P,PS},[]}        || {role,R,iface,{port,P,PS}} <- ConfigData] ++  
+    [{R,{port,P,PS},[]}        || {role,R,iface,{port,P,PS}} <- ConfigData] ++      
     [{R,{port,P,PS},E}         || {role,R,params,E,iface,{port,P,PS}} <- ConfigData],
   Role_ID_list = map(fun({N, {R,If,_}}) ->
                          list_to_atom(lists:flatten(case If of
                                                       {socket,_,_,_}  -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {port,_,_}      -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {cowboy,_,_}    -> io_lib:format("~p_~p_~p",[R,ID,N]);
-                                                      {erlang,I1,_,_} -> io_lib:format("~p_~p",[ID,I1])
+                                                      {erlang,I1,_} -> io_lib:format("~p_~p",[ID,I1])
                                                     end))
                      end, zip(seq(1,length(Roles)), Roles)),
+  %% M2,I2
   Role_workers = map(fun({Role_ID, {R,If,E}}) ->
                          Iface = case If of
                                    {socket, I, P, T} ->
                                      {ok, IP} = inet:parse_ipv4_address(I),
                                      {socket, IP, P, T};
+                                   {erlang, _, {M2, I2}} ->
+                                     MID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[M2,I2]))),
+                                     {erlang, MID};
+                                   {erlang, _, {M2, I2, Remote}} ->
+                                     MID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[M2,I2]))),
+                                     {erlang, {MID, Remote}};
                                    _ -> If
                                  end,
-                         Role = list_to_atom("role_" ++ atom_to_list(R)),
+                         Role = case If of
+                                  {erlang, _, _} -> role_fake;
+                                  _ -> list_to_atom("role_" ++ atom_to_list(R))
+                                end,
                          MM = #mm{role=R,role_id=Role_ID,iface=Iface,params=E},
                          {Role_ID,
                           {Role, start, [Role_ID, Mod_ID, MM]},
