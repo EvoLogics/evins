@@ -146,12 +146,10 @@ handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
   ?TRACE(?ID, "~p~n", [Term]),
   case Term of
+    {timeout, answer_timeout} ->
+      SM;
     {timeout, Event} ->
-      ?INFO(?ID, "timeout ~140p~n", [Event]),
-      case Event of
-        answer_timeout -> SM;
-        _ -> fsm:run_event(MM, SM#sm{event = Event}, {})
-      end;
+      fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
@@ -166,23 +164,14 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event = rcv_ul}, {rcv_ul, Msg});
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
-    {async, PID, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
+    {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
       [H | T] = tuple_to_list(Tuple),
-      BPid =
-      case PID of
-        {pid, NPid} -> <<"p", (integer_to_binary(NPid))/binary>>
-      end,
+      BPid = <<"p", (integer_to_binary(NPid))/binary>>,
       fsm:cast(SM, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
       SM;
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
-      case Tuple of
-        {sendstart, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = sendstart},{});
-        {sendend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = sendend},{});
-        {recvstart}       -> fsm:run_event(MM, SM#sm{event = recvstart},{});
-        {recvend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = recvend},{});
-        _ -> SM
-      end;
+      process_async(SM, Tuple);
     {sync, _Req,Answer} ->
       fsm:cast(SM, alh, {send, {sync, Answer} }),
       SM;
@@ -201,17 +190,16 @@ handle_idle(_MM, SM, Term) ->
 
 handle_sp(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_sp ~120p~n", [Term]),
+  Backoff_timeout = fsm:check_timeout(SM, backoff_timeout),
   case Term of
-    {rcv_ul, Msg} ->
+    {rcv_ul, Msg} when Backoff_timeout =:= false ->
       nl_mac_hf:insertETS(SM, current_msg, Msg),
-      case fsm:check_timeout(SM, backoff_timeout) of
-        false ->
-          Backoff_tmp = change_backoff(SM, increment),
-          fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
-        true  ->
-          fsm:cast(SM, alh,  {send, {sync, "OK"} }),
-          SM#sm{event = eps}
-      end;
+      Backoff_tmp = change_backoff(SM, increment),
+      fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
+    {rcv_ul, Msg} when Backoff_timeout =:= true ->
+      nl_mac_hf:insertETS(SM, current_msg, Msg),
+      fsm:cast(SM, alh,  {send, {sync, "OK"} }),
+      SM#sm{event = eps};
     _ when SM#sm.event =:= backoff_timeout ->
       Backoff_tmp = change_backoff(SM, increment),
       fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
@@ -233,7 +221,7 @@ handle_write_alh(_MM, SM, Term) ->
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
-    exit({alarm, SM#sm.module}).
+  exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
@@ -262,3 +250,17 @@ change_backoff(SM, Type) ->
   Val = math:pow(2, nl_mac_hf:readETS(SM, current_step)),
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
   Val.
+
+process_async(SM, Tuple) ->
+  case Tuple of
+    {sendstart, _, _, _, _} ->
+      SM#sm{event = sendstart};
+    {sendend, _, _, _, _} ->
+      SM#sm{event = sendend};
+    {recvstart} ->
+      SM#sm{event = recvstart};
+    {recvend, _, _, _, _} ->
+      SM#sm{event = recvend};
+    _ ->
+      SM
+  end.
