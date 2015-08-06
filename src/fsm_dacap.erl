@@ -34,7 +34,8 @@
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1, handle_event/3, stop/1]).
 
--export([handle_idle/3, handle_alarm/3, handle_wcts/3, handle_ws_data/3, handle_scts/3, handle_wdata/3, handle_backoff/3, handle_final/3]).
+-export([handle_idle/3, handle_alarm/3, handle_backoff/3, handle_final/3]).
+-export([handle_wcts/3, handle_ws_data/3, handle_scts/3, handle_wdata/3]).
 
 %% B. Peleato, M. Stojanovic, Distance Aware Collision Avoidance Protocol for Ad Hoc Underwater
 %% Acoustic Sensor Networks, IEEE Comm. Letters., 11 (12), pp. 1025-1027, 2007.
@@ -76,11 +77,11 @@
                  [{internal, idle},
                   {wcts_end, idle},
                   {send_rts, wcts},
+                  {rcv_data, idle},
+                  {rcv_warn, backoff},
+                  {backoff_end, idle},
                   {rcv_rts_fm, scts},
                   {rcv_cts_fm, idle},
-                  {rcv_data, idle},
-                  {rcv_warn, backoff}, % test!!!!
-                  {backoff_end, idle},  % test!!!!
                   {rcv_rts_nfm, backoff},
                   {rcv_cts_nfm, backoff}
                  ]},
@@ -90,10 +91,10 @@
                   {rcv_cts_fm, ws_data},
                   {rcv_rts_nfm, backoff},
                   {rcv_cts_nfm, backoff},
-                  {rcv_rts_fm, scts}, % test!!!!
-                  {rcv_data, idle}, % test!!!!
+                  {rcv_rts_fm, scts},
+                  {rcv_data, idle},
                   {error, idle},
-                  {rcv_warn, idle},  % test!!!!
+                  {rcv_warn, idle},
                   {wcts_end, backoff}
                  ]},
 
@@ -109,10 +110,12 @@
 
                 {scts,
                  [{error, idle},
+                  {backoff_end, idle}, % test!!!!
                   {rcv_rts_fm, scts},
-                  {rcv_cts_fm, scts}, % test!!!!
-                  {wcts_end, scts}, % test!!!!
-                  {cts_sent, wdata}
+                  {rcv_cts_fm, scts},
+                  {wcts_end, scts},
+                  {cts_sent, wdata},
+                  {req_clock, scts}
                  ]},
 
                 {wdata,
@@ -120,7 +123,7 @@
                   {send_warn, backoff},
                   {send_cts, scts},
                   {rcv_data, idle},
-                  {rcv_warn, wdata},  % test!!!!
+                  {rcv_warn, wdata},
                   {rcv_rts_fm, scts},
                   {rcv_rts_nfm, wdata},
                   {rcv_cts_nfm, wdata},
@@ -128,15 +131,14 @@
                  ]},
 
                 {backoff,
-                 [{backoff_end, idle},
-                  {rcv_rts_fm, scts},
-                  {wcts_end, backoff}, % test!!!!
+                 [{rcv_rts_fm, scts},
+                  {wcts_end, backoff},
                   {rcv_rts_nfm, backoff},
                   {rcv_cts_nfm, backoff},
                   {rcv_cts_fm, backoff},
-                  {rcv_warn, idle},  % test!!!!
+                  {rcv_warn, idle},
                   {rcv_data, idle},
-                  {no_data, idle}, % test!!!!
+                  {no_data, idle},
                   {backoff_end, idle}
                  ]},
 
@@ -160,31 +162,28 @@ handle_event(MM, SM, Term) ->
   io:format("*************** ~p St ~p Term ~p ~n", [?ID, SM#sm.state, Term]),
   State = SM#sm.state,
   case Term of
+    {timeout, {send_rts, IDst, Msg}} when State =:= wcts ->
+      fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, Msg});
+    {timeout, {send_rts, _, _}} -> SM;
+    {timeout, wcts_end} ->
+      fsm:run_event(MM, SM#sm{event = wcts_end}, wcts_end);
+    {timeout, send_data} when State =:= ws_data->
+      fsm:run_event(MM, SM#sm{event = send_data}, send_data);
+    {timeout, send_data} -> SM;
+    {timeout, send_warn} when State =:= backoff ->
+      fsm:run_event(MM, SM#sm{state = backoff}, send_warn);
+    {timeout, send_warn} -> SM;
+    {timeout, req_clock} when State =:= scts ->
+      fsm:run_event(MM, SM#sm{event = req_clock}, req_clock);
+    {timeout, req_clock} -> SM;
+    {timeout, tmo_send_warn} ->
+      fsm:run_event(MM, SM#sm{state = backoff}, send_warn);
+    {timeout, tmo_defer_trans} -> SM;
+    {timeout, answer_timeout} ->
+      ?ERROR(?ID, "~s: Modem not answered with sync message more than:~p~n", [?MODULE, ?ANSWER_TIMEOUT]),
+      SM;
     {timeout, Event} ->
-      ?INFO(?ID, "timeout ~140p~n", [Event]),
-      case Event of
-        {send_rts, IDst, Msg} when State =:= wcts ->
-          fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, Msg});
-        {send_rts, _, _} ->
-          SM;
-        wcts_end ->
-          fsm:run_event(MM, SM#sm{event = wcts_end}, wcts_end);
-        send_data when State =:= ws_data->
-          fsm:run_event(MM, SM#sm{event = send_data}, send_data);
-        send_data ->
-          SM;
-        send_warn when State =:= backoff ->
-          fsm:run_event(MM, SM#sm{state = backoff}, send_warn);
-        send_warn ->
-          SM;
-        tmo_send_warn ->
-          fsm:run_event(MM, SM#sm{state = backoff}, send_warn);
-        tmo_defer_trans -> SM;
-        answer_timeout ->
-          ?ERROR(?ID, "~s: Modem not answered with sync message more than:~p~n", [?MODULE, ?ANSWER_TIMEOUT]),
-          SM;
-        _ -> fsm:run_event(MM, SM#sm{event = Event}, {})
-      end;
+      fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
@@ -195,75 +194,24 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, {at, _, _, _, _}} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
-    {rcv_ul, T = {at, _PID, _, IDst, _, _}} ->
-      if State =:= idle->
-           nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0}),
-           if IDst =:= 255 -> fsm:send_at_command(SM, T);
-            true -> nl_mac_hf:insertETS(SM, current_pkg, T),
-                    fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, T})
-           end;
-         true -> fsm:cast(SM, alh,  {send, {sync, "OK"} }), SM
+    {rcv_ul, T = {at, _PID, _, IDst, _, _}} when State =:= idle ->
+      nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0}),
+      if IDst =:= 255 ->
+        fsm:send_at_command(SM, T);
+      true ->
+        nl_mac_hf:insertETS(SM, current_pkg, T),
+        fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, T})
       end;
-    T={async, PID, Tuple} ->
+    {rcv_ul, _} ->
+      fsm:cast(SM, alh,  {send, {sync, "OK"} }),
+      SM;
+    {async, PID, Tuple} ->
       %% recv, recvim
-      [H |_] = tuple_to_list(Tuple),
-      BPid=
-      case PID of
-        {pid, NPid} -> <<"p", (integer_to_binary(NPid))/binary>>
-      end,
-      [SMN, {Flag, RTuple}] = parse_ll_msg(SM, T),
-      {_, Src, _, TFlag, _, _, _, _, Data} = RTuple,
-      case Tuple of
-        {recvim, _, _, _, _, _, _, _, _, _} ->
-          fsm:cast(SMN, alh, {send, {async, list_to_tuple([H | [BPid| tuple_to_list(RTuple) ]] )} });
-        {recvims, _, _, _, _, _, _, _, _, _} -> nothing
-      end,
-      Tmo_defer_trans = fsm:check_timeout(SM, tmo_defer_trans),
-      case Flag of
-        raw ->  SM;
-        data ->
-          SM1 = fsm:clear_timeout(SM, no_data),
-          fsm:run_event(MM, SM1#sm{event = rcv_data}, {});
-        %rts_fm when State =:= wdata; State =:= wcts ->
-          %SM1 = fsm:send_at_command(SM, {at, "?CLOCK", ""}),
-          %nl_mac_hf:send_helpers(SM, at, nl_mac_hf:readETS(SM, wait_data), warn),
-          %STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
-          %fsm:run_event(MM, SM#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}}, {});
-        rts_fm ->
-          SM2 = fsm:clear_timeout(SM, tmo_send_warn),
-          SM1 = fsm:send_at_command(SM2, {at, "?CLOCK", ""}),
-          STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
-          fsm:run_event(MM, SM1#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}}, {});
-        cts_fm ->
-          fsm:run_event(MM, SM#sm{event = rcv_cts_fm}, {rcv_cts_fm, binary_to_integer(Data), Src});
-        rts_nfm ->
-          SM1 = fsm:set_timeout(SM, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end),
-          fsm:run_event(MM, SM1#sm{event = rcv_rts_nfm}, {});
-        cts_nfm when ((State =:= wcts) and Tmo_defer_trans) ->
-          SM;
-        cts_nfm ->
-          SM1 = fsm:set_timeout(SM, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end),
-          fsm:run_event(MM, SM1#sm{event = rcv_cts_nfm}, {});
-        warn ->
-          fsm:run_event(MM, SM#sm{event = rcv_warn}, {rcv_warn})
-      end;
+      [SM1, Param] = process_rcv_flag(SM, PID, Tuple),
+      fsm:run_event(MM, SM1, Param);
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
-      case Tuple of
-        {sendend, _, _, Timestemp1, TDur} when State =:= wcts ->
-          nl_mac_hf:insertETS(SM, rts_cts_time_total, {Timestemp1 - TDur, 0}), SM;
-        {recvend, Timestemp2, _TDur, _, _}when (State =:= wcts) ->
-          case nl_mac_hf:readETS(SM, rts_cts_time_total) of
-            {Timestemp1, 0} ->
-              nl_mac_hf:insertETS(SM, rts_cts_time_total, {Timestemp1, Timestemp2});
-            _ ->
-              nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0})
-          end,
-          SM;
-        {recvend, Timestemp1, TDur, _, _} ->
-          nl_mac_hf:insertETS(SM, cts_rts_time_total, {Timestemp1 - TDur, 0}), SM;
-        _ -> SM
-      end;
+      process_tmstmp(SM, Tuple);
     {sync, _, {error, _}} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
       fsm:run_event(MM, SMAT#sm{event = alarm}, {});
@@ -271,26 +219,8 @@ handle_event(MM, SM, Term) ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
       fsm:cast(SMAT, alh, {send, {sync, Answer} }),
       [Param_Term, SM1] = nl_mac_hf:event_params(SMAT, Term, rcv_rts_fm),
-      case Param_Term of
-        {rcv_rts_fm, STuple} when Req =:= "?CLOCK" ->
-          Timestemp2 = list_to_integer(Answer),
-          case nl_mac_hf:readETS(SM1, cts_rts_time_total) of
-            {Timestemp1, 0} ->
-              SM2 = nl_mac_hf:send_cts(SM, at, STuple, Timestemp2, 1000000, Timestemp2 - Timestemp1),
-              {at, _, _, IDst, _, _} = STuple,
-              C = nl_mac_hf:readETS(SM2, sound_speed),
-              U = get_distance(SM2, IDst),
-              T = U/C,
-              Tmin = T,
-              SM3 = fsm:set_timeout(SM2, {s, 2 * T - Tmin}, tmo_send_warn),
-              nl_mac_hf:insertETS(SM3, cts_rts_time_total, {Timestemp1, Timestemp2}),
-              fsm:run_event(MM, SM3#sm{event = rcv_rts_fm}, {rcv_rts_fm, SM2, STuple});
-            _ ->
-              nl_mac_hf:insertETS(SM1, cts_rts_time_total, {0, 0}),
-              SM1
-          end;
-        _ -> SM1
-      end;
+      [SM2, Param] = process_sync(SM1, Req, Answer, Param_Term),
+      fsm:run_event(MM, SM2, Param);
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -320,13 +250,11 @@ handle_wcts(_MM, SM, Term) ->
       fsm:set_timeout(SM, {ms, 50}, {send_rts, IDst, Msg});
     {send_rts, IDst, Msg} ->
       SM1 = nl_mac_hf:send_helpers(SM, at, Msg, rts),
-      if SM1 =:= error -> SM#sm{event = error};
-         true ->
-           Tmin = get_distance(SM, IDst) / nl_mac_hf:readETS(SM, sound_speed),
-           SM2 = fsm:set_timeout(SM1, {s, Tmin}, tmo_defer_trans),
-           RTT = get_current_rtt(SM2, IDst),
-           nl_mac_hf:insertETS(SM2, time_srts, erlang:now()),
-           fsm:set_timeout(SM1#sm{event = eps}, {s, RTT}, wcts_end) end;
+      Tmin = get_distance(SM, IDst) / nl_mac_hf:readETS(SM, sound_speed),
+      SM2 = fsm:set_timeout(SM1, {s, Tmin}, tmo_defer_trans),
+      RTT = get_current_rtt(SM2, IDst),
+      nl_mac_hf:insertETS(SM2, time_srts, erlang:now()),
+      fsm:set_timeout(SM1#sm{event = eps}, {s, RTT}, wcts_end);
     {rcv_cts_fm, RTmo, Src} ->
       SM#sm{event = rcv_cts_fm, event_params = {rcv_cts_fm, RTmo, Src}};
     _ -> SM#sm{event = eps}
@@ -339,19 +267,24 @@ handle_scts(_MM, SM, Term) ->
     rcv_rts_fm -> fsm:clear_timeout(SM, backoff_end);
     _ -> SM
   end,
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Term of
+    req_clock when Answer_timeout =:= true ->
+      fsm:set_timeout(SM1, {ms, 50}, req_clock);
+    req_clock ->
+      fsm:send_at_command(SM1, {at, "?CLOCK", ""});
+    {rcv_rts_fm, error, _} ->
+      SM1#sm{event = error};
     {rcv_rts_fm, SM2, STuple}->
-      if SM2 =:= error -> SM1#sm{event = error};
-         true ->
-           nl_mac_hf:insertETS(SM2, wait_data, STuple),
-           C = nl_mac_hf:readETS(SM2, sound_speed),
-           U =
-           case Val = nl_mac_hf:readETS(SM2, {u, nl_mac_hf:get_dst_addr(STuple)}) of
-             not_inside -> nl_mac_hf:readETS(SM2, u);
-             _ -> Val
-           end,
-           fsm:set_timeout(SM2#sm{event = cts_sent}, {s, 2 * U / C}, no_data)
-      end;
+      nl_mac_hf:insertETS(SM2, wait_data, STuple),
+      C = nl_mac_hf:readETS(SM2, sound_speed),
+      Dst_addr = nl_mac_hf:get_dst_addr(STuple),
+      U =
+      case Val = nl_mac_hf:readETS(SM2, {u, Dst_addr}) of
+       not_inside -> nl_mac_hf:readETS(SM2, u);
+       _ -> Val
+      end,
+      fsm:set_timeout(SM2#sm{event = cts_sent}, {s, 2 * U / C}, no_data);
     _ -> SM1#sm{event = eps}
   end.
 
@@ -370,11 +303,10 @@ handle_ws_data(_MM, SMP, Term) ->
       % try to send data once more in 50 ms
       fsm:set_timeout(SM1#sm{event = eps}, {ms, 50}, send_data);
     send_data ->
-      SM2 = nl_mac_hf:send_mac(SM1, at, data, nl_mac_hf:readETS(SM, current_pkg)),
+      Current_pkg = nl_mac_hf:readETS(SM, current_pkg),
+      SM2 = nl_mac_hf:send_mac(SM1, at, data, Current_pkg),
       nl_mac_hf:cleanETS(SM2, current_pkg),
-      if SM2 =:= error -> SM#sm{event = error};
-         true -> SM2#sm{event = data_sent}
-      end;
+      SM2#sm{event = data_sent};
     {rcv_warn} ->
       fsm:clear_timeout(SM1#sm{event = rcv_warn}, send_data);
     _ -> SM1#sm{event = eps}
@@ -387,32 +319,19 @@ handle_backoff(_MM, SM, Term) ->
     send_warn when Answer_timeout =:= true->
       fsm:set_timeout(SM#sm{event = eps}, {ms, 50}, send_warn);
     send_warn ->
+      Tmo_backoff = nl_mac_hf:rand_float(SM, tmo_backoff),
       STuple = nl_mac_hf:readETS(SM, wait_data),
       SM1 = nl_mac_hf:send_helpers(SM, at, STuple, warn),
-      if SM1 =:= error -> SM#sm{event = error};
-         true ->
-           SM2 = fsm:set_timeout(SM1, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end),
-           SM2#sm{event = send_warn}
-      end;
+      SM2 = fsm:set_timeout(SM1, {ms, Tmo_backoff}, backoff_end),
+      SM2#sm{event = send_warn};
     wcts_end ->
-      fsm:set_timeout(SM#sm{event = eps}, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end);
+      Tmo_backoff = nl_mac_hf:rand_float(SM, tmo_backoff),
+      fsm:set_timeout(SM#sm{event = eps}, {ms, Tmo_backoff}, backoff_end);
     _ -> SM#sm{event = eps}
   end.
 
 handle_wdata(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  % Tmo_send_warn = fsm:check_timeout(SM, tmo_send_warn),
-  % case SM#sm.event of
-  %   rcv_rts_nfm when Tmo_send_warn =:= true ->
-  %     STuple = nl_mac_hf:readETS(SM, wait_data),
-  %     SM1 = nl_mac_hf:send_helpers(SM, at, STuple, warn),
-  %     if SM1 =:= error -> SM#sm{event = error};
-  %        true ->
-  %          SM2 = fsm:set_timeout(SM1, {ms, nl_mac_hf:rand_float(SM, tmo_backoff)}, backoff_end),
-  %          SM2#sm{event = send_warn}
-  %     end;
-  %   _ -> SM#sm{event = eps}
-  % end.
   SM#sm{event = eps}.
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
@@ -423,7 +342,7 @@ handle_alarm(_MM, SM, _Term) ->
 handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
 
-%%------------------------------------------ process helper functions -----------------------------------------------------
+%%-----------------------------process helper functions ------------------------
 get_distance(SM, IDst) ->
   case Val = nl_mac_hf:readETS(SM, {u, IDst}) of
     not_inside ->
@@ -440,7 +359,9 @@ calc_wcts(SM, IDst) ->
   Delta_d = T / 4 * C,
   %% reception is still possible in m
   %% when some links are shorter it can be reduced, in s
-  T_data = nl_mac_hf:readETS(SM, t_data), % duration of the data packet to be transmitted, in s
+
+  % duration of the data packet to be transmitted, in s
+  T_data = nl_mac_hf:readETS(SM, t_data),
   T1 = (T_min - lists:min([Delta_d / C , T_data,  2 * T - T_min])) / 2,
   Tw =
   if U / C < T1 -> T_min - 2 * U / C;
@@ -451,7 +372,7 @@ calc_wcts(SM, IDst) ->
 
 update_wcts(SM, RTmo, IDst) ->
   C = nl_mac_hf:readETS(SM, sound_speed),
-
+  LA = nl_mac_hf:readETS(SM,local_address),
   case nl_mac_hf:readETS(SM, rts_cts_time_total) of
     {0, 0} -> nothing;
     {T1, T2} ->
@@ -460,10 +381,11 @@ update_wcts(SM, RTmo, IDst) ->
       T = RTT / 2,
       U = T * C,
       ?TRACE(?ID, "T1 ~p T2 ~p Tot ~p RTmo ~p RTT ~p T ~p ~n", [T1, T2, Tot, RTmo, RTT, T]),
-      ?TRACE(?ID, "Distance between ~p and ~p is U = ~p ~n", [nl_mac_hf:readETS(SM,local_address), IDst, U]),
+      ?TRACE(?ID, "Distance between ~p and ~p is U = ~p ~n", [LA, IDst, U]),
       nl_mac_hf:insertETS(SM, {u, IDst}, U),
       Delta_d = T/4 * C,
-      nl_mac_hf:insertETS(SM, {rtt, IDst},  nl_mac_hf:convert_t(Tot, {us, s}) + 2 * Delta_d / C)
+      CTot = nl_mac_hf:convert_t(Tot, {us, s}),
+      nl_mac_hf:insertETS(SM, {rtt, IDst}, CTot + 2 * Delta_d / C)
   end.
 
 get_current_rtt(SM, IDst) ->
@@ -491,33 +413,122 @@ process_async(SM, Msg) ->
   end.
 
 process_recv(SM, T) ->
-  Local_addr = nl_mac_hf:readETS(SM, local_address),
   {_, Len, Src, Dst, P1, P2, P3, P4, P5, Payl} = T,
-  if Dst =:= 255 ->
-       [SM, {raw, {Len, Src, Dst, P1, P2, P3, P4, P5, Payl}}];
-     true ->
-       case re:run(Payl, "([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]) of
-         {match, [BFlag, Data]} ->
-           Flag = nl_mac_hf:num2flag(BFlag, mac),
-           ShortTuple = {Len - 2, Src, Dst, P1, P2, P3, P4, P5, Data},
-           case Flag of
-             rts ->
-               if Dst =:= Local_addr ->
-                    [SM, {rts_fm, ShortTuple}];
-                  true ->
-                    [SM, {rts_nfm, ShortTuple}]
-               end;
-             cts ->
-               if Dst =:= Local_addr ->
-                    [SM, {cts_fm, ShortTuple}];
-                  true ->
-                    [SM, {cts_nfm, ShortTuple}]
-               end;
-             warn ->
-               [SM, {warn, ShortTuple}];
-             data ->
-               [SM, {data, ShortTuple}]
-           end;
-         nomatch -> [SM, nothing]
-       end
+  process_recv_helper(SM, Len, Src, Dst, P1, P2, P3, P4, P5, Payl).
+
+process_recv_helper(SM, Len, Src, 255, P1, P2, P3, P4, P5, Payl) ->
+  [SM, {raw, {Len, Src, 255, P1, P2, P3, P4, P5, Payl}}];
+process_recv_helper(SM, Len, Src, Dst, P1, P2, P3, P4, P5, Payl) ->
+  case re:run(Payl, "([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]) of
+    {match, [BFlag, Data]} ->
+      Flag = nl_mac_hf:num2flag(BFlag, mac),
+      ShortTuple = {Len - 2, Src, Dst, P1, P2, P3, P4, P5, Data},
+      process_recv_helper(SM, Flag, ShortTuple, Dst);
+    nomatch -> [SM, nothing]
   end.
+
+process_recv_helper(SM, Flag, ShortTuple, Dst) ->
+  Local_addr = nl_mac_hf:readETS(SM, local_address),
+  case Flag of
+    rts when Dst =:= Local_addr ->
+      [SM, {rts_fm, ShortTuple}];
+    cts when Dst =:= Local_addr ->
+      [SM, {cts_fm, ShortTuple}];
+    rts  ->
+      [SM, {rts_nfm, ShortTuple}];
+    cts  ->
+      [SM, {cts_nfm, ShortTuple}];
+    warn ->
+      [SM, {warn, ShortTuple}];
+    data ->
+      [SM, {data, ShortTuple}]
+  end.
+
+process_sync(SM1, Req, Answer, {rcv_rts_fm, STuple}) when Req =:= "?CLOCK" ->
+  Timestemp2 = list_to_integer(Answer),
+  Cts_rts_time_total = nl_mac_hf:readETS(SM1, cts_rts_time_total),
+  case Cts_rts_time_total of
+    {Timestemp1, 0} ->
+      TDiff  = Timestemp2 - Timestemp1,
+      SM2 = nl_mac_hf:send_cts(SM1, at, STuple, Timestemp2, 1000000, TDiff),
+      {at, _, _, IDst, _, _} = STuple,
+      C = nl_mac_hf:readETS(SM2, sound_speed),
+      U = get_distance(SM2, IDst),
+      T = U/C,
+      Tmin = T,
+      SM3 = fsm:set_timeout(SM2, {s, 2 * T - Tmin}, tmo_send_warn),
+      nl_mac_hf:insertETS(SM3, cts_rts_time_total, {Timestemp1, Timestemp2}),
+      SM4 = SM3#sm{event = rcv_rts_fm},
+      [SM4, {rcv_rts_fm, SM2, STuple}];
+    _ ->
+      nl_mac_hf:insertETS(SM1, cts_rts_time_total, {0, 0}),
+      [SM1, {}]
+  end;
+process_sync(SM1, _, _, _)  ->
+  [SM1, {}].
+
+process_rcv_flag(SM, PID, Tuple) ->
+   State = SM#sm.state,
+  T = {async, PID, Tuple},
+  [H |_] = tuple_to_list(Tuple),
+  BPid=
+  case PID of
+    {pid, NPid} -> <<"p", (integer_to_binary(NPid))/binary>>
+  end,
+  [SMN, {Flag, RTuple}] = parse_ll_msg(SM, T),
+  {_, Src, _, TFlag, _, _, _, _, Data} = RTuple,
+  case Tuple of
+    {recvim, _, _, _, _, _, _, _, _, _} ->
+      RcvPid = [BPid | tuple_to_list(RTuple) ],
+      fsm:cast(SMN, alh, {send, {async, list_to_tuple([H | RcvPid] )} });
+    {recvims, _, _, _, _, _, _, _, _, _} -> nothing
+  end,
+  Tmo_defer_trans = fsm:check_timeout(SM, tmo_defer_trans),
+  case Flag of
+    raw ->
+      [SM, {}];
+    data ->
+      SM1 = fsm:clear_timeout(SM, no_data),
+      SM2 = SM1#sm{event = rcv_data},
+      [SM2, {}];
+    rts_fm ->
+      SM1 = fsm:clear_timeout(SM, tmo_send_warn),
+      STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
+      SM2 = SM1#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}},
+      [SM2, req_clock];
+    cts_fm ->
+      SM1 = SM#sm{event = rcv_cts_fm},
+      [SM1, {rcv_cts_fm, binary_to_integer(Data), Src}];
+    rts_nfm ->
+      Tmo_backoff = nl_mac_hf:rand_float(SM, tmo_backoff),
+      SM1 = fsm:set_timeout(SM, {ms, Tmo_backoff}, backoff_end),
+      SM2 = SM1#sm{event = rcv_rts_nfm},
+      [SM2, {}];
+    cts_nfm when ((State =:= wcts) and Tmo_defer_trans) ->
+      [SM, {}];
+    cts_nfm ->
+      Tmo_backoff = nl_mac_hf:rand_float(SM, tmo_backoff),
+      SM1 = fsm:set_timeout(SM, {ms, Tmo_backoff}, backoff_end),
+      SM2 = SM1#sm{event = rcv_cts_nfm},
+      [SM2, {}];
+    warn ->
+      SM1 = SM#sm{event = rcv_warn},
+      [SM1, {rcv_warn}]
+  end.
+
+process_tmstmp(SM, {sendend, _, _, TmpStmp1, TDur}) when SM#sm.state =:= wcts ->
+  nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1 - TDur, 0}),
+  SM;
+process_tmstmp(SM, {recvend, TmpStmp2, _, _, _}) when (SM#sm.state =:= wcts) ->
+  case nl_mac_hf:readETS(SM, rts_cts_time_total) of
+    {TmpStmp1, 0} ->
+      nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1, TmpStmp2});
+    _ ->
+      nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0})
+  end,
+  SM;
+process_tmstmp(SM, {recvend, TmpStmp1, TDur, _, _}) ->
+  nl_mac_hf:insertETS(SM, cts_rts_time_total, {TmpStmp1 - TDur, 0}),
+  SM;
+process_tmstmp(SM, _) ->
+  SM.
