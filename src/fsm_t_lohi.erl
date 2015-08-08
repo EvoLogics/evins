@@ -116,33 +116,22 @@ stop(_SM)      -> ok.
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
   State = SM#sm.state,
-  CR_Time = nl_mac_hf:readETS(SM, cr_time),
   ?TRACE(?ID, "State = ~p, Term = ~p~n", [State, Term]),
   case Term of
+    {timeout, answer_timeout} -> SM;
+    {timeout, {backoff_timeout, Msg}} when State =:= backoff_state ->
+      init_ct(SM),
+      fsm:run_event(MM, SM#sm{event = backoff_end}, {send_tone, Msg});
+    {timeout, {backoff_timeout, _}} -> SM;
+    {timeout, {send_tone, Msg}} ->
+      fsm:run_event(MM, SM#sm{event = send_tone}, {send_tone, Msg});
+    {timeout, {cr_end, Msg}} ->
+      ?TRACE(?ID, "CT ~p~n", [get_ct(SM)]),
+      SM1 = fsm:clear_timeout(SM, {send_tone, Msg}),
+      SM2 = process_cr(SM1, Msg),
+      fsm:run_event(MM, SM2, {});
     {timeout, Event} ->
-      ?INFO(?ID, "timeout ~140p~n", [Event]),
-      case Event of
-        answer_timeout -> SM;
-        {backoff_timeout, Msg} when State =:= backoff_state ->
-          init_ct(SM),
-          fsm:run_event(MM, SM#sm{event = backoff_end}, {send_tone, Msg});
-        {backoff_timeout, _} -> SM;
-        {send_tone, Msg} ->
-          fsm:run_event(MM, SM#sm{event = send_tone}, {send_tone, Msg});
-        {cr_end, Msg} ->
-          ?TRACE(?ID, "CT ~p~n", [get_ct(SM)]),
-          SM1 = fsm:clear_timeout(SM, {send_tone, Msg}),
-          Ct = get_ct(SM1),
-          if Ct =:= 0 ->
-               fsm:run_event(MM, SM1#sm{event = no_ct}, 	{});
-             true ->
-               R = CR_Time * random:uniform(),
-               SM2 = fsm:set_timeout(SM1#sm{event = eps}, {ms, 2 * R}, {backoff_timeout, Msg}),
-               fsm:run_event(MM, SM2#sm{event = ct_exist}, 	{})
-          end;
-        _ ->
-          fsm:run_event(MM, SM#sm{event = Event}, {})
-      end;
+      fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
@@ -153,47 +142,30 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, {at, _, _, _, _}} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
+    {rcv_ul, Msg={at, _PID, _, _, _, _}} when State =:= idle ->
+      nl_mac_hf:insertETS(SM, data_to_sent, {send_tone, Msg}),
+      fsm:run_event(MM, SM#sm{event = transmit_ct}, {send_tone, Msg});
     {rcv_ul, Msg={at, _PID, _, _, _, _}} ->
       nl_mac_hf:insertETS(SM, data_to_sent, {send_tone, Msg}),
-      case State of
-        idle -> fsm:run_event(MM, SM#sm{event = transmit_ct}, {send_tone, Msg});
-        _ -> fsm:cast(SM, alh,  {send, {sync, "OK"} }), SM
-      end;
-      {async, _, {recvims, _, _, _, _, _, _, _, _, _}} -> SM;
-      T =
-      {async, PID, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
+      fsm:cast(SM, alh,  {send, {sync, "OK"} }),
+      SM;
+    {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
+      SM;
+    T =
+    {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
       [H |_] = tuple_to_list(Tuple),
-      BPid=
-      case PID of
-        {pid, NPid} -> <<"p", (integer_to_binary(NPid))/binary>>
-      end,
+      BPid = <<"p", (integer_to_binary(NPid))/binary>>,
       [SMN, {Flag, STuple}] = parse_ll_msg(SM, T),
-      fsm:cast(SMN, alh, {send, {async, list_to_tuple([H | [BPid| tuple_to_list(STuple) ]] )} }),
-      case Flag of
-        nothing -> SMN;
-        tone ->
-          % if tone received and got no data
-          SMN1 = fsm:set_timeout(SMN#sm{event = eps}, {ms, 3 * CR_Time}, end_of_frame),
-          if State =:= cr -> increase_ct(SMN1);
-             true -> nothing
-          end,
-          fsm:run_event(MM, SMN1#sm{event = rcv_ct}, {});
-        data when State =:= blocking_state ->
-          R = CR_Time * random:uniform(),
-          fsm:set_timeout(SMN#sm{event = eps}, {ms, CR_Time + R}, end_of_frame);
-        data ->
-          fsm:run_event(MM, SMN#sm{event = rcv_data}, {})
-      end;
+      SMsg = list_to_tuple([H | [BPid | tuple_to_list(STuple) ]]),
+      fsm:cast(SMN, alh, {send, {async, SMsg} }),
+      SMN1 = process_rcv_flag(SMN, Flag),
+      fsm:run_event(MM, SMN1, {});
     {async, Tuple} ->
+      CR_Time = nl_mac_hf:readETS(SM, cr_time),
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       SMN = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time}, end_of_frame),
-      case Tuple of
-        {sendstart, _, _, _, _} -> fsm:run_event(MM, SMN#sm{event = rcv_ct}, {});
-        {sendend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = end_of_frame}, {});
-        {recvstart}	-> fsm:run_event(MM, SMN#sm{event = rcv_ct},{});
-        {recvend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = end_of_frame}, {});
-        _ -> SM
-      end;
+      SMN1 = process_ct(SM, SMN, Tuple),
+      fsm:run_event(MM, SMN1, {});
     {sync, _Req, Answer} ->
       fsm:cast(SM, alh, {send, {sync, Answer} }),
       SM;
@@ -206,16 +178,14 @@ init_mac(SM) ->
   random:seed(erlang:now()),
   init_ct(SM).
 
+handle_idle(_MM, SM, _Term) when SM#sm.event =:= internal ->
+  init_mac(SM), SM#sm{event = eps};
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   init_ct(SM),
-  case SM#sm.event of
-    internal -> init_mac(SM), SM#sm{event = eps};
-    _ ->
-      T = nl_mac_hf:readETS(SM, data_to_sent),
-      if T =:= not_inside -> SM#sm{event = eps};
-         true -> SM#sm{event = transmit_ct, event_params = T}
-      end
+  T = nl_mac_hf:readETS(SM, data_to_sent),
+  if T =:= not_inside -> SM#sm{event = eps};
+     true -> SM#sm{event = transmit_ct, event_params = T}
   end.
 
 handle_blocking_state(_MM, SM, Term) ->
@@ -232,10 +202,8 @@ handle_cr(_MM, SMP, Term) ->
   case Param_Term of
     {send_tone, Msg} ->
       SM1 = nl_mac_hf:send_helpers(SM, at, Msg, tone),
-      if SM1 =:= error -> SM#sm{event = error};
-         true ->
-           fsm:set_timeout(SM1#sm{event = eps}, {ms, nl_mac_hf:readETS(SM, cr_time)}, {cr_end, Msg})
-      end;
+      Cr_time = nl_mac_hf:readETS(SM, cr_time),
+      fsm:set_timeout(SM1#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
     _ -> SM#sm{event = eps}
   end.
 
@@ -253,7 +221,8 @@ handle_transmit_data(_MM, SM, Term) ->
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
-    exit({alarm, SM#sm.module}).
+  init:stop(),
+  exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
@@ -265,6 +234,30 @@ get_ct(SM) ->
   nl_mac_hf:readETS(SM, ctc).
 increase_ct(SM) ->
   nl_mac_hf:insertETS(SM, ctc, get_ct(SM) + 1).
+
+process_cr(SM, Msg) ->
+  CR_Time = nl_mac_hf:readETS(SM, cr_time),
+  Ct = get_ct(SM),
+  if Ct =:= 0 ->
+    SM#sm{event = no_ct};
+  true ->
+    R = CR_Time * random:uniform(),
+    SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, 2 * R}, {backoff_timeout, Msg}),
+    SM1#sm{event = ct_exist}
+  end.
+
+process_ct(SM, SMN, Tuple) ->
+  case Tuple of
+    {sendstart, _, _, _, _} ->
+      SMN#sm{event = rcv_ct};
+    {sendend, _, _, _, _} ->
+      SM#sm{event = end_of_frame};
+    {recvstart} ->
+      SMN#sm{event = rcv_ct};
+    {recvend, _, _, _, _} ->
+      SM#sm{event = end_of_frame};
+    _ -> SM
+  end.
 
 parse_ll_msg(SM, Tuple) ->
   case Tuple of
@@ -286,9 +279,25 @@ process_recv(SM, T) ->
     {match, [BFlag, Data]} ->
       Flag = nl_mac_hf:num2flag(BFlag, mac),
       ShortTuple = {Len - 2, P1, P2, P3, P4, P5, P6, P7, Data},
-      case Flag of
-        tone -> [SM, {tone, ShortTuple}];
-        data -> [SM, {data, ShortTuple}]
-      end;
+      [SM, {Flag, ShortTuple}];
     nomatch -> [SM, nothing]
+  end.
+
+process_rcv_flag(SM, Flag) ->
+  CR_Time = nl_mac_hf:readETS(SM, cr_time),
+  State = SM#sm.state,
+  case Flag of
+    nothing -> SM;
+    tone ->
+      % if tone received and got no data
+      SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, 3 * CR_Time}, end_of_frame),
+      if State =:= cr -> increase_ct(SM1);
+      true -> nothing
+      end,
+      SM1#sm{event = rcv_ct};
+    data when State =:= blocking_state ->
+      R = CR_Time * random:uniform(),
+      fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, end_of_frame);
+    data ->
+      SM#sm{event = rcv_data}
   end.
