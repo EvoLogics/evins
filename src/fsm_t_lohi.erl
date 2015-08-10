@@ -86,7 +86,7 @@
                   {rcv_data, idle},
                   {send_tone,	cr},
                   {rcv_ct, cr},
-                  {end_of_frame,cr},
+                  {end_of_frame, cr},
                   {no_ct,	transmit_data},
                   {ct_exist, backoff_state}
                  ]},
@@ -116,6 +116,7 @@ stop(_SM)      -> ok.
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
   State = SM#sm.state,
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   ?TRACE(?ID, "State = ~p, Term = ~p~n", [State, Term]),
   case Term of
     {timeout, answer_timeout} -> SM;
@@ -123,6 +124,8 @@ handle_event(MM, SM, Term) ->
       init_ct(SM),
       fsm:run_event(MM, SM#sm{event = backoff_end}, {send_tone, Msg});
     {timeout, {backoff_timeout, _}} -> SM;
+    {timeout, {send_tone, Msg}} when Answer_timeout ->
+      fsm:set_timeout(SM, {ms, 50}, {send_tone, Msg});
     {timeout, {send_tone, Msg}} ->
       fsm:run_event(MM, SM#sm{event = send_tone}, {send_tone, Msg});
     {timeout, {cr_end, Msg}} ->
@@ -167,8 +170,9 @@ handle_event(MM, SM, Term) ->
       SMN1 = process_ct(SM, SMN, Tuple),
       fsm:run_event(MM, SMN1, {});
     {sync, _Req, Answer} ->
-      fsm:cast(SM, alh, {send, {sync, Answer} }),
-      SM;
+      SMAT = fsm:clear_timeout(SM, answer_timeout),
+      fsm:cast(SMAT, alh, {send, {sync, Answer} }),
+      SMAT;
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
