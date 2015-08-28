@@ -107,8 +107,8 @@ split(L, Cfg) ->
       %% Temporary only instant messages can be used!
         case patter_matcher(L, "^(AT[*]SENDIM,p|AT[*]SENDIM,|AT[*]SENDIMS,p|AT[*]SENDIMS,)(.*)", 2) of
           {match, [<<"AT*SENDIM,p">>, P]}	-> sendim_extract(L, P, Cfg, pid);
-          {match, [<<"AT*SENDIM,">>, P]}	  -> sendim_extract(L, P, Cfg, nopid);
-          {match, [<<"AT*SENDIMS,p">>, P]}	-> sendims_extract(L, P, Cfg, pid);
+          {match, [<<"AT*SENDIM,">>, P]} -> sendim_extract(L, P, Cfg, nopid);
+          {match, [<<"AT*SENDIMS,p">>, P]} -> sendims_extract(L, P, Cfg, pid);
           {match, [<<"AT*SENDIMS,">>, P]}	-> sendims_extract(L, P, Cfg, nopid);
           nomatch ->
             case patter_matcher(L, "^(AT)(.*?)[\n]+(.*)", 3) of

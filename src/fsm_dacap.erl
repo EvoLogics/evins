@@ -159,7 +159,6 @@ stop(_SM)      -> ok.
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
-  io:format("*************** ~p St ~p Term ~p ~n", [?ID, SM#sm.state, Term]),
   State = SM#sm.state,
   case Term of
     {timeout, {send_rts, IDst, Msg}} when State =:= wcts ->
@@ -177,7 +176,7 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event = req_clock}, req_clock);
     {timeout, req_clock} -> SM;
     {timeout, tmo_send_warn} ->
-      fsm:run_event(MM, SM#sm{state = backoff}, send_warn);
+      SM;
     {timeout, tmo_defer_trans} -> SM;
     {timeout, answer_timeout} ->
       ?ERROR(?ID, "~s: Modem not answered with sync message more than:~p~n", [?MODULE, ?ANSWER_TIMEOUT]),
@@ -336,8 +335,7 @@ handle_wdata(_MM, SM, Term) ->
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
-    init:stop(),
-    exit({alarm, SM#sm.module}).
+  exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
@@ -484,6 +482,7 @@ process_rcv_flag(SM, PID, Tuple) ->
     {recvims, _, _, _, _, _, _, _, _, _} -> nothing
   end,
   Tmo_defer_trans = fsm:check_timeout(SM, tmo_defer_trans),
+  Tmo_send_warn = fsm:check_timeout(SM, tmo_send_warn),
   case Flag of
     raw ->
       [SM, {}];
@@ -491,11 +490,13 @@ process_rcv_flag(SM, PID, Tuple) ->
       SM1 = fsm:clear_timeout(SM, no_data),
       SM2 = SM1#sm{event = rcv_data},
       [SM2, {}];
+    rts_fm when Tmo_send_warn ->
+      SM1 = SM#sm{state = backoff},
+      [SM1, send_warn];
     rts_fm ->
-      SM1 = fsm:clear_timeout(SM, tmo_send_warn),
       STuple = {at, PID, "*SENDIM", Src, TFlag, Data},
-      SM2 = SM1#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}},
-      [SM2, req_clock];
+      SM1 = SM#sm{event = rcv_rts_fm, event_params = {rcv_rts_fm, STuple}},
+      [SM1, req_clock];
     cts_fm ->
       SM1 = SM#sm{event = rcv_cts_fm},
       [SM1, {rcv_cts_fm, binary_to_integer(Data), Src}];
@@ -516,13 +517,30 @@ process_rcv_flag(SM, PID, Tuple) ->
       [SM1, {rcv_warn}]
   end.
 
+% process_tmstmp(SM, {sendend, _, _, TmpStmp1, _TDur}) when SM#sm.state =:= wcts ->
+%   nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1, 0}),
+%   SM;
+% process_tmstmp(SM, {recvend, TmpStmp2, TDur, _, _}) when (SM#sm.state =:= wcts) ->
+%   case nl_mac_hf:readETS(SM, rts_cts_time_total) of
+%     {TmpStmp1, 0} ->
+%       nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1 - TDur, TmpStmp2});
+%     _ ->
+%       nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0})
+%   end,
+%   SM;
+% process_tmstmp(SM, {recvend, TmpStmp1, TDur, _, _}) ->
+%   nl_mac_hf:insertETS(SM, cts_rts_time_total, {TmpStmp1 - TDur, 0}),
+%   SM;
+% process_tmstmp(SM, _) ->
+%   SM.
+
 process_tmstmp(SM, {sendend, _, _, TmpStmp1, TDur}) when SM#sm.state =:= wcts ->
   nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1 - TDur, 0}),
   SM;
-process_tmstmp(SM, {recvend, TmpStmp2, _, _, _}) when (SM#sm.state =:= wcts) ->
+process_tmstmp(SM, {recvend, TmpStmp2, TDur, _, _}) when (SM#sm.state =:= wcts) ->
   case nl_mac_hf:readETS(SM, rts_cts_time_total) of
     {TmpStmp1, 0} ->
-      nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1, TmpStmp2});
+      nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1, TmpStmp2 + TDur});
     _ ->
       nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0})
   end,

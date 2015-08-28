@@ -47,12 +47,15 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   case parse_conf(ArgS, Share) of
     csma_alh  -> fsm_csma_alh;
     cut_lohi  -> fsm_t_lohi;
+    aut_lohi  -> fsm_t_lohi;
     dacap     -> fsm_dacap;
     _         -> error
   end,
   Roles = fsm_worker:role_info(Role_IDs, [at, alh]),
-  if Module =:= error-> ?ERROR(Mod_ID, "No MAC protocol ID!~n", []);
-    true             -> [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = Module}]
+  if Module =:= error->
+      ?ERROR(Mod_ID, "No MAC protocol ID!~n", []);
+    true ->
+      [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = Module}]
   end.
 
 
@@ -75,13 +78,19 @@ parse_conf(ArgS, Share) ->
   ets:insert(Share, [{tdetect, TDect}]),
 
   case Protocol of
-    cut_lohi -> ets:insert(Share, [{cr_time, 2 * (PMax + TDect)}]);
-    aut_lohi -> ets:insert(Share, [{cr_time, (PMax + TDect)}]);
-    dacap    -> ets:insert(Share, [{tmo_backoff, Tmo_backoff}]),
-                ets:insert(Share, [{t_data, 1}]),     % duration of the data packet to be transmitted in s % !!!!!!!!!!!!!!!!!!! TODO
-                ets:insert(Share, [{u, U}]);          % max distance between nodes in the network in m
-    _        -> nothing
+    cut_lohi ->
+      ets:insert(Share, [{cr_time, 2 * (PMax + TDect)}]);
+    aut_lohi ->
+      ets:insert(Share, [{cr_time, (PMax + TDect)}]);
+    dacap ->
+      ets:insert(Share, [{tmo_backoff, Tmo_backoff}]),
+      % TODO: duration of the data packet to be transmitted in s
+      ets:insert(Share, [{t_data, 1}]),
+      % max distance between nodes in the network in m
+      ets:insert(Share, [{u, U}]);
+    _  -> nothing
   end,
+  io:format("!!! Name of current protocol ~p~n", [Protocol]),
   Protocol.
 
 set_params(Param, Default) ->
