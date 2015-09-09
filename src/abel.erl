@@ -28,9 +28,9 @@
 -module(abel).
 -export([diff/2,diff/3,diff32/2,diff16/2,diff8/2,add/3,add32/2,add16/2,add8/2,gt/2,mod/2,div_mod/2,inc/1,dec/1,eq/2,timestamp_sub/2]).
 
-% Returns the positive remainder of the division of X by Y, in [0;Y[. 
-% In Erlang, -5 rem 3 is -2, whereas this function will return 1,  
-% since -5 =-2 * 3 + 1.
+                                                % Returns the positive remainder of the division of X by Y, in [0;Y[. 
+                                                % In Erlang, -5 rem 3 is -2, whereas this function will return 1,  
+                                                % since -5 =-2 * 3 + 1.
 mod(X,Y) when X > 0 -> X rem Y;
 mod(X,Y) when X < 0 -> Y + X rem Y;
 mod(0,_Y) -> 0.
@@ -40,22 +40,22 @@ div_mod(X,Y) -> {-1 + (X div Y), Y + X rem Y}.
 
 %% T1 - T2
 timestamp_sub({MgS1,S1,McS1}, {MgS2, S2, McS2}) ->
-    {DS, McS} = div_mod(McS1 - McS2, 1000000),
-    {DMgS, S} = div_mod(S1 - S2 + DS, 1000000),
-    MgS = MgS1 - MgS2 + DMgS,
-    {MgS, S, McS}.
+  {DS, McS} = div_mod(McS1 - McS2, 1000000),
+  {DMgS, S} = div_mod(S1 - S2 + DS, 1000000),
+  MgS = MgS1 - MgS2 + DMgS,
+  {MgS, S, McS}.
 
 inc({V,P}) -> {mod(V+1,P),P}.
 dec({V,P}) -> {mod(V-1,P),P}.
-    
+
 %% cyclic number {Value,Period}
 diff({V1,P},{V2,P}) ->
-    D1 = mod(V1 - V2, P),
-    D2 = mod(V2 - V1, P),
-    case D1 > D2 of
-	true -> -D2;
-	_ -> D1
-    end.
+  D1 = mod(V1 - V2, P),
+  D2 = mod(V2 - V1, P),
+  case D1 > D2 of
+    true -> -D2;
+    _ -> D1
+  end.
 
 diff(V1,V2,P) -> diff({V1,P},{V2,P}).
 

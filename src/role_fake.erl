@@ -25,48 +25,18 @@
 %% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
 %% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF 
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
--module(ioc).
+-module(role_fake).
+-behaviour(role_worker).
+-export([start/3, stop/1, to_term/3, from_term/2, ctrl/2]).
 
--export([format/5, format/6, format/7, id/0, timestamp_string/0]).
--import(mix, [microseconds/0]).
+stop(_) -> ok.
 
--define(NONE,    "\e[0m").
--define(RED,     "\e[0;31m").
--define(LRED,    "\e[1;31m").
--define(GREEN,   "\e[0;32m").
--define(LGREEN,  "\e[1;32m").
--define(YELLOW,  "\e[0;33m").
--define(LYELLOW, "\e[1;33m").
--define(MAGENTA, "\e[0;35m").
--define(LMAGENTA,"\e[1;35m").
--define(LBLUE,   "\e[1;36m").
--define(CYAN,    "\e[0;36m").
--define(WHITE,   "\e[1;37m").
+start(Role_ID, Mod_ID, MM) ->
+    role_worker:start(?MODULE, Role_ID, Mod_ID, MM).
 
-id() ->
-  case [X || {registered_name,X} <- process_info(self())] of
-    [Name] -> Name;
-    _ -> nn %% no name
-  end.
+ctrl(_,Cfg) -> Cfg.
+     
+to_term(_, _, Cfg) ->
+    [[], [], [], <<>>, Cfg].
 
-intfmt(W,V) ->
-  lists:flatten(io_lib:format("~*.*.0s",[W,W,integer_to_list(V)])).
-
-timestamp_string() ->
-  {M, S, U} = os:timestamp(),
-  lists:flatten(io_lib:format("~p.~s.~s", [M, intfmt(6,S), intfmt(6,U)])).
-
-format(Module, Line, ID, Format, Color) ->
-  format_helper(Module, Line, ID, standard_io, Format, [], Color).
-
-format(Module, Line, ID, Format, Data, Color) ->
-  format_helper(Module, Line, ID, standard_io, Format, Data, Color).
-
-format(Module, Line, ID, IoDevice, Format, Data, Color) ->
-  format_helper(Module, Line, ID, IoDevice, Format, Data, Color).
-
-format_helper(Module, Line, ID, _IoDevice, Format, Data, Color) ->
-  Timestamp = os:timestamp(),
-  Message = lists:flatten(io_lib:format(Format,Data)),
-  gen_event:notify(error_logger, {fsm_progress, self(), {Color, ID, Module, Line, Timestamp, Message}}).
-
+from_term(_, _)             -> {error, term_not_supported}.

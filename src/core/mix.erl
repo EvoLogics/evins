@@ -32,31 +32,31 @@
 
 -spec todo(any(), any(), any()) -> no_return(). 
 todo(Module, Line, ID) ->
-    ioc:format(Module, Line, ID, "TODO~n", [], red),
-    exit({todo,Module,Line,ID}).
+  ioc:format(Module, Line, ID, "TODO~n", [], red),
+  exit({todo,Module,Line,ID}).
 
 milliseconds() ->
-    microseconds() div 1000.
+  microseconds() div 1000.
 
 seconds() ->
-    {Mega,S,_} = os:timestamp(),
-    Mega*1000000 + S.
-    
+  {Mega,S,_} = os:timestamp(),
+  Mega*1000000 + S.
+
 microseconds() ->
-    {Mega,S,Micro} = os:timestamp(),
-    (Mega*1000000 + S)*1000000 + Micro.
+  {Mega,S,Micro} = os:timestamp(),
+  (Mega*1000000 + S)*1000000 + Micro.
 
 %% accept any number representation
 %% 10   10. 10.1 10.0e-1 .01 .01e-1 00.000
 binary_to_number(V) when is_binary(V) ->
-    case re:split(V,"\\.") of
-	[]       -> error(baderg);
-	[A]      -> float(binary_to_integer(A));
-	[A,<<>>] -> float(binary_to_integer(A));
-	[<<>>,B] -> binary_to_float(<<"0.",B/binary>>);
-	[_,_]    -> binary_to_float(V);
-	_        -> error(badarg)
-    end;
+  case re:split(V,"\\.") of
+    []       -> error(baderg);
+    [A]      -> float(binary_to_integer(A));
+    [A,<<>>] -> float(binary_to_integer(A));
+    [<<>>,B] -> binary_to_float(<<"0.",B/binary>>);
+    [_,_]    -> binary_to_float(V);
+    _        -> error(badarg)
+  end;
 binary_to_number(_) -> erlang:error(badarg).
 
 

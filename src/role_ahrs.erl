@@ -32,28 +32,28 @@
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-    role_worker:start(?MODULE, Role_ID, Mod_ID, MM).
+  role_worker:start(?MODULE, Role_ID, Mod_ID, MM).
 
 ctrl(_,Cfg) -> Cfg.
 
 to_term(Tail, Chunk, Cfg) ->
-    role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
+  role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
 
 split(L, Cfg) ->
-    case re:split(L,"\n",[{parts,2}]) of
-	[Sentense,Rest] ->
-	    case re:run(Sentense,"^AHRS,([^,]+),([^,]+),([^,]+),([^,]+)",[dotall,{capture,[1,2,3,4],binary}]) of
-		{match, [_T,BRoll,BPitch,BYaw]} -> %% NED
-		    [Roll,Pitch,Yaw] = [binary_to_float(V) || V <- [BRoll,BPitch,BYaw]],
-		    [{nmea, {tnthpr,Yaw,"N",Pitch,"N",Roll,"N"}} | split(Rest, Cfg)];
-		_ -> [{error, {nomatch, L}} | split(Rest, Cfg)]
-	    end;
-	_ ->
-	    [{more, L}]
-    end.
+  case re:split(L,"\n",[{parts,2}]) of
+    [Sentense,Rest] ->
+      case re:run(Sentense,"^AHRS,([^,]+),([^,]+),([^,]+),([^,]+)",[dotall,{capture,[1,2,3,4],binary}]) of
+        {match, [_T,BRoll,BPitch,BYaw]} -> %% NED
+          [Roll,Pitch,Yaw] = [binary_to_float(V) || V <- [BRoll,BPitch,BYaw]],
+          [{nmea, {tnthpr,Yaw,"N",Pitch,"N",Roll,"N"}} | split(Rest, Cfg)];
+        _ -> [{error, {nomatch, L}} | split(Rest, Cfg)]
+      end;
+    _ ->
+      [{more, L}]
+  end.
 
 from_term({nmea,{tnthpr,Yaw,_,Pitch,_,Roll,_}}, Cfg) ->
-    L = [[",",float_to_binary(V)] || V <- [Roll,Pitch,Yaw]],
-    [list_to_binary(lists:flatten(["AHRS",L,"\n"])), Cfg];
+  L = [[",",float_to_binary(V)] || V <- [Roll,Pitch,Yaw]],
+  [list_to_binary(lists:flatten(["AHRS",L,"\n"])), Cfg];
 from_term(_, _) ->
-    {error, term_not_supported}.
+  {error, term_not_supported}.

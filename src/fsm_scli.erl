@@ -48,18 +48,18 @@ stop(_SM)      -> ok.
 
 %% SM1 = handle_event(MM, SM, Term)
 handle_event(_MM, SM, Term) ->
-    case Term of
-	S when is_list(S) -> 
-	    io:format("received: ~p~n", [S]),
-	    _SM1 = fsm:cast(SM, scli, {send, {string, S}}),
-	    _SM2 = fsm:cast(SM, scli, {send, {prompt}});
-	{timeout, _} ->
-	    SM;
-	{connected} ->
-	    fsm:cast(SM, scli, {send, {prompt}});
-	_ ->
-	    ?WARNING(?ID, "Unhandled answer ~p~n", [Term]),
-	    SM
-    end.
+  case Term of
+    S when is_list(S) -> 
+      io:format("received: ~p~n", [S]),
+      _SM1 = fsm:cast(SM, scli, {send, {string, S}}),
+      _SM2 = fsm:cast(SM, scli, {send, {prompt}});
+    {timeout, _} ->
+      SM;
+    {connected} ->
+      fsm:cast(SM, scli, {send, {prompt}});
+    _ ->
+      ?WARNING(?ID, "Unhandled answer ~p~n", [Term]),
+      SM
+  end.
 
 
