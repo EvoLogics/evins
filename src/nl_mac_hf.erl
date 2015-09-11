@@ -37,7 +37,7 @@
 %% ETS functions
 -export([insertETS/3, readETS/2, cleanETS/2, init_dets/1, fill_dets/1]).
 %% handle events
--export([event_params/3, clear_spec_timeout/2, clear_retry_timeout/2]).
+-export([event_params/3, clear_spec_timeout/2]).
 %% Math functions
 -export([rand_float/2, lerp/3]).
 %% Addressing functions
@@ -129,16 +129,6 @@ clear_spec_timeout(SM, Spec) ->
                end, SM#sm.timeouts),
   SM#sm{timeouts = TRefList}.
 
-clear_retry_timeout(SM, {PkgID, Src, Dst}) ->
-  TRefList = filter(
-               fun({E, TRef}) ->
-                   case E of
-                     {retry_timeout,{PkgID, Src, Dst}} -> timer:cancel(TRef), false;
-                     {retry_timeout,{PkgID, Dst, Src}} -> timer:cancel(TRef), false;
-                     {retry_timeout,{PkgIDL, _, _}} when PkgID > PkgIDL -> timer:cancel(TRef), false;
-                     _ -> true end end, SM#sm.timeouts),
-  SM#sm{timeouts = TRefList}.
-
 %%--------------------------------------------------- Math functions -----------------------------------------------
 rand_float(SM, Random_interval) ->
   {Start, End} = readETS(SM, Random_interval),
@@ -220,7 +210,7 @@ path_to_bin_comma(LPath) ->
         <<X/binary, Sign/binary, A/binary>>
     end, <<"">>, LPath).
 
-send_nl_command(SM, Interface, Params = {Flag, [IPacket_id, Real_src, _PAdditional]}, NL) ->
+send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL) ->
   Real_dst = get_dst_addr(NL),
   Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
   if Real_dst =:= wrong_format -> error;
@@ -243,7 +233,8 @@ send_nl_command(SM, Interface, Params = {Flag, [IPacket_id, Real_src, _PAddition
                  insertETS(SM, {last_nl_sent_time, CurrentRTT}, erlang:now()),
                  insertETS(SM, last_nl_sent, {Flag, Real_src, NLarp}),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
-                 insertETS(SM1, last_retry, {Params, NL}),
+                  %!!!!
+                 fsm:cast(SM, nl, {send, AT}),
                  fill_dets(SM),
                  fsm:set_event(SM1, eps)
             end

@@ -83,6 +83,13 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   CurrentProtocol = parse_conf(ArgS, Share),
+
+  InsideList = lists:filter(fun(X) -> X =:= CurrentProtocol end, ?LIST_ALL_PROTOCOLS),
+  if InsideList =:= [] ->
+    io:format("!!! ERROR, no network layer protocol with the name ~p~n", [CurrentProtocol]);
+  true -> nothing
+  end,
+
   lists:foldr(fun(X, _)-> [PIDTmp, ParamsTmp, SMTmp] = conf_fsm(X), conf_protocol(CurrentProtocol, Share, X, PIDTmp, ParamsTmp, SMTmp) end, [], ?LIST_ALL_PROTOCOLS),
 
   Module = conf_fsm(CurrentProtocol),
@@ -103,7 +110,6 @@ parse_conf(ArgS, Share) ->
   Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
   Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
   Max_hops_set  = [Count_hops     || {max_hops, Count_hops} <- ArgS],
-  Max_rc_set    = [Retry_count    || {max_retry_count, Retry_count} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
 
   Tmo_wv            = [Time || {tmo_wv, Time} <- ArgS],
@@ -117,7 +123,6 @@ parse_conf(ArgS, Share) ->
 
   Addr            = set_params(Addr_set, 1),
   RTT             = set_params(Max_hops_set, 60),
-  Max_Retry_count = set_params(Max_rc_set, 1),
   WTmo_path       = set_params(WTmo_path_set, 30),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, 30),
   Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, 10),
@@ -145,7 +150,6 @@ parse_conf(ArgS, Share) ->
   ets:insert(Share, [{neighbour_life, Neighbour_life}]),
   ets:insert(Share, [{max_pkg_id, 255}]),
   ets:insert(Share, [{rtt, RTT}]),
-  ets:insert(Share, [{max_retry_count, Max_Retry_count}]),
   ets:insert(Share, [{send_wv_dbl_tmo, Tmo_dbl_wv}]),
   ets:insert(Share, [{probability, Probability}]),
   NL_Protocol.

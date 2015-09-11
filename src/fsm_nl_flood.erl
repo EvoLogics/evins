@@ -160,20 +160,6 @@ handle_event(MM, SM, Term) ->
           fsm:run_event(MM, SM#sm{event=send_ack,   state=rwv}, {send_ack,  PkgID, Tuple});
         {send_path, PkgID, Tuple} ->
           fsm:run_event(MM, SM#sm{event=send_path,  state=rwv}, {send_path, PkgID, Tuple});
-        {retry_timeout, _} ->
-          case nl_mac_hf:readETS(SM, retry_count) =< nl_mac_hf:readETS(SM, max_retry_count) of
-            true ->
-              nl_mac_hf:insertETS(SM, retry_count, nl_mac_hf:readETS(SM, retry_count) + 1),
-              case nl_mac_hf:readETS(SM, last_retry) of
-                {Params, Tuple} ->
-                  fsm:run_event(MM, SM#sm{state=idle, event=rcv_wv}, {relay_wv, Params, Tuple });
-                _ ->
-                  SM
-              end;
-            false ->
-              nl_mac_hf:insertETS(SM, retry_count, 1),
-              fsm:run_event(MM, SM#sm{state=idle}, {})
-          end;
         {wack_timeout, {_Packet_id, Real_src, Real_dst}} ->
           case nl_mac_hf:readETS(SM, current_pkg) of
             {nl, send,_, Payload} ->
@@ -304,7 +290,6 @@ init_flood(SM) ->
   nl_mac_hf:insertETS(SM, packet_id, 0),
   nl_mac_hf:insertETS(SM, path_exists, false),
   nl_mac_hf:insertETS(SM, list_current_wvp, []),
-  nl_mac_hf:insertETS(SM, retry_count, 1),
   nl_mac_hf:insertETS(SM, s_total_sent, 0),
   nl_mac_hf:insertETS(SM, r_total_sent, 0),
   nl_mac_hf:insertETS(SM, queue_ids, queue:new()),
@@ -601,7 +586,8 @@ process_recv(SM, L) ->
        %%----------- black list----------
        case lists:member(NLSrcAT, Blacklist) of
          false ->
-           %fsm:cast(SM, nl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
+           %!!!!!!
+           fsm:cast(SM, nl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
            Params = [NLSrcAT, NLDstAT, IRssi, IIntegrity],
            [SMN, RTuple] = parse_rcv(SM, Params, PayloadTail),
            form_rcv_tuple(SMN, RTuple);
@@ -650,35 +636,28 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
   RRelayTuple = {relay, RParams, RSendTuple},
   RDstTuple   = {dst_reached, RParams, RAsyncTuple},
   SMN     = nl_mac_hf:add_neighbours(SM, Flag, NLSrcAT, {RecvNLSrc, RecvNLDst}),
-  SMN1    = nl_mac_hf:clear_retry_timeout(SMN, {RemotePkgID, RecvNLSrc, RecvNLDst}),
-
   case PPkg_id of
     _ when Flag =:= dst_reached ->
-      [SMN1, nothing];
-    old_id-> [SMN1, nothing];
+      [SMN, nothing];
+    old_id-> [SMN, nothing];
     proccessed ->
-      [SMN1, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
+      [SMN, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
     not_proccessed ->
       if  (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= Local_address);
     (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= 255) ->
-            SMN2 = if Local_address =:= RecvNLDst; Flag =:= data ->
-                        SMN1;
-                      true ->
-                        fsm:set_timeout(SMN1, {s, 6}, {retry_timeout, {RemotePkgID, RecvNLSrc, RecvNLDst}})
-                   end,
             %% check probability, for probabilistic protocols
             if Protocol#pr_conf.prob ->
-                 case check_probability(SMN2) of
+                 case check_probability(SMN) of
                    false when Flag =/= ack ->
-                     [SMN2, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
+                     [SMN, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
                    _ ->
-                     [SMN2, [relay, RecvNLDst, RRelayTuple, RDstTuple]]
+                     [SMN, [relay, RecvNLDst, RRelayTuple, RDstTuple]]
                  end;
                true ->
-                 [SMN2, [relay, RecvNLDst, RRelayTuple, RDstTuple]]
+                 [SMN, [relay, RecvNLDst, RRelayTuple, RDstTuple]]
             end;
           true ->
-            [SMN1, nothing]
+            [SMN, nothing]
       end
   end.
 
@@ -759,7 +738,7 @@ process_rcv_flag(SM, Params={Flag,[Packet_id, _Real_src, PAdditional]}, Tuple={a
   SDParams = [Packet_id, IDst, PAdditional],
   case Flag of
     data when not Protocol#pr_conf.ack ->
-      SM#sm{event  = relay_wv, event_params = {relay_wv, {send, {dst_reached, SDParams}, {nl,send,ISrc,<<"">>}}} };
+      SM#sm{event = dst_reached};
     data when Protocol#pr_conf.ack ->
       fsm:set_timeout(SM#sm{event = eps}, {ms, Rand_timeout_wack}, {send_ack, Params, Tuple});
     neighbours when Protocol#pr_conf.dbl ->
