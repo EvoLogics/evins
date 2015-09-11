@@ -488,7 +488,7 @@ extract_evorcp(Params) ->
     error:_ -> {error, {parseError, evorcp, Params}}
   end.
 
-%% $PEVOSSB,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr
+%% $PEVOSSB,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
 %% UTC hhmmss.ss
 %% TID transponder ID
 %% S status OK/NOK
@@ -498,13 +498,14 @@ extract_evorcp(Params) ->
 %% X,Y,Z coordinates
 %% Acc accuracy in meters
 %% Pr pressure in dBar (blank, if not available)
+%% Vel velocity in m/s
 extract_evossb(Params) ->
   try
-    [BUTC,BTID,BS,BErr,BCS,BFS,BX,BY,BZ,BAcc,BPr] = 
+    [BUTC,BTID,BS,BErr,BCS,BFS,BX,BY,BZ,BAcc,BPr,BVel] = 
       lists:sublist(re:split(Params, ","),11),
     UTC = extract_utc(BUTC),
     TID = safe_binary_to_integer(BTID),
-    [X,Y,Z,Acc,Pr] = [safe_binary_to_float(V) || V <- [BX,BY,BZ,BAcc,BPr]],
+    [X,Y,Z,Acc,Pr,Vel] = [safe_binary_to_float(V) || V <- [BX,BY,BZ,BAcc,BPr,BVel]],
     S = case BS of
           <<"OK">> -> ok;
           <<"NOK">> -> nok
@@ -519,7 +520,7 @@ extract_evossb(Params) ->
            <<"F">> -> filtered
          end,
     Err = binary_to_list(BErr),
-    {nmea, {evossb, UTC, TID, S, Err, CS, FS, X, Y, Z, Acc, Pr}}
+    {nmea, {evossb, UTC, TID, S, Err, CS, FS, X, Y, Z, Acc, Pr, Vel}}
   catch
     error:_ -> {error, {parseError, evossb, Params}}
   end.
@@ -865,25 +866,25 @@ build_evorcp(Type, Status, Substatus, Interval, Mode, Cycles, Broadcast) ->
            safe_fmt(["~s","~s","~s","~.2.0f","~s","~B","~s"], [SType, SStatus, Substatus, Interval, SMode, NCycles, SCast], ","),
            ",,"]).
 
-%% $PEVOSSB,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr
-build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr) ->
+%% $PEVOSSB,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
+build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
   SUTC = utc_format(UTC),
   SS = case S of
-          ok -> "OK";
-          nok -> "NOK"
+         ok -> "OK";
+         nok -> "NOK"
        end,
-  SCS = case CS of
-          lf -> <<"LF">>;
-          enu -> <<"ENU">>;
-          geod -> <<"GEOD">>
+  {SCS,Fmt} = case CS of
+                lf -> {<<"LF">>,"~.2.0f"};
+                enu -> {<<"ENU">>,"~.2.0f"};
+                geod -> {<<"GEOD">>,"~.6.0f"}
         end,
   SFS = case FS of
           measured -> <<"M">>;
           filtered -> <<"F">>
         end,
   flatten(["PEVOSSB",SUTC,
-           safe_fmt(["~B","~s","~s","~s","~s","~.6.0f","~.6.0f","~.6.0f","~.6.0f","~.6.0f"],
-                    [TID, SS, Err, SCS, SFS, X, Y, Z, Acc, Pr], ",")
+           safe_fmt(["~B","~s","~s","~s","~s",Fmt,Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
+                    [TID, SS, Err, SCS, SFS, X, Y, Z, Acc, Pr, Vel], ",")
           ]).
 
 build_hdg(Heading,Dev,Var) ->
@@ -957,8 +958,8 @@ from_term_helper(Sentense) ->
       build_evorct(TX_utc,TX_phy,GPS,Pressure,AHRS,Lever_arm,HL);
     {evorcm,RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS} ->
       build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS);
-    {evossb,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr} ->
-      build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr);
+    {evossb,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel} ->
+      build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
     {evoseq,Sid,Total,MAddr,Range,Seq} ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
     {hdg,Heading,Dev,Var} ->
