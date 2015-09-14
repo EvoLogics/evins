@@ -171,7 +171,8 @@ handle_event(MM, SM, Term) ->
       SM;
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
-      process_async(SM, Tuple);
+      Ev = process_async(SM, Tuple),
+      fsm:run_event(MM, SM#sm{event = Ev}, {});
     {sync, _Req,Answer} ->
       fsm:cast(SM, alh, {send, {sync, Answer} }),
       SM;
@@ -226,7 +227,7 @@ handle_alarm(_MM, SM, _Term) ->
 handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
 
-%%--------------------------------------Helper functions--------------------------------------------------
+%%--------------------------------------Helper functions------------------------
 init_backoff(SM)->
   nl_mac_hf:insertETS(SM, current_step, 0). % 2 ^ 0
 
@@ -251,16 +252,16 @@ change_backoff(SM, Type) ->
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
   Val.
 
-process_async(SM, Tuple) ->
+process_async(_SM, Tuple) ->
   case Tuple of
     {sendstart, _, _, _, _} ->
-      SM#sm{event = sendstart};
+      sendstart;
     {sendend, _, _, _, _} ->
-      SM#sm{event = sendend};
+      sendend;
     {recvstart} ->
-      SM#sm{event = recvstart};
+      recvstart;
     {recvend, _, _, _, _} ->
-      SM#sm{event = recvend};
+      recvend;
     _ ->
-      SM
+      eps
   end.
