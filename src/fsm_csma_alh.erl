@@ -290,6 +290,8 @@ process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
   case parse_paylod(RcvPayload) of
     [relay, Payload] ->
       [SM, Payload];
+    [ack, Payload] ->
+      [nl_mac_hf:clear_spec_timeout(SM, retransmit), Payload];
     [dst, Payload] ->
       [nl_mac_hf:clear_spec_timeout(SM, retransmit), Payload]
   end,
@@ -312,6 +314,9 @@ process_send_payload(SM, Msg) ->
     [relay, _P] ->
       Tmo_retransmit = nl_mac_hf:readETS(SM, tmo_retransmit),
       fsm:set_timeout(SM, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
+    [ack, _P] ->
+      Tmo_retransmit = nl_mac_hf:readETS(SM, tmo_retransmit),
+      fsm:set_timeout(SM, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
     [dst, _P] ->
       SM
   end.
@@ -330,8 +335,9 @@ parse_paylod(Payload) ->
   end.
 
 check_dst(Flag) ->
-  case nl_mac_hf:num2flag(Flag, mac) of
+  case nl_mac_hf:num2flag(Flag, nl) of
     dst_reached -> dst;
+    ack -> ack;
     _ -> relay
   end.
 
