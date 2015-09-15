@@ -298,15 +298,25 @@ process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
 
   {at, _PID, _, _, _, CurrentPayload} = Current_msg,
   [_CRole, HCurrentPayload] = parse_paylod(CurrentPayload),
-  {Flag, PkgID, Dst, Src} = HCurrentPayload,
-  HTestPayload = {Flag, PkgID + 1, Dst, Src},
-  if ((HCurrentPayload =:= HRcvPayload) or (HRcvPayload == HTestPayload)) ->
-      nl_mac_hf:insertETS(SM1, current_msg, {delivered, Current_msg}),
-      SM2 = nl_mac_hf:clear_spec_timeout(SM1, retransmit),
-      SM2;
+  check_payload(SM1, HRcvPayload, HCurrentPayload, Current_msg).
+
+
+check_payload(SM, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
+  HCurrentPayload = {PkgID, Dst, Src},
+  HNextIDPayload = {PkgID + 1, Dst, Src},
+  RevCurrentPayload = {PkgID, Src, Dst},
+  RevHCurrentPayload = {PkgID + 1, Src, Dst},
+  if ((HCurrentPayload == HRcvPayload) or (HNextIDPayload == HRcvPayload) or
+      (RevCurrentPayload == HRcvPayload) or (RevHCurrentPayload == HRcvPayload) ) ->
+      nl_mac_hf:insertETS(SM, current_msg, {delivered, Current_msg}),
+      nl_mac_hf:clear_spec_timeout(SM, retransmit);
     true ->
-      SM1
-  end.
+      SM
+  end;
+check_payload(SM, _, _, _) ->
+  SM.
+
+
 
 process_send_payload(SM, Msg) ->
   {at, _PID, _, _, _, Payload} = Msg,
@@ -329,7 +339,7 @@ parse_paylod(Payload) ->
       PkgID = binary_to_integer(BPkgID),
       Dst = binary_to_integer(BDst),
       Src = binary_to_integer(BSrc),
-      [check_dst(Flag), {Flag, PkgID, Dst, Src}];
+      [check_dst(Flag), {PkgID, Dst, Src}];
     nomatch ->
       [relay, Payload]
   end.
@@ -346,7 +356,6 @@ process_retransmit(SM, Msg) ->
   Max_retransmit_count = nl_mac_hf:readETS(SM, max_retransmit_count),
 
   ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
-
   if (Retransmit_count < Max_retransmit_count) ->
     nl_mac_hf:insertETS(SM, retransmit_count, Retransmit_count + 1),
     SM1 = process_send_payload(SM, Msg),
