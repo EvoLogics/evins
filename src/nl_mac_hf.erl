@@ -270,6 +270,8 @@ check_dubl_in_path(BPath, BMAC_addr) ->
 flag2num(Flag) when is_atom(Flag)->
   integer_to_binary(?FRAG2NUM(Flag)).
 
+num2flag(Num, Layer) when is_integer(Num)->
+  ?NUM2FLAG(Num, Layer);
 num2flag(Num, Layer) when is_binary(Num)->
   ?NUM2FLAG(binary_to_integer(Num), Layer).
 

@@ -67,7 +67,8 @@ parse_conf(ArgS, Share) ->
   TDectSet        = [Time  || {t_detect_time, Time} <- ArgS],
   DistSet         = [D     || {distance, D} <- ArgS],
   Tmo_backoff_set = [Time  || {tmo_backoff, Time} <- ArgS],
-  Max_rc_set    = [Retry_count    || {retry_count, Retry_count} <- ArgS],
+  Tmo_retransmit_set = [Time  || {tmo_retransmit, Time} <- ArgS],
+  Max_rc_set         = [Retry_count    || {max_retransmit_count, Retry_count} <- ArgS],
 
   PMax        = set_params(PMaxSet, 500), %ms
   TDect       = set_params(TDectSet, 5),  %ms
@@ -75,11 +76,13 @@ parse_conf(ArgS, Share) ->
   U           = set_params(DistSet, 3000),  %m
   Tmo_backoff = set_timeouts(Tmo_backoff_set, {1,3}), %s
   Max_Retry_count = set_params(Max_rc_set, 1),
+  Tmo_retransmit  = set_params(Tmo_retransmit_set, 5),
 
   ets:insert(Share, [{sound_speed, Sound_speed}]),
   ets:insert(Share, [{pmax, PMax}]),
   ets:insert(Share, [{tdetect, TDect}]),
-  ets:insert(Share, [{max_retry_count, Max_Retry_count}]),
+  ets:insert(Share, [{max_retransmit_count, Max_Retry_count}]),
+  ets:insert(Share, [{tmo_retransmit, Tmo_retransmit}]),
 
   case Protocol of
     cut_lohi ->

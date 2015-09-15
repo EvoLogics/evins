@@ -738,7 +738,8 @@ process_rcv_flag(SM, Params={Flag,[Packet_id, _Real_src, PAdditional]}, Tuple={a
   SDParams = [Packet_id, IDst, PAdditional],
   case Flag of
     data when not Protocol#pr_conf.ack ->
-      SM#sm{event = dst_reached};
+      SM#sm{event  = relay_wv, event_params = {relay_wv, {send, {dst_reached, SDParams}, {nl,send,ISrc,<<"">>}}} };
+      %SM#sm{event = dst_reached};
     data when Protocol#pr_conf.ack ->
       fsm:set_timeout(SM#sm{event = eps}, {ms, Rand_timeout_wack}, {send_ack, Params, Tuple});
     neighbours when Protocol#pr_conf.dbl ->
