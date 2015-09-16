@@ -48,7 +48,7 @@
 %% Parse NL functions
 -export([prepare_send_path/3, parse_path/4, save_path/3]).
 %% Process NL functions
--export([add_neighbours/4, process_pkg_id/2, proccess_relay/2, process_path_life/2, neighbours_to_bin/2, routing_to_bin/1, check_dubl_in_path/2]).
+-export([add_neighbours/4, process_pkg_id/3, proccess_relay/2, process_path_life/2, neighbours_to_bin/2, routing_to_bin/1, check_dubl_in_path/2]).
 %% RTT functions
 -export([getRTT/2, smooth_RTT/3]).
 %% command functions
@@ -233,7 +233,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  insertETS(SM, {last_nl_sent_time, CurrentRTT}, erlang:now()),
                  insertETS(SM, last_nl_sent, {Flag, Real_src, NLarp}),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
-                  %!!!!
+                 %!!!!
                  fsm:cast(SM, nl, {send, AT}),
                  fill_dets(SM),
                  fsm:set_event(SM1, eps)
@@ -622,7 +622,8 @@ get_current_neighbours(SM) ->
     _ -> neighbours_to_bin(SM, mac)
   end.
 
-process_pkg_id(SM, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
+process_pkg_id(SM, ATParams, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
+  %{ATSrc, ATDst} = ATParams,
   Local_address = readETS(SM, local_address),
   LocalPkgID = readETS(SM, packet_id),
   MoreRecent = sequence_more_recent(RemotePkgID, LocalPkgID, readETS(SM, max_pkg_id)),
@@ -645,14 +646,36 @@ process_pkg_id(SM, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
         _ ->
           Queue_ids
       end,
-      case queue:member(Tuple, NewQ) of
+      NTuple = {ATParams, Tuple},
+      case queue:member(NTuple, NewQ) of
         true  ->
           insertETS(SM, queue_ids, NewQ),
-          proccessed;
+          not_proccessed;
         false ->
-          insertETS(SM, queue_ids, queue:in(Tuple, NewQ)),
-          not_proccessed
+          % check if same package was received from other src dst,
+          % if yes  -> insertETS(SM, queue_ids, NewQ), proccessed
+          % if no -> insertETS(SM, queue_ids, queue:in(NTuple, NewQ)), not_proccessed
+          Skey = searchKey(NTuple, NewQ, not_found),
+          if Skey == found ->
+            insertETS(SM, queue_ids, NewQ),
+            proccessed;
+          true ->
+            insertETS(SM, queue_ids, queue:in(NTuple, NewQ)),
+            not_proccessed
+          end
       end
+  end.
+
+searchKey(_, _, found) ->
+  found;
+searchKey(_, {[],[]}, not_found) ->
+  not_found;
+searchKey({ATParams, Tuple}, Q, not_found) ->
+  {{value, { _, CTuple}}, Q1} = queue:out(Q),
+  if CTuple =:= Tuple ->
+    searchKey({ATParams, Tuple}, Q1, found);
+  true ->
+    searchKey({ATParams, Tuple}, Q1, not_found)
   end.
 
 %%--------------------------------------------------  RTT functions -------------------------------------------

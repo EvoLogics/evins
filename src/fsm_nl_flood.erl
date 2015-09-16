@@ -625,7 +625,7 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
             _ -> <<"">>
           end,
 
-  PPkg_id   = nl_mac_hf:process_pkg_id(SM, {RemotePkgID, RecvNLSrc, RecvNLDst, PTail}),
+  PPkg_id   = nl_mac_hf:process_pkg_id(SM, {NLSrcAT, NLDstAT}, {RemotePkgID, RecvNLSrc, RecvNLDst, PTail}),
   ?TRACE(?ID, "process_pkg_id ~p~n",[PPkg_id]),
 
   RParams   = {Flag, [RemotePkgID, RecvNLSrc, [IRssi, IIntegrity] ]},
