@@ -306,20 +306,22 @@ code_change(_, State, _) ->
 
 to_term(Module, Tail, Chunk, Cfg) ->
   Answers = Module:split(list_to_binary([Tail,Chunk]), Cfg),
-  [TermList, ErrorList, MoreList] = 
-    lists:foldr(fun(Elem, [TermList, ErrorList, MoreList]) ->
+  [TermList, ErrorList, MoreList, NewCfg] = 
+    lists:foldr(fun(Elem, [TermList, ErrorList, MoreList, CfgAcc]) ->
                     case Elem of
                       {more, <<>>} ->
-                        [TermList, ErrorList, MoreList];
+                        [TermList, ErrorList, MoreList, CfgAcc];
                       {more, MoreElem} -> 
-                        [TermList, ErrorList, [MoreElem|MoreList]];
+                        [TermList, ErrorList, [MoreElem|MoreList], CfgAcc];
                       {error, _} ->
-                        [TermList, [Elem|ErrorList], MoreList];
+                        [TermList, [Elem|ErrorList], MoreList, CfgAcc];
+											{ctrl, Ctrl} ->
+                        [TermList, ErrorList, MoreList, Module:ctrl(Ctrl, Cfg)];
                       _ ->
-                        [[Elem | TermList], ErrorList, MoreList]
+                        [[Elem | TermList], ErrorList, MoreList, CfgAcc]
                     end
-                end, [[],[],[]], Answers),
-  [TermList, ErrorList, [], list_to_binary(MoreList), Cfg].
+                end, [[],[],[],Cfg], Answers),
+  [TermList, ErrorList, [], list_to_binary(MoreList), NewCfg].
 
 %%%------------------------------------------------------------------------
 %%% Internal functions
