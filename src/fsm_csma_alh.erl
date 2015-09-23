@@ -227,11 +227,11 @@ handle_write_alh(_MM, SM, Term) ->
   case Term of
     {rcv_ul, Msg} ->
       fsm:send_at_command(SM1, Msg),
-      SM#sm{event = data_sent};
+      SM1#sm{event = data_sent};
     _ when SM#sm.event =:= backoff_timeout ->
       {_State, Current_msg} = nl_mac_hf:readETS(SM1, current_msg),
       fsm:send_at_command(SM1, Current_msg),
-      SM#sm{event = data_sent}
+      SM1#sm{event = data_sent}
   end.
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
@@ -313,8 +313,6 @@ check_payload(SM, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
   end;
 check_payload(SM, _, _, _) ->
   SM.
-
-
 
 process_send_payload(SM, Msg) ->
   {at, _PID, _, _, _, Payload} = Msg,
