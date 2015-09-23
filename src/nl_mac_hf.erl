@@ -53,6 +53,8 @@
 -export([getRTT/2, smooth_RTT/3]).
 %% command functions
 -export([process_command/2, save_stat/2, update_states_list/1]).
+%% Only MAC functions
+-export([process_rcv_payload/3, parse_paylod/1, process_send_payload/2, process_retransmit/3]).
 %% Other functions
 -export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
@@ -801,6 +803,83 @@ add_item_to_queue(SM, Qname, Item, Max) ->
     _ ->  Q
   end,
   insertETS(SM, Qname, queue:in(Item, NewQ)).
+
+%%--------------------------------------------------  Only MAC functions -------------------------------------------
+process_rcv_payload(SM, not_inside, _Payload) ->
+  SM;
+process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
+  [SM1, HRcvPayload] =
+  case parse_paylod(RcvPayload) of
+    [relay, Payload] ->
+      [SM, Payload];
+    [Flag, Payload] when Flag == ack; Flag == dst ->
+      [nl_mac_hf:clear_spec_timeout(SM, retransmit), Payload]
+  end,
+
+  {at, _PID, _, _, _, CurrentPayload} = Current_msg,
+  [_CRole, HCurrentPayload] = parse_paylod(CurrentPayload),
+  check_payload(SM1, HRcvPayload, HCurrentPayload, Current_msg).
+
+parse_paylod(Payload) ->
+  DstReachedPatt = "([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
+  case re:run(Payload, DstReachedPatt, [dotall, {capture,[1, 2, 3, 4, 5], binary}]) of
+    {match, [BFlag, BPkgID, BDst, BSrc, _RPayload]} ->
+      Flag = binary_to_integer(BFlag),
+      PkgID = binary_to_integer(BPkgID),
+      Dst = binary_to_integer(BDst),
+      Src = binary_to_integer(BSrc),
+      [check_dst(Flag), {PkgID, Dst, Src}];
+    nomatch ->
+      [relay, Payload]
+  end.
+
+check_payload(SM, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
+  HCurrentPayload = {PkgID, Dst, Src},
+  HNextIDPayload = {PkgID + 1, Dst, Src},
+  RevCurrentPayload = {PkgID, Src, Dst},
+  RevHCurrentPayload = {PkgID + 1, Src, Dst},
+  if ((HCurrentPayload == HRcvPayload) or (HNextIDPayload == HRcvPayload) or
+      (RevCurrentPayload == HRcvPayload) or (RevHCurrentPayload == HRcvPayload) ) ->
+      nl_mac_hf:insertETS(SM, current_msg, {delivered, Current_msg}),
+      nl_mac_hf:clear_spec_timeout(SM, retransmit);
+    true ->
+      SM
+  end;
+check_payload(SM, _, _, _) ->
+  SM.
+
+check_dst(Flag) ->
+  case nl_mac_hf:num2flag(Flag, nl) of
+    dst_reached -> dst;
+    ack -> ack;
+    _ -> relay
+  end.
+
+process_send_payload(SM, Msg) ->
+  {at, _PID, _, _, _, Payload} = Msg,
+  case nl_mac_hf:parse_paylod(Payload) of
+    [Flag, _P] when Flag == ack; Flag == relay ->
+      SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
+      Tmo_retransmit = nl_mac_hf:readETS(SM1, tmo_retransmit),
+      fsm:set_timeout(SM1, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
+    [dst, _P] ->
+      SM;
+    _ ->
+      SM
+  end.
+
+process_retransmit(SM, Msg, Ev) ->
+  Retransmit_count = nl_mac_hf:readETS(SM, retransmit_count),
+  Max_retransmit_count = nl_mac_hf:readETS(SM, max_retransmit_count),
+
+  ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
+  if (Retransmit_count < Max_retransmit_count) ->
+    nl_mac_hf:insertETS(SM, retransmit_count, Retransmit_count + 1),
+    SM1 = process_send_payload(SM, Msg),
+    [SM1#sm{event = Ev}, {Ev, Msg}];
+  true ->
+    [SM, {}]
+  end.
 %%--------------------------------------------------  command functions -------------------------------------------
 process_command(SM, Command) ->
   Protocol   = readETS(SM, {protocol_config, readETS(SM, np)}),

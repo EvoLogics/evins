@@ -150,7 +150,7 @@ handle_event(MM, SM, Term) ->
       SM;
     {timeout, {retransmit, {not_delivered, Msg}}} ->
       ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
-      [SM1, P] = process_retransmit(SM, Msg),
+      [SM1, P] = nl_mac_hf:process_retransmit(SM, Msg, rcv_ul),
       fsm:run_event(MM, SM1, P);
     {timeout, {retransmit, _Tuple}} ->
       %nothing, the message has delivered state
@@ -171,13 +171,13 @@ handle_event(MM, SM, Term) ->
       nl_mac_hf:insertETS(SM, retransmit_count, 0),
       nl_mac_hf:insertETS(SM, current_msg, {not_delivered, Msg}),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
-      SM2 = process_send_payload(SM1, Msg),
+      SM2 = nl_mac_hf:process_send_payload(SM1, Msg),
       fsm:run_event(MM, SM2#sm{event = rcv_ul}, {rcv_ul, Msg});
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
     {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, Payload}} ->
       Current_msg = nl_mac_hf:readETS(SM, current_msg),
-      SM1 = process_rcv_payload(SM, Current_msg, Payload),
+      SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Payload),
       [H | T] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
       fsm:cast(SM, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
@@ -281,79 +281,4 @@ process_async(_SM, Tuple) ->
       recvend;
     _ ->
       eps
-  end.
-
-process_rcv_payload(SM, not_inside, _Payload) ->
-  SM;
-process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
-  [SM1, HRcvPayload] =
-  case parse_paylod(RcvPayload) of
-    [relay, Payload] ->
-      [SM, Payload];
-    [Flag, Payload] when Flag == ack; Flag == dst ->
-      [nl_mac_hf:clear_spec_timeout(SM, retransmit), Payload]
-  end,
-
-  {at, _PID, _, _, _, CurrentPayload} = Current_msg,
-  [_CRole, HCurrentPayload] = parse_paylod(CurrentPayload),
-  check_payload(SM1, HRcvPayload, HCurrentPayload, Current_msg).
-
-
-check_payload(SM, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
-  HCurrentPayload = {PkgID, Dst, Src},
-  HNextIDPayload = {PkgID + 1, Dst, Src},
-  RevCurrentPayload = {PkgID, Src, Dst},
-  RevHCurrentPayload = {PkgID + 1, Src, Dst},
-  if ((HCurrentPayload == HRcvPayload) or (HNextIDPayload == HRcvPayload) or
-      (RevCurrentPayload == HRcvPayload) or (RevHCurrentPayload == HRcvPayload) ) ->
-      nl_mac_hf:insertETS(SM, current_msg, {delivered, Current_msg}),
-      nl_mac_hf:clear_spec_timeout(SM, retransmit);
-    true ->
-      SM
-  end;
-check_payload(SM, _, _, _) ->
-  SM.
-
-process_send_payload(SM, Msg) ->
-  {at, _PID, _, _, _, Payload} = Msg,
-  case parse_paylod(Payload) of
-    [Flag, _P] when Flag == ack; Flag == relay ->
-      SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
-      Tmo_retransmit = nl_mac_hf:readETS(SM1, tmo_retransmit),
-      fsm:set_timeout(SM1, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
-    [dst, _P] ->
-      SM
-  end.
-
-parse_paylod(Payload) ->
-  DstReachedPatt = "([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
-  case re:run(Payload, DstReachedPatt, [dotall, {capture,[1, 2, 3, 4, 5], binary}]) of
-    {match, [BFlag, BPkgID, BDst, BSrc, _RPayload]} ->
-      Flag = binary_to_integer(BFlag),
-      PkgID = binary_to_integer(BPkgID),
-      Dst = binary_to_integer(BDst),
-      Src = binary_to_integer(BSrc),
-      [check_dst(Flag), {PkgID, Dst, Src}];
-    nomatch ->
-      [relay, Payload]
-  end.
-
-check_dst(Flag) ->
-  case nl_mac_hf:num2flag(Flag, nl) of
-    dst_reached -> dst;
-    ack -> ack;
-    _ -> relay
-  end.
-
-process_retransmit(SM, Msg) ->
-  Retransmit_count = nl_mac_hf:readETS(SM, retransmit_count),
-  Max_retransmit_count = nl_mac_hf:readETS(SM, max_retransmit_count),
-
-  ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
-  if (Retransmit_count < Max_retransmit_count) ->
-    nl_mac_hf:insertETS(SM, retransmit_count, Retransmit_count + 1),
-    SM1 = process_send_payload(SM, Msg),
-    [SM1#sm{event = rcv_ul}, {rcv_ul, Msg}];
-  true ->
-    [SM, {}]
   end.
