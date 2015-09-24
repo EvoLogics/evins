@@ -813,7 +813,7 @@ process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
     [relay, Payload] ->
       [SM, Payload];
     [Flag, Payload] when Flag == ack; Flag == dst ->
-      [nl_mac_hf:clear_spec_timeout(SM, retransmit), Payload]
+      [clear_spec_timeout(SM, retransmit), Payload]
   end,
 
   {at, _PID, _, _, _, CurrentPayload} = Current_msg,
@@ -840,8 +840,8 @@ check_payload(SM, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
   RevHCurrentPayload = {PkgID + 1, Src, Dst},
   if ((HCurrentPayload == HRcvPayload) or (HNextIDPayload == HRcvPayload) or
       (RevCurrentPayload == HRcvPayload) or (RevHCurrentPayload == HRcvPayload) ) ->
-      nl_mac_hf:insertETS(SM, current_msg, {delivered, Current_msg}),
-      nl_mac_hf:clear_spec_timeout(SM, retransmit);
+      insertETS(SM, current_msg, {delivered, Current_msg}),
+      clear_spec_timeout(SM, retransmit);
     true ->
       SM
   end;
@@ -849,7 +849,7 @@ check_payload(SM, _, _, _) ->
   SM.
 
 check_dst(Flag) ->
-  case nl_mac_hf:num2flag(Flag, nl) of
+  case num2flag(Flag, nl) of
     dst_reached -> dst;
     ack -> ack;
     _ -> relay
@@ -857,10 +857,10 @@ check_dst(Flag) ->
 
 process_send_payload(SM, Msg) ->
   {at, _PID, _, _, _, Payload} = Msg,
-  case nl_mac_hf:parse_paylod(Payload) of
+  case parse_paylod(Payload) of
     [Flag, _P] when Flag == ack; Flag == relay ->
-      SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
-      Tmo_retransmit = nl_mac_hf:readETS(SM1, tmo_retransmit),
+      SM1 = clear_spec_timeout(SM, retransmit),
+      Tmo_retransmit = readETS(SM1, tmo_retransmit),
       fsm:set_timeout(SM1, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
     [dst, _P] ->
       SM;
@@ -869,12 +869,12 @@ process_send_payload(SM, Msg) ->
   end.
 
 process_retransmit(SM, Msg, Ev) ->
-  Retransmit_count = nl_mac_hf:readETS(SM, retransmit_count),
-  Max_retransmit_count = nl_mac_hf:readETS(SM, max_retransmit_count),
+  Retransmit_count = readETS(SM, retransmit_count),
+  Max_retransmit_count = readETS(SM, max_retransmit_count),
 
   ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
   if (Retransmit_count < Max_retransmit_count) ->
-    nl_mac_hf:insertETS(SM, retransmit_count, Retransmit_count + 1),
+    insertETS(SM, retransmit_count, Retransmit_count + 1),
     SM1 = process_send_payload(SM, Msg),
     [SM1#sm{event = Ev}, {Ev, Msg}];
   true ->

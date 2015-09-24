@@ -64,7 +64,8 @@
                   {end_of_frame, idle},
                   {rcv_ct, blocking_state},
                   {transmit_ct, cr},
-                  {rcv_data, idle}
+                  {rcv_data, idle},
+                  {send_tone, cr}
                  ]},
 
                 {blocking_state,
@@ -86,16 +87,19 @@
                   {rcv_data, idle},
                   {send_tone,	cr},
                   {rcv_ct, cr},
+                  {dp_ends, cr},
                   {end_of_frame, cr},
                   {no_ct,	transmit_data},
                   {ct_exist, backoff_state}
                  ]},
 
                 {transmit_data,
-                 [{dp_ends, idle},
+                 [{transmit_ct, cr},
+                  {dp_ends, idle},
                   {end_of_frame, transmit_data},
                   {rcv_ct, transmit_data},
-                  {rcv_data, transmit_data}
+                  {rcv_data, transmit_data},
+                  {send_tone, cr}
                  ]},
 
                 {alarm,
@@ -133,6 +137,18 @@ handle_event(MM, SM, Term) ->
       SM1 = fsm:clear_timeout(SM, {send_tone, Msg}),
       SM2 = process_cr(SM1, Msg),
       fsm:run_event(MM, SM2, {});
+    {timeout, {retransmit, {not_delivered, Msg}}} when State =:= blocking_state;
+                                                       State =:= backoff_state ->
+      Tmo_retransmit = nl_mac_hf:readETS(SM, tmo_retransmit),
+      fsm:set_timeout(SM, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
+    {timeout, {retransmit, {not_delivered, Msg}}} ->
+      ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
+      [SM1, P] = nl_mac_hf:process_retransmit(SM, Msg, send_tone),
+      nl_mac_hf:insertETS(SM, data_to_sent, {not_delivered, Msg}),
+      fsm:run_event(MM, SM1, P);
+    {timeout, {retransmit, _Tuple}} ->
+      %nothing, the message has delivered state
+      SM;
     {timeout, Event} ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
@@ -145,12 +161,16 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, {at, _, _, _, _}} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
-    {rcv_ul, Msg={at, _PID, _, _, _, _}} when State =:= idle ->
-      nl_mac_hf:insertETS(SM, data_to_sent, {send_tone, Msg}),
-      fsm:run_event(MM, SM#sm{event = transmit_ct}, {send_tone, Msg});
+    {rcv_ul, Msg={at, _PID, _, _, _, _}} when State =:= idle; State =:= transmit_data ->
+      nl_mac_hf:insertETS(SM, data_to_sent, {not_delivered, Msg}),
+      nl_mac_hf:insertETS(SM, current_msg, {not_delivered, Msg}),
+      SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
+      fsm:run_event(MM, SM1#sm{event = transmit_ct}, {send_tone, Msg});
     {rcv_ul, Msg={at, _PID, _, _, _, _}} ->
-      nl_mac_hf:insertETS(SM, data_to_sent, {send_tone, Msg}),
-      fsm:cast(SM, alh,  {send, {sync, "OK"} }),
+      nl_mac_hf:insertETS(SM, data_to_sent, {not_delivered, Msg}),
+      nl_mac_hf:insertETS(SM, current_msg, {not_delivered, Msg}),
+      SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
+      fsm:cast(SM1, alh,  {send, {sync, "OK"} }),
       SM;
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
@@ -180,6 +200,7 @@ handle_event(MM, SM, Term) ->
 
 init_mac(SM) ->
   random:seed(erlang:now()),
+  nl_mac_hf:insertETS(SM, retransmit_count, 0),
   init_ct(SM).
 
 handle_idle(_MM, SM, _Term) when SM#sm.event =:= internal ->
@@ -187,9 +208,10 @@ handle_idle(_MM, SM, _Term) when SM#sm.event =:= internal ->
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   init_ct(SM),
-  T = nl_mac_hf:readETS(SM, data_to_sent),
+  T = nl_mac_hf:readETS(SM, current_msg),
   if T =:= not_inside -> SM#sm{event = eps};
-     true -> SM#sm{event = transmit_ct, event_params = T}
+     true ->
+     SM#sm{event = transmit_ct, event_params = {send_tone, T}}
   end.
 
 handle_blocking_state(_MM, SM, Term) ->
@@ -204,22 +226,29 @@ handle_cr(_MM, SMP, Term) ->
   [Param_Term, SM] = nl_mac_hf:event_params(SMP, Term, send_tone),
   ?TRACE(?ID, "~120p~n", [Term]),
   case Param_Term of
+    {send_tone, {_St, Msg}} ->
+      SM1 = nl_mac_hf:send_helpers(SM, at, Msg, tone),
+      Cr_time = nl_mac_hf:readETS(SM, cr_time),
+      fsm:set_timeout(SM1#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
     {send_tone, Msg} ->
       SM1 = nl_mac_hf:send_helpers(SM, at, Msg, tone),
       Cr_time = nl_mac_hf:readETS(SM, cr_time),
       fsm:set_timeout(SM1#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
-    _ -> SM#sm{event = eps}
+    _ ->
+      SM#sm{event = eps}
   end.
 
 handle_transmit_data(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   case nl_mac_hf:readETS(SM, data_to_sent) of
-    {send_tone, Msg} ->
-      nl_mac_hf:send_mac(SM, at, data, Msg),
+    {_St, SendT} ->
       nl_mac_hf:cleanETS(SM, data_to_sent),
+      nl_mac_hf:send_mac(SM, at, data, SendT),
       CR_Time = nl_mac_hf:readETS(SM, cr_time),
       R = CR_Time * random:uniform(),
-      fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, dp_ends);
+      nl_mac_hf:insertETS(SM, retransmit_count, 0),
+      SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, dp_ends),
+      nl_mac_hf:process_send_payload(SM1, SendT);
     _ -> SM#sm{event = eps}
   end.
 
@@ -283,7 +312,9 @@ process_recv(SM, T) ->
     {match, [BFlag, Data]} ->
       Flag = nl_mac_hf:num2flag(BFlag, mac),
       ShortTuple = {Len - 2, P1, P2, P3, P4, P5, P6, P7, Data},
-      [SM, {Flag, ShortTuple}];
+      Current_msg = nl_mac_hf:readETS(SM, current_msg),
+      SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Data),
+      [SM1, {Flag, ShortTuple}];
     nomatch -> [SM, nothing]
   end.
 
