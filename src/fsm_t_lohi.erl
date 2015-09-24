@@ -87,7 +87,6 @@
                   {rcv_data, idle},
                   {send_tone,	cr},
                   {rcv_ct, cr},
-                  {dp_ends, cr},
                   {end_of_frame, cr},
                   {no_ct,	transmit_data},
                   {ct_exist, backoff_state}
@@ -139,13 +138,15 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM2, {});
     {timeout, {retransmit, {not_delivered, Msg}}} when State =:= blocking_state;
                                                        State =:= backoff_state ->
+      SM1 = fsm:clear_timeout(SM, dp_ends),
       Tmo_retransmit = nl_mac_hf:readETS(SM, tmo_retransmit),
-      fsm:set_timeout(SM, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
+      fsm:set_timeout(SM1, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
     {timeout, {retransmit, {not_delivered, Msg}}} ->
       ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
-      [SM1, P] = nl_mac_hf:process_retransmit(SM, Msg, send_tone),
-      nl_mac_hf:insertETS(SM, data_to_sent, {not_delivered, Msg}),
-      fsm:run_event(MM, SM1, P);
+      SM1 = fsm:clear_timeout(SM, dp_ends),
+      [SM2, P] = nl_mac_hf:process_retransmit(SM1, Msg, send_tone),
+      nl_mac_hf:insertETS(SM2, data_to_sent, {not_delivered, Msg}),
+      fsm:run_event(MM, SM2, P);
     {timeout, {retransmit, _Tuple}} ->
       %nothing, the message has delivered state
       SM;
@@ -225,17 +226,18 @@ handle_backoff_state(_MM, SM, Term) ->
 handle_cr(_MM, SMP, Term) ->
   [Param_Term, SM] = nl_mac_hf:event_params(SMP, Term, send_tone),
   ?TRACE(?ID, "~120p~n", [Term]),
+  SM1 = fsm:clear_timeout(SM, dp_ends),
   case Param_Term of
     {send_tone, {_St, Msg}} ->
-      SM1 = nl_mac_hf:send_helpers(SM, at, Msg, tone),
-      Cr_time = nl_mac_hf:readETS(SM, cr_time),
-      fsm:set_timeout(SM1#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
+      SM2 = nl_mac_hf:send_helpers(SM1, at, Msg, tone),
+      Cr_time = nl_mac_hf:readETS(SM2, cr_time),
+      fsm:set_timeout(SM2#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
     {send_tone, Msg} ->
-      SM1 = nl_mac_hf:send_helpers(SM, at, Msg, tone),
-      Cr_time = nl_mac_hf:readETS(SM, cr_time),
-      fsm:set_timeout(SM1#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
+      SM2 = nl_mac_hf:send_helpers(SM1, at, Msg, tone),
+      Cr_time = nl_mac_hf:readETS(SM2, cr_time),
+      fsm:set_timeout(SM2#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
     _ ->
-      SM#sm{event = eps}
+      SM1#sm{event = eps}
   end.
 
 handle_transmit_data(_MM, SM, Term) ->
