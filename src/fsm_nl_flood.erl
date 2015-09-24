@@ -448,11 +448,16 @@ handle_wack(_MM, SM, Term) ->
         _ ->
           nothing
       end,
-      SM1 = nl_mac_hf:send_nl_command(SM, alh, {dst_reached, [Packet_id, Real_dst, PAdditional]}, {nl,send,Real_src,<<"">>}),
-      SM2 = fsm:clear_timeout(SM1, {wack_timeout, {Packet_id, Real_src, Real_dst}}),
-      fsm:cast(SM2, nl, {send, {sync, {nl, delivered, Real_src, Real_dst}}}),
-      nl_mac_hf:smooth_RTT(SM, direct, {rtt, Local_address, Real_dst}),
-      SM2#sm{event = dst_rcv_ack};
+      Ack_last_nl_sent = nl_mac_hf:readETS(SM, ack_last_nl_sent),
+      if {Packet_id, Real_src, Real_dst} == Ack_last_nl_sent  ->
+        SM1 = nl_mac_hf:send_nl_command(SM, alh, {dst_reached, [Packet_id, Real_dst, PAdditional]}, {nl,send,Real_src,<<"">>}),
+        SM2 = fsm:clear_timeout(SM1, {wack_timeout, {Packet_id, Real_src, Real_dst}}),
+        fsm:cast(SM2, nl, {send, {sync, {nl, delivered, Real_src, Real_dst}}}),
+        nl_mac_hf:smooth_RTT(SM, direct, {rtt, Local_address, Real_dst}),
+        SM2#sm{event = dst_rcv_ack};
+      true ->
+        SM#sm{event = eps}
+      end;
     _ ->
       SM#sm{event = eps}
   end.

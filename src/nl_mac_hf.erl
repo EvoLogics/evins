@@ -234,6 +234,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  ?TRACE(?ID, "CurrentRTT sending AT command ~p~n", [CurrentRTT]),
                  insertETS(SM, {last_nl_sent_time, CurrentRTT}, erlang:now()),
                  insertETS(SM, last_nl_sent, {Flag, Real_src, NLarp}),
+                 insertETS(SM, ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
                  fsm:cast(SM, nl, {send, AT}),
