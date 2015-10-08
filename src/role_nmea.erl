@@ -52,7 +52,14 @@ to_term(Tail, Chunk, Cfg) ->
   role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
 
 safe_binary_to_integer(B) -> try binary_to_integer(B) catch _:_ -> nothing end.
-safe_binary_to_float(B) -> try binary_to_float(B) catch _:_ -> nothing end.
+
+safe_binary_to_float(B) ->
+	case (catch binary_to_float(B)) of
+		V when is_number(V) -> V;
+		_ ->
+			try float(binary_to_float(B))
+			catch _:_ -> nothing end
+	end.
 
 checksum([]) -> 0;
 checksum(<<>>) -> 0;
