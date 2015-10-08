@@ -142,7 +142,7 @@ run_event(MM, #sm{module = Module} = SM, Term) ->
   end,
   case SM1#sm.event of
     eps -> SM1;
-    _ -> run_event(MM, SM1, {})
+    _ -> run_event(MM, SM1, Term)
   end.
 
 push(eps, Stack) -> Stack;
