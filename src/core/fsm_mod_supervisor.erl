@@ -44,9 +44,9 @@ init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
 
   Roles = 
     [{R,{cowboy,I,P},[]}       || {role,R,iface,{cowboy,I,P}} <- ConfigData] ++
-    [{R,{cowboy,I,P},[E]}      || {role,R,params,E,iface,{cowboy,I,P}} <- ConfigData] ++
+    [{R,{cowboy,I,P},E}        || {role,R,params,E,iface,{cowboy,I,P}} <- ConfigData] ++
     [{R,{erlang,I1,Target},[]} || {role,R,iface,{erlang,id,I1,target,Target}} <- ConfigData] ++
-    [{R,{erlang,I1,Target},[E]}|| {role,R,params,E,iface,{erlang,id,I1,target,Target}} <- ConfigData] ++
+    [{R,{erlang,I1,Target},E}  || {role,R,params,E,iface,{erlang,id,I1,target,Target}} <- ConfigData] ++
     [{R,{socket,I,P,T},[]}     || {role,R,iface,{socket,I,P,T}} <- ConfigData] ++
     [{R,{socket,I,P,T},E}      || {role,R,params,E,iface,{socket,I,P,T}} <- ConfigData] ++  
     [{R,{port,P,PS},[]}        || {role,R,iface,{port,P,PS}} <- ConfigData] ++      
