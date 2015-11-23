@@ -146,7 +146,8 @@ ets_insert_sm(Table, Trans) ->
                 end, Trans).
 
 run_next_fsm(#modstate{fsms = []} = State) ->
-  {stop, empty_fsms, State};
+  {stop, normal, State};
+  %% {stop, empty_fsms, State};
 
 run_next_fsm(#modstate{fsms = FSMs, mod_id = Mod_ID, sup_id = Sup_ID, share = Share} = State) ->
   Table = ets:new(table, [ordered_set, public]),

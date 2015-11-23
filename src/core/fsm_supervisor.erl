@@ -75,8 +75,11 @@ check_list_term({role,Role,iface,{erlang,id,EID,target,{Module_ID,TID}}})
 check_list_term({role,Role,iface,{erlang,id,EID,target,{Module_ID,TID,Remote}}})
   when is_atom(Role), is_atom(EID), is_atom(Module_ID), is_atom(TID), is_atom(Remote)->
   ok;
-check_list_term({role,Role,params,Params,iface,{erlang,id,EID,target,Module_ID,TID}})
+check_list_term({role,Role,params,Params,iface,{erlang,id,EID,target,{Module_ID,TID}}})
   when is_atom(Role), is_list(Params), is_atom(EID), is_atom(Module_ID), is_atom(TID) ->
+  ok;
+check_list_term({role,Role,params,Params,iface,{erlang,id,EID,target,{Module_ID,TID,Remote}}})
+  when is_atom(Role), is_list(Params), is_atom(EID), is_atom(Module_ID), is_atom(TID), is_atom(Remote) ->
   ok;
 check_list_term({role,Role,iface,{socket,Address,Port,TCPRole}})
   when is_atom(Role), is_list(Address), is_integer(Port), is_atom(TCPRole) ->

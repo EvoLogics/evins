@@ -38,8 +38,15 @@ start_link(Args) ->
   Sup_ID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[?MODULE,ID]))),
   supervisor:start_link({local, Sup_ID}, ?MODULE, {supervisor, Sup_ID, args, Args}).
 
+%% {spec, #{restart => restart()}}
 init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
   [{M, F, A}] = [{Mx, Fx, Ax} || {mfa, Mx, Fx, Ax} <- ConfigData],
+  Spec =
+    case [SpecX || {spec, SpecX} <- A] of
+      [Item | []] when is_map(Item) -> Item;
+      _ -> #{}
+    end,
+  Restart = maps:get(restart, Spec, permanent),
   Mod_ID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[M,ID]))),
 
   Roles = 
@@ -87,6 +94,6 @@ init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
 
   SM_worker = {Mod_ID, 
                {M, start, [Mod_ID, Role_IDs, Sup_ID, {M, F, A}]},
-               permanent, 1000, worker, [fsm_worker]},
+               Restart, 1000, worker, [fsm_worker]},
 
   {ok, {{one_for_all, 30, 10}, [SM_worker | Role_workers]}}.
