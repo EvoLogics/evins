@@ -42,8 +42,8 @@
 
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       ->
-	Env = maps:merge(SM#sm.env, #{mode => ?MODE}),
-	fsm:set_timeout(SM#sm{env = Env}, {s, 1}, initial).
+  Env = maps:merge(SM#sm.env, #{mode => ?MODE}),
+  fsm:set_timeout(SM#sm{env = Env}, {s, 1}, initial).
 trans()        -> ?TRANS.
 final()        -> [alarm].
 init_event()   -> eps.
@@ -52,33 +52,33 @@ stop(_SM)      -> ok.
 %%--------------------------------Handler Event----------------------------------
 handle_event(_MM, SM, Term) ->
   case Term of
-		{timeout, initial} ->
-			fsm:send_at_command(SM, encode_sendim(SM));
-		{async, {Report, _}} when Report == deliveredim; Report == failedim ->
-			fsm:send_at_command(SM, encode_sendim(SM));
-		{async, {usbllong,_,_,Src,X,Y,Z,E,N,U,_,_,_,_,_,_,_}} ->
-			Env = maps:merge(SM#sm.env, #{position => {Src,X,Y,Z,E,N,U}}),
-			SM#sm{env = Env};
-		_UUg ->
+    {timeout, initial} ->
+      fsm:send_at_command(SM, encode_sendim(SM));
+    {async, {Report, _}} when Report == deliveredim; Report == failedim ->
+      fsm:send_at_command(SM, encode_sendim(SM));
+    {async, {usbllong,_,_,Src,X,Y,Z,E,N,U,_,_,_,_,_,_,_}} ->
+      Env = maps:merge(SM#sm.env, #{position => {Src,X,Y,Z,E,N,U}}),
+      SM#sm{env = Env};
+    _UUg ->
       SM
   end.
 
 encode_sendim(SM) ->
-	#{target := Target} = SM#sm.env,
-	Payload = encode_position(SM),
-	{at, {pid,0}, "*SENDIM", Target, ack, Payload}.
+  #{target := Target} = SM#sm.env,
+  Payload = encode_position(SM),
+  {at, {pid,0}, "*SENDIM", Target, ack, Payload}.
 
 encode_position(SM) ->
-	#{mode := Mode} = SM#sm.env,
-	case maps:get(position, SM#sm.env, nothing) of
-		{_,Xm,Ym,Zm,_,_,_}	when Mode == xyz ->
-			[X, Y, Z] = [round(V*10) || V <- [Xm,Ym,Zm]],
-			<<"X", X:16/little, Y:16/little, Z:16/little>>;
-		{_,_,_,_,Em,Nm,Um}	when Mode == enu ->
-			[E, N, U] = [round(V*10) || V <- [Em,Nm,Um]],
-			<<"E", E:16/little, N:16/little, U:16/little>>;
-		_Otherwise ->
-			<<"N">>
-	end.
+  #{mode := Mode} = SM#sm.env,
+  case maps:get(position, SM#sm.env, nothing) of
+    {_,Xm,Ym,Zm,_,_,_}  when Mode == xyz ->
+      [X, Y, Z] = [round(V*10) || V <- [Xm,Ym,Zm]],
+      <<"X", X:16/little, Y:16/little, Z:16/little>>;
+    {_,_,_,_,Em,Nm,Um}  when Mode == enu ->
+      [E, N, U] = [round(V*10) || V <- [Em,Nm,Um]],
+      <<"E", E:16/little, N:16/little, U:16/little>>;
+    _Otherwise ->
+      <<"N">>
+  end.
 
 
