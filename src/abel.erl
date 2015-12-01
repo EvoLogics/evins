@@ -28,9 +28,9 @@
 -module(abel).
 -export([diff/2,diff/3,diff32/2,diff16/2,diff8/2,add/3,add32/2,add16/2,add8/2,gt/2,mod/2,div_mod/2,inc/1,dec/1,eq/2,timestamp_sub/2]).
 
-                                                % Returns the positive remainder of the division of X by Y, in [0;Y[. 
-                                                % In Erlang, -5 rem 3 is -2, whereas this function will return 1,  
-                                                % since -5 =-2 * 3 + 1.
+%% Returns the positive remainder of the division of X by Y, in [0;Y[. 
+%% In Erlang, -5 rem 3 is -2, whereas this function will return 1,  
+%% since -5 =-2 * 3 + 1.
 mod(X,Y) when X > 0 -> X rem Y;
 mod(X,Y) when X < 0 -> Y + X rem Y;
 mod(0,_Y) -> 0.
@@ -59,15 +59,15 @@ diff({V1,P},{V2,P}) ->
 
 diff(V1,V2,P) -> diff({V1,P},{V2,P}).
 
-diff32(V1,V2) -> diff(V1,V2,16#ffffffff).
-diff16(V1,V2) -> diff(V1,V2,16#ffff).
-diff8(V1,V2) -> diff(V1,V2,16#ff).
+diff32(V1,V2) -> diff(V1,V2,16#100000000).
+diff16(V1,V2) -> diff(V1,V2,16#10000).
+diff8(V1,V2) -> diff(V1,V2,16#100).
 
 add(V1,V2,P) -> mod(V1 + V2, P).
 
-add32(V1,V2) -> add(V1,V2,16#ffffffff).
-add16(V1,V2) -> add(V1,V2,16#ffff).
-add8(V1,V2) -> add(V1,V2,16#ff).
+add32(V1,V2) -> add(V1,V2,16#100000000).
+add16(V1,V2) -> add(V1,V2,16#10000).
+add8(V1,V2) -> add(V1,V2,16#100).
 
 %% greater then
 gt({_, P} = N1, {_, P} = N2) -> diff(N1, N2) > 0.
