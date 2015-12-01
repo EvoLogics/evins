@@ -36,30 +36,47 @@
 
 stop(_) -> ok.
 
-%% params: [{out,all}] or [{out,[gga,zda,rmc]}]
+%% params: [{out,all}] or [{out,[gga,zda,rmc]}] or [{out,except,[gga]}]
+%% params: [{in,all}] or [{in,[gga,zda,rmc]}] or [{in,except,[gga]}]
 %% TODO: test in fsm_mod_supervisor, that #mm.params is list
 start(Role_ID, Mod_ID, MM) ->
-  Cfg =
+  Out =
     case lists:keyfind(out,1,MM#mm.params) of
-      false -> all;
-      {out,Other} -> Other
+      {out,OutRule} -> #{out => {white,OutRule}};
+      {out,except,OutRule} -> #{out => {black,OutRule}};
+      false -> #{out => all}
     end,
+  In =
+    case lists:keyfind(in,1,MM#mm.params) of
+      {in,InRule} -> #{in => {white,InRule}};
+      {in,except,InRule} -> #{in => {black,InRule}};
+      false -> #{in => all}
+    end,
+  Cfg = maps:merge(Out,In),
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
 ctrl(_,Cfg) -> Cfg.
 
-to_term(Tail, Chunk, Cfg) ->
-  role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
+to_term(Tail, Chunk, #{in := InRule} = Cfg) ->
+  [Terms | Rest] = 
+    role_worker:to_term(?MODULE, Tail, Chunk, Cfg),
+
+  NewTerms =
+    lists:filter(fun({nmea, Sentense}) ->
+                     is_filtered(Sentense, InRule)
+                 end, Terms),
+  
+  [NewTerms | Rest].
 
 safe_binary_to_integer(B) -> try binary_to_integer(B) catch _:_ -> nothing end.
 
 safe_binary_to_float(B) ->
-	case (catch binary_to_float(B)) of
-		V when is_number(V) -> V;
-		_ ->
-			try float(binary_to_float(B))
-			catch _:_ -> nothing end
-	end.
+  case (catch binary_to_float(B)) of
+    V when is_number(V) -> V;
+    _ ->
+      try float(binary_to_float(B))
+      catch _:_ -> nothing end
+  end.
 
 checksum([]) -> 0;
 checksum(<<>>) -> 0;
@@ -988,11 +1005,8 @@ from_term_helper(Sentense) ->
 
 %% TODO: code Lat/Lon N/E with sign?
 from_term({nmea, Sentense}, Cfg) ->
-  [F,S|_] = tuple_to_list(Sentense),
-  Flag =
-    Cfg == all orelse
-    lists:member(F, Cfg) orelse
-                           (F == is_atom('query') and lists:member(S, Cfg)),
+  #{out := OutRule} = Cfg,
+  Flag = is_filtered(Sentense, OutRule),
   Body = if Flag -> from_term_helper(Sentense);
             true -> ""
          end,
@@ -1003,3 +1017,17 @@ from_term({nmea, Sentense}, Cfg) ->
       [list_to_binary(flatten(["$",Body,"*",io_lib:format("~2.16.0B",[CS]),"\r\n"])), Cfg]
   end;
 from_term(_, Cfg) -> [<<>>, Cfg].
+
+is_filtered(Sentense, Rule) ->
+  [F,S|_] = tuple_to_list(Sentense),
+  case Rule of
+    all -> true;
+    {white, Lst} ->
+      lists:member(F, Lst)
+        orelse (F == is_atom('query') and lists:member(S, Lst));
+    {black, Lst} ->
+      not (
+        lists:member(F, Lst)
+        orelse (F == is_atom('query') and lists:member(S, Lst)))
+  end.
+  
