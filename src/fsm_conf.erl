@@ -166,7 +166,8 @@ handle_event(MM, SM, Term) ->
     {raw,_} ->
       SM;
     _Other ->
-      ?ERROR(?ID, "Unhandled event: ~150p~n", [_Other])
+      ?ERROR(?ID, "Unhandled event: ~150p~n", [_Other]),
+      SM
   end.
 
 match_message(Bin,Msg) when is_binary(Bin), is_binary(Msg) ->

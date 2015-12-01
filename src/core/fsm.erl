@@ -104,7 +104,7 @@ handle_info({timeout,E}, #sm{module = Module} = SM) ->
   {noreply, Module:handle_event(nothing, SM#sm{timeouts = TL}, {timeout, E})};
 
 handle_info(Info, SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {unhandled_info, Info}}}),
+  gen_event:notify(error_logger, {fsm_event, self(), {unhandled_info, Info}}),
   {stop, Info, SM}.
 
 code_change(_, Pid, _) ->
