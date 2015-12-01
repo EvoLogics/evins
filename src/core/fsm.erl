@@ -54,6 +54,14 @@ start_link(#sm{id = Mod_ID} = SM) ->
   FSM_ID = list_to_atom("fsm_" ++ atom_to_list(Mod_ID)),
   gen_server:start_link({local, FSM_ID}, ?MODULE, SM, []).
 
+handle_event(Module, MM, SM, Term) ->
+  case Module:handle_event(MM, SM, Term) of
+    NewSM when is_record(NewSM, sm) ->
+      {noreply, NewSM};
+    Other ->
+      {stop, {error, {Module, handle_event, returns, Other}}, SM}
+  end.
+
 %%% gen_server callbacks
 init(#sm{module = Module} = SM) ->
   SMi = Module:init(SM),
@@ -72,7 +80,7 @@ handle_call(Request, From, SM) ->
 
 handle_cast({chan, MM, Term}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, MM#mm.role_id, Term}}}),
-  {noreply, Module:handle_event(MM, SM, Term)};
+  handle_event(Module, MM, SM, Term);
 
 handle_cast(final, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, final}}),
@@ -84,7 +92,7 @@ handle_cast({chan_closed, MM}, SM) ->
 
 handle_cast({chan_error, MM, Reason}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_error, MM, Reason}}}),
-  {noreply, Module:handle_event(MM, SM, {connection_error, Reason})};
+  handle_event(Module, MM, SM, {connection_error, Reason});
 
 handle_cast({chan_closed_client, MM}, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_closed_client, MM}}}),
@@ -101,7 +109,7 @@ handle_cast(Request, SM) ->
 handle_info({timeout,E}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {timeout, E}}}),
   TL = lists:filter(fun({Event,_}) -> Event =/= E end, SM#sm.timeouts),
-  {noreply, Module:handle_event(nothing, SM#sm{timeouts = TL}, {timeout, E})};
+  handle_event(Module, nothing, SM#sm{timeouts = TL}, {timeout, E});
 
 handle_info(Info, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {unhandled_info, Info}}),
@@ -131,18 +139,23 @@ run_event(MM, #sm{module = Module} = SM, Term) ->
                      {[{_,{S,Push}}], _, Pop} -> {S, push(Push,Tail)};
                      {[], [{_,{S,Push}}], _}  -> {S, push(Push,SM#sm.stack)}
                    end,
-  Handle = list_to_atom("handle_" ++ atom_to_list(State)),
+  Handle = list_to_atom("handle_" ++ atom_to_list(State)),    
   log_transition(SM, Stack, Handle),
   SM1 = Module:Handle(MM, SM#sm{state = State, stack = Stack}, Term),
-  case is_final(SM1) of
+  case is_record(SM1, sm) of
     true ->
-      FSM_ID = list_to_atom("fsm_" ++ atom_to_list(SM#sm.id)),
-      cast_helper(FSM_ID, final);
-    _ -> true
-  end,
-  case SM1#sm.event of
-    eps -> SM1;
-    _ -> run_event(MM, SM1, Term)
+      case is_final(SM1) of
+        true ->
+          FSM_ID = list_to_atom("fsm_" ++ atom_to_list(SM#sm.id)),
+          cast_helper(FSM_ID, final);
+        _ -> true
+      end,
+      case SM1#sm.event of
+        eps -> SM1;
+        _ -> run_event(MM, SM1, Term)
+      end;
+    false ->
+      exit({error, {Module, Handle, returns, SM1}})
   end.
 
 push(eps, Stack) -> Stack;
