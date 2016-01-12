@@ -131,11 +131,13 @@ handle_event(MM, SM, Term) ->
       fsm:set_timeout(SM, {ms, 50}, {send_tone, Msg});
     {timeout, {send_tone, Msg}} ->
       fsm:run_event(MM, SM#sm{event = send_tone}, {send_tone, Msg});
-    {timeout, {cr_end, Msg}} ->
+    {timeout, {cr_end, Msg}} when State =:= cr ->
       ?TRACE(?ID, "CT ~p~n", [get_ct(SM)]),
       SM1 = fsm:clear_timeout(SM, {send_tone, Msg}),
       SM2 = process_cr(SM1, Msg),
       fsm:run_event(MM, SM2, {});
+    {timeout, {cr_end, Msg}} ->
+      fsm:clear_timeout(SM, {send_tone, Msg});
     {timeout, {retransmit, {not_delivered, Msg}}} when State =:= blocking_state;
                                                        State =:= backoff_state ->
       SM1 = fsm:clear_timeout(SM, dp_ends),
@@ -245,6 +247,7 @@ handle_transmit_data(_MM, SM, Term) ->
   case nl_mac_hf:readETS(SM, data_to_sent) of
     {_St, SendT} ->
       nl_mac_hf:cleanETS(SM, data_to_sent),
+      nl_mac_hf:cleanETS(SM, current_msg),
       nl_mac_hf:send_mac(SM, at, data, SendT),
       CR_Time = nl_mac_hf:readETS(SM, cr_time),
       R = CR_Time * random:uniform(),
@@ -277,7 +280,8 @@ process_cr(SM, Msg) ->
     SM#sm{event = no_ct};
   true ->
     R = CR_Time * random:uniform(),
-    SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, 2 * R}, {backoff_timeout, Msg}),
+    %SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, 2 * R}, {backoff_timeout, Msg}),
+    SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, R}, {backoff_timeout, Msg}),
     SM1#sm{event = ct_exist}
   end.
 

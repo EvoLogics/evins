@@ -849,7 +849,6 @@ check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
 
   if (ExaxtTheSame or IfDstReached or AckReversed) ->
        insertETS(SM, current_msg, {delivered, Current_msg}),
-       io:format("-------------------- LA ~p -------- clear retransmit ~p ~n", [readETS(SM, local_address), SM]),
        clear_spec_timeout(SM, retransmit);
     true ->
        SM
