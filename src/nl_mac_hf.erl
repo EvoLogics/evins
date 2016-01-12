@@ -219,6 +219,10 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
      true ->
        Rout_addr = get_routing_addr(SM, Flag, Real_dst),
        [MAC_addr, MAC_real_src, MAC_real_dst] = addr_nl2mac(SM, [Rout_addr, Real_src, Real_dst]),
+       if(Rout_addr =:= no_routing_table) ->
+        ?ERROR(?ID, "~s: Wrong Rout_addr:~p, check config file ~n", [?MODULE, Rout_addr]);
+        true -> nothing
+       end,
        ?TRACE(?ID, "Rout_addr ~p, MAC_addrm ~p, MAC_real_src ~p, MAC_real_dst ~p~n", [Rout_addr, MAC_addr, MAC_real_src, MAC_real_dst]),
        if ((MAC_addr =:= error) or (MAC_real_src =:= error) or (MAC_real_dst =:= error)
            or ((MAC_real_dst =:= 255) and Protocol#pr_conf.br_na)) ->
@@ -809,17 +813,19 @@ add_item_to_queue(SM, Qname, Item, Max) ->
 process_rcv_payload(SM, not_inside, _Payload) ->
   SM;
 process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
-  [SM1, HRcvPayload] =
+  [PFlag, SM1, HRcvPayload] =
   case parse_paylod(RcvPayload) of
     [relay, Payload] ->
-      [SM, Payload];
-    [Flag, Payload] when Flag == ack; Flag == dst ->
-      [clear_spec_timeout(SM, retransmit), Payload]
+      [relay, SM, Payload];
+    [reverse, Payload] ->
+      [reverse, SM, Payload];
+    [Flag, Payload] when Flag == dst ->
+      [Flag, clear_spec_timeout(SM, retransmit), Payload]
   end,
 
   {at, _PID, _, _, _, CurrentPayload} = Current_msg,
   [_CRole, HCurrentPayload] = parse_paylod(CurrentPayload),
-  check_payload(SM1, HRcvPayload, HCurrentPayload, Current_msg).
+  check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload, Current_msg).
 
 parse_paylod(Payload) ->
   DstReachedPatt = "([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
@@ -834,32 +840,36 @@ parse_paylod(Payload) ->
       [relay, Payload]
   end.
 
-check_payload(SM, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
+check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
   HCurrentPayload = {PkgID, Dst, Src},
-  HNextIDPayload = {PkgID + 1, Dst, Src},
   RevCurrentPayload = {PkgID, Src, Dst},
-  RevHCurrentPayload = {PkgID + 1, Src, Dst},
-  if ((HCurrentPayload == HRcvPayload) or (HNextIDPayload == HRcvPayload) or
-      (RevCurrentPayload == HRcvPayload) or (RevHCurrentPayload == HRcvPayload) ) ->
-      insertETS(SM, current_msg, {delivered, Current_msg}),
-      clear_spec_timeout(SM, retransmit);
+  ExaxtTheSame = (HCurrentPayload == HRcvPayload),
+  IfDstReached = (Flag == dst),
+  AckReversed = (( Flag == reverse ) and (RevCurrentPayload == HRcvPayload)),
+
+  if (ExaxtTheSame or IfDstReached or AckReversed) ->
+       insertETS(SM, current_msg, {delivered, Current_msg}),
+       io:format("-------------------- LA ~p -------- clear retransmit ~p ~n", [readETS(SM, local_address), SM]),
+       clear_spec_timeout(SM, retransmit);
     true ->
-      SM
+       SM
   end;
-check_payload(SM, _, _, _) ->
+check_payload(SM, _, _, _, _) ->
   SM.
 
 check_dst(Flag) ->
   case num2flag(Flag, nl) of
     dst_reached -> dst;
-    ack -> ack;
+    ack -> reverse;
+    path -> reverse;
+    path_addit -> reverse;
     _ -> relay
   end.
 
 process_send_payload(SM, Msg) ->
   {at, _PID, _, _, _, Payload} = Msg,
   case parse_paylod(Payload) of
-    [Flag, _P] when Flag == ack; Flag == relay ->
+    [Flag, _P] when Flag == reverse; Flag == relay ->
       SM1 = clear_spec_timeout(SM, retransmit),
       Tmo_retransmit = readETS(SM1, tmo_retransmit),
       fsm:set_timeout(SM1, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
