@@ -33,7 +33,7 @@
 -include("nl.hrl").
 
 %% Convert types functions
--export([convert_to_binary/1, covert_type_to_bin/1, convert_t/2, convert_la/3]).
+-export([convert_to_binary/1, covert_type_to_bin/1, convert_t/2, convert_la/3, count_flag_bits/1]).
 %% ETS functions
 -export([insertETS/3, readETS/2, cleanETS/2, init_dets/1, fill_dets/1]).
 %% handle events
@@ -42,7 +42,7 @@
 -export([rand_float/2, lerp/3]).
 %% Addressing functions
 -export([init_nl_addrs/1, add_to_table/3, get_dst_addr/1, set_dst_addr/2]).
--export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1]).
+-export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1, extract_payload_mac_flag/1]).
 %% Send NL functions
 -export([send_nl_command/4, send_ack/3, send_path/2, send_helpers/4, send_cts/6, send_mac/4, fill_msg/2]).
 %% Parse NL functions
@@ -58,6 +58,20 @@
 %% Other functions
 -export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
+count_flag_bits (F) ->
+  count_flag_bits_helper(F, 0).
+
+count_flag_bits_helper(0, 0) -> 1;
+count_flag_bits_helper(0, C) -> C;
+count_flag_bits_helper(F, C) ->
+  Rem = F rem 2,
+  D =
+  if Rem =:= 0 ->
+    F / 2;
+    true -> F / 2 - 0.5
+  end,
+  count_flag_bits_helper(round(D), C + 1).
+
 convert_to_binary([])     -> nothing;
 convert_to_binary([H])    -> list_to_binary(string:to_upper(atom_to_list(H)));
 convert_to_binary([H|T])  ->
@@ -168,8 +182,6 @@ send_cts(SM, Interface, MACP, Timestamp, USEC, Dur) ->
 send_mac(SM, _Interface, Flag, MACP) ->
   AT = mac2at(Flag, MACP),
   fsm:send_at_command(SM, AT).
-  %SM1 = fsm:cast(SM, Interface, {send, AT}),
-  %fsm:set_event(SM1, eps).
 
 send_ack(SM,  {send_ack, {_, [Packet_id, _, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src, _}}}, Count_hops) ->
   send_nl_command(SM, alh, {ack, [Packet_id, Real_src, []]}, {nl, send, Real_dst, integer_to_binary(Count_hops)}).
@@ -251,11 +263,12 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
 mac2at(Flag, Tuple) when is_tuple(Tuple)->
   case Tuple of
     {at, PID, SENDFLAG, IDst, TFlag, Data} ->
-      NewData = list_to_binary([flag2num(Flag), ",", Data]),
+      NewData = create_payload_mac_flag(Flag, Data),
       {at, PID, SENDFLAG, IDst, TFlag, NewData};
     _ ->
       error
   end.
+
 nl2at (SM, Tuple) when is_tuple(Tuple)->
   ETSPID =  list_to_binary(["p", integer_to_binary(readETS(SM, pid))]),
   case Tuple of
@@ -273,9 +286,36 @@ check_dubl_in_path(BPath, BMAC_addr) ->
     false -> list_to_binary([BPath, ",", BMAC_addr])
   end.
 
+
+create_payload_mac_flag(Flag, Data) ->
+  C = count_flag_bits(?FLAGMAX),
+  FlagNum = ?FLAG2NUM(Flag),
+  BFlag = <<FlagNum:C>>,
+  TmpData = <<BFlag/bitstring, Data/binary>>,
+  Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
+  if Data_bin =:= false ->
+    Add = 8 - bit_size(TmpData) rem 8,
+    <<BFlag/bitstring, 0:Add, Data/binary>>;
+  true ->
+    TmpData
+  end.
+
+extract_payload_mac_flag(Payl) ->
+  C = count_flag_bits(?FLAGMAX),
+  Data_bin = (bit_size(Payl) rem 8) =/= 0,
+  if Data_bin =:= false ->
+    <<BFlag:C, Rest/bitstring>> = Payl,
+    Add = bit_size(Rest) rem 8,
+    <<_:Add, Data/binary>> = Rest,
+    [BFlag, Data, (Add + C) / 8];
+  true ->
+    <<BFlag:C, Data/binary>> = Payl,
+    [BFlag, Data, C / 8]
+  end.
+
 %%-------------------------------------------------- Addressing functions -------------------------------------------
 flag2num(Flag) when is_atom(Flag)->
-  integer_to_binary(?FRAG2NUM(Flag)).
+  integer_to_binary(?FLAG2NUM(Flag)).
 
 num2flag(Num, Layer) when is_integer(Num)->
   ?NUM2FLAG(Num, Layer);

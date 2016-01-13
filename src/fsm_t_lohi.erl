@@ -310,15 +310,12 @@ process_async(SM, Msg) ->
 
 process_recv(SM, T) ->
   {recvim, Len, P1, P2, P3, P4, P5, P6, P7, Payl} = T,
-  case re:run(Payl,"([^,]*),(.*)",[dotall, {capture, [1, 2], binary}]) of
-    {match, [BFlag, Data]} ->
-      Flag = nl_mac_hf:num2flag(BFlag, mac),
-      ShortTuple = {Len - 2, P1, P2, P3, P4, P5, P6, P7, Data},
-      Current_msg = nl_mac_hf:readETS(SM, current_msg),
-      SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Data),
-      [SM1, {Flag, ShortTuple}];
-    nomatch -> [SM, nothing]
-  end.
+    [BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
+    Flag = nl_mac_hf:num2flag(BFlag, mac),
+    ShortTuple = {Len - LenAdd, P1, P2, P3, P4, P5, P6, P7, Data},
+    Current_msg = nl_mac_hf:readETS(SM, current_msg),
+    SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Data),
+    [SM1, {Flag, ShortTuple}].
 
 process_rcv_flag(SM, Flag) ->
   CR_Time = nl_mac_hf:readETS(SM, cr_time),

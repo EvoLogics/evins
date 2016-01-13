@@ -25,6 +25,7 @@
 %% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
 %% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF 
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+
 -define(NEIGHBOURS, 	"n:(.*)").
 -define(PATH_DATA, 	"p:(.*),d:(.*)").
 -define(NEIGHBOUR_PATH, "n:(.*),p:(.*)").
@@ -135,7 +136,9 @@
 			      {255, 255}
 			     ]).
 
--define(FRAG2NUM(F),
+-define(FLAGMAX, 5).
+
+-define(FLAG2NUM(F),
 	case F of
 	    %% NL and MAC flags
 	    data 	-> 0;
@@ -149,7 +152,8 @@
 	    neighbours  -> 2;
 	    path 	-> 3;
 	    path_addit 	-> 4;
-	    dst_reached -> 5 % data type, sending only the neighbours, info: data reached dst
+	    % data type, sending only to the neighbours, info: data reached dst
+	    dst_reached -> 5
 	end).
 
 -define(NUM2FLAG(N, Layer),

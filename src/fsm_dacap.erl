@@ -211,9 +211,6 @@ handle_event(MM, SM, Term) ->
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       process_tmstmp(SM, Tuple);
-    {sync, _, {error, _}} ->
-      SMAT = fsm:clear_timeout(SM, answer_timeout),
-      fsm:run_event(MM, SMAT#sm{event = alarm}, {});
     {sync, Req, Answer} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
       fsm:cast(SMAT, alh, {send, {sync, Answer} }),
@@ -417,13 +414,10 @@ process_recv(SM, T) ->
 process_recv_helper(SM, Len, Src, 255, P1, P2, P3, P4, P5, Payl) ->
   [SM, {raw, {Len, Src, 255, P1, P2, P3, P4, P5, Payl}}];
 process_recv_helper(SM, Len, Src, Dst, P1, P2, P3, P4, P5, Payl) ->
-  case re:run(Payl, "([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]) of
-    {match, [BFlag, Data]} ->
-      Flag = nl_mac_hf:num2flag(BFlag, mac),
-      ShortTuple = {Len - 2, Src, Dst, P1, P2, P3, P4, P5, Data},
-      process_recv_helper(SM, Flag, ShortTuple, Dst);
-    nomatch -> [SM, nothing]
-  end.
+  [BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
+  Flag = nl_mac_hf:num2flag(BFlag, mac),
+  ShortTuple = {Len - LenAdd, Src, Dst, P1, P2, P3, P4, P5, Data},
+  process_recv_helper(SM, Flag, ShortTuple, Dst).
 
 process_recv_helper(SM, Flag, ShortTuple, Dst) ->
   Local_addr = nl_mac_hf:readETS(SM, local_address),
