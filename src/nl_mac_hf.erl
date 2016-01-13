@@ -307,10 +307,10 @@ extract_payload_mac_flag(Payl) ->
     <<BFlag:C, Rest/bitstring>> = Payl,
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
-    [BFlag, Data, (Add + C) / 8];
+    [BFlag, Data, round((Add + C) / 8)];
   true ->
     <<BFlag:C, Data/binary>> = Payl,
-    [BFlag, Data, C / 8]
+    [BFlag, Data, round(C / 8)]
   end.
 
 %%-------------------------------------------------- Addressing functions -------------------------------------------
