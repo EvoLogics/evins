@@ -207,15 +207,12 @@ init_mac(SM) ->
   init_ct(SM).
 
 handle_idle(_MM, SM, _Term) when SM#sm.event =:= internal ->
-  init_mac(SM), SM#sm{event = eps};
+  init_mac(SM),
+  SM#sm{event = eps};
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   init_ct(SM),
-  T = nl_mac_hf:readETS(SM, current_msg),
-  if T =:= not_inside -> SM#sm{event = eps};
-     true ->
-     SM#sm{event = transmit_ct, event_params = {send_tone, T}}
-  end.
+  SM#sm{event = eps}.
 
 handle_blocking_state(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
@@ -247,7 +244,7 @@ handle_transmit_data(_MM, SM, Term) ->
   case nl_mac_hf:readETS(SM, data_to_sent) of
     {_St, SendT} ->
       nl_mac_hf:cleanETS(SM, data_to_sent),
-      nl_mac_hf:cleanETS(SM, current_msg),
+      %nl_mac_hf:cleanETS(SM, current_msg), % !!!!!!!!!!!!!!
       nl_mac_hf:send_mac(SM, at, data, SendT),
       CR_Time = nl_mac_hf:readETS(SM, cr_time),
       R = CR_Time * random:uniform(),

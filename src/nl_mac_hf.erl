@@ -819,8 +819,8 @@ process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
       [relay, SM, Payload];
     [reverse, Payload] ->
       [reverse, SM, Payload];
-    [Flag, Payload] when Flag == dst ->
-      [Flag, clear_spec_timeout(SM, retransmit), Payload]
+    [dst, Payload] ->
+      [dst, clear_spec_timeout(SM, retransmit), Payload]
   end,
 
   {at, _PID, _, _, _, CurrentPayload} = Current_msg,
