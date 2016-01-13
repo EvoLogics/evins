@@ -122,8 +122,8 @@ parse_conf(ArgS, Share) ->
   Tmo_dbl_wv_set    = [Time || {tmo_dbl_wv, Time} <- ArgS],
 
   Addr            = set_params(Addr_set, 1),
-  RTT             = set_params(Max_hops_set, 60),
-  WTmo_path       = set_params(WTmo_path_set, 30),
+  RTT             = set_params(Max_hops_set, 80),
+  WTmo_path       = set_params(WTmo_path_set, 50),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, 30),
   Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, 10),
   Path_life       = set_params(Path_life_set, 120),
@@ -214,7 +214,7 @@ set_timeouts(Tmo, Defaults) ->
 set_routing(Routing_addrs, NL_Protocol, Default) ->
   case NL_Protocol of
     _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs =:= [])) ->
-      io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a defualt value will be set 255 broadcast ~n",[]),
+      io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a default value will be set 255 broadcast ~n",[]),
       Default;
     _ when (Routing_addrs =/= []) ->
       [TupleRouting] = Routing_addrs, [{255,255} | tuple_to_list(TupleRouting)];

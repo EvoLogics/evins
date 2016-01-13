@@ -76,7 +76,8 @@ parse_conf(ArgS, Share) ->
   U           = set_params(DistSet, 3000),  %m
   Tmo_backoff = set_timeouts(Tmo_backoff_set, {1,3}), %s
   Max_Retry_count = set_params(Max_rc_set, 3),
-  Tmo_retransmit  = set_params(Tmo_retransmit_set, 7), % ca. 2 * max Tmo_backoff -> 2 * 3 = 6
+  {_, Tmo_backoff_max} = Tmo_backoff,
+  Tmo_retransmit  = set_params(Tmo_retransmit_set, 2 * Tmo_backoff_max + 1),
 
   ets:insert(Share, [{sound_speed, Sound_speed}]),
   ets:insert(Share, [{pmax, PMax}]),
