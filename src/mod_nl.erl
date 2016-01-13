@@ -109,6 +109,7 @@ parse_conf(ArgS, Share) ->
   Addr_set      = [Addrs          || {local_addr, Addrs} <- ArgS],
   Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
   Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
+  Max_address_set   = [Addrs          || {max_address, Addrs} <- ArgS],
   Max_hops_set  = [Count_hops     || {max_hops, Count_hops} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
 
@@ -122,6 +123,7 @@ parse_conf(ArgS, Share) ->
   Tmo_dbl_wv_set    = [Time || {tmo_dbl_wv, Time} <- ArgS],
 
   Addr            = set_params(Addr_set, 1),
+  Max_address     = set_params(Max_address_set, 20),
   RTT             = set_params(Max_hops_set, 80),
   WTmo_path       = set_params(WTmo_path_set, 50),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, 30),
@@ -139,6 +141,7 @@ parse_conf(ArgS, Share) ->
   ets:insert(Share, [{nl_protocol, NL_Protocol}]),
   ets:insert(Share, [{routing_table, Routing_table}]),
   ets:insert(Share, [{local_address, Addr}]),
+  ets:insert(Share, [{max_address, Max_address}]),
   ets:insert(Share, [{blacklist, Blacklist}]),
   ets:insert(Share, [{wwv_tmo,   {Wwv_tmo_start, Wwv_tmo_end} }]),
   ets:insert(Share, [{wack_tmo,  {Wack_tmo_start, Wack_tmo_end} }]),

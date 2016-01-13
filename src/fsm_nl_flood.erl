@@ -602,23 +602,23 @@ process_recv(SM, L) ->
   end.
 
 parse_rcv(SM, RcvParams, PayloadTail) ->
-  case re:run(PayloadTail,"([^,]*),([^,]*),([^,]*),([^,]*),(.*)",[dotall,{capture,[1,2,3,4,5],binary}]) of
-    {match, DataParams} ->
-      process_rcv_wv(SM, RcvParams, DataParams);
-    nomatch ->
-      [SM, nothing]
+  try
+    DataParams = nl_mac_hf:extract_payload_nl_flag(SM, PayloadTail),
+    process_rcv_wv(SM, RcvParams, DataParams)
+  catch error: _Reason -> [SM, nothing]
   end.
 
 process_rcv_wv(SM, RcvParams, DataParams) ->
   Local_address = nl_mac_hf:readETS(SM, local_address),
   Protocol    = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
+
   [NLSrcAT, NLDstAT, IRssi, IIntegrity] = RcvParams,
-  [BFlag, BPkg_id, BReal_src, BReal_dst, Tail] = DataParams,
+  [BFlag, Pkg_id, Real_src, Real_dst, Tail] = DataParams,
 
   Flag = nl_mac_hf:num2flag(BFlag, nl),
-  RemotePkgID = binary_to_integer(BPkg_id),
-  RecvNLSrc = nl_mac_hf:addr_mac2nl(SM, binary_to_integer(BReal_src)),
-  RecvNLDst = nl_mac_hf:addr_mac2nl(SM, binary_to_integer(BReal_dst)),
+  RemotePkgID = Pkg_id,
+  RecvNLSrc = nl_mac_hf:addr_mac2nl(SM, Real_src),
+  RecvNLDst = nl_mac_hf:addr_mac2nl(SM, Real_dst),
 
   PTail = case Flag of
             data when Protocol#pr_conf.lo; Protocol#pr_conf.pf ->

@@ -42,7 +42,9 @@
 -export([rand_float/2, lerp/3]).
 %% Addressing functions
 -export([init_nl_addrs/1, add_to_table/3, get_dst_addr/1, set_dst_addr/2]).
--export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1, extract_payload_mac_flag/1]).
+-export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1]).
+%% Extract functions
+-export([extract_payload_mac_flag/1,extract_payload_nl_flag/2]).
 %% Send NL functions
 -export([send_nl_command/4, send_ack/3, send_path/2, send_helpers/4, send_cts/6, send_mac/4, fill_msg/2]).
 %% Parse NL functions
@@ -241,7 +243,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
             error;
           true ->
             NLarp = set_dst_addr(NL, MAC_addr),
-            AT = nl2at(SM, {Flag, integer_to_binary(IPacket_id), integer_to_binary(MAC_real_src), integer_to_binary(MAC_real_dst), NLarp}),
+            AT = nl2at(SM, {Flag, IPacket_id, MAC_real_src, MAC_real_dst, NLarp}),
             if NLarp =:= wrong_format -> error;
                true ->
                  ?TRACE(?ID, "Send AT command ~p~n", [AT]),
@@ -273,21 +275,52 @@ nl2at (SM, Tuple) when is_tuple(Tuple)->
   ETSPID =  list_to_binary(["p", integer_to_binary(readETS(SM, pid))]),
   case Tuple of
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  ->
-      NewData = list_to_binary([flag2num(Flag), ",", BPacket_id, ",", MAC_real_src, ",", MAC_real_dst, ",", Data]),
+      NewData = create_payload_nl_flag(SM, Flag, BPacket_id, MAC_real_src, MAC_real_dst, Data),
       {at,"*SENDIM", ETSPID, byte_size(NewData), IDst, noack, NewData};
     _ ->
       error
   end.
 
-check_dubl_in_path(BPath, BMAC_addr) ->
-  CheckL = lists:foldr(fun(X, A)-> [bin_to_num(X) | A] end, [], split_bin_comma(BPath)),
-  case lists:member(binary_to_integer(BMAC_addr), CheckL) of
-    true  -> BPath;
-    false -> list_to_binary([BPath, ",", BMAC_addr])
+create_payload_nl_flag(SM, Flag, PkgID, Src, Dst, Data) ->
+  % 3 first bits Flag (if max Flag vbalue is 5)
+  % 8 bits PkgID
+  % 6 bits SRC
+  % 6 bits DST
+  % rest bits reserved for later (+ 1)
+  CBitsFlag = count_flag_bits(?FLAGMAX),
+  CBitsPkgID = count_flag_bits(readETS(SM, max_pkg_id)),
+  CBitsAddr = count_flag_bits(readETS(SM, max_address)),
+
+  if CBitsPkgID < ?BITS_PKG_ID ->
+    ?ERROR(?ID, "~s: Max package ID ~p is greater than memory reserved in header ~p~n", [?MODULE, CBitsPkgID, ?BITS_PKG_ID]);
+  true -> nothing
+  end,
+
+  if CBitsAddr < ?BITS_ADDRESS ->
+    ?ERROR(?ID, "~s: Max address ~p is greater than memory reserved in header ~p ~n", [?MODULE, CBitsAddr, ?BITS_ADDRESS]);
+  true -> nothing
+  end,
+
+  FlagNum = ?FLAG2NUM(Flag),
+  BFlag = <<FlagNum:CBitsFlag>>,
+
+  BPkgID = <<PkgID:CBitsPkgID>>,
+  BSrc = <<Src:CBitsAddr>>,
+  BDst = <<Dst:CBitsAddr>>,
+
+  TmpData = <<BFlag/bitstring, BPkgID/bitstring, BSrc/bitstring, BDst/bitstring, Data/binary>>,
+  Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
+
+  if Data_bin =:= false ->
+    Add = 8 - bit_size(TmpData) rem 8,
+    <<BFlag/bitstring, BPkgID/bitstring, BSrc/bitstring, BDst/bitstring, 0:Add, Data/binary>>;
+  true ->
+    TmpData
   end.
 
-
 create_payload_mac_flag(Flag, Data) ->
+  % 3 first bits Flag (if max Flag vbalue is 5)
+  % rest bits reserved for later (+5)
   C = count_flag_bits(?FLAGMAX),
   FlagNum = ?FLAG2NUM(Flag),
   BFlag = <<FlagNum:C>>,
@@ -298,6 +331,21 @@ create_payload_mac_flag(Flag, Data) ->
     <<BFlag/bitstring, 0:Add, Data/binary>>;
   true ->
     TmpData
+  end.
+
+extract_payload_nl_flag(SM, Payl) ->
+  CBitsFlag = count_flag_bits(?FLAGMAX),
+  CBitsPkgID = count_flag_bits(readETS(SM, max_pkg_id)),
+  CBitsAddr = count_flag_bits(readETS(SM, max_address)),
+  Data_bin = (bit_size(Payl) rem 8) =/= 0,
+  if Data_bin =:= false ->
+    <<BFlag:CBitsFlag, BPkgID:CBitsPkgID, BSrc:CBitsAddr, BDst:CBitsAddr, Rest/bitstring>> = Payl,
+    Add = bit_size(Rest) rem 8,
+    <<_:Add, Data/binary>> = Rest,
+    [BFlag, BPkgID, BSrc, BDst, Data];
+  true ->
+    <<BFlag:CBitsFlag, BPkgID:CBitsPkgID, BSrc:CBitsAddr, BDst:CBitsAddr, Data/bitstring>> = Payl,
+    [BFlag, BPkgID, BSrc, BDst, Data]
   end.
 
 extract_payload_mac_flag(Payl) ->
@@ -313,6 +361,12 @@ extract_payload_mac_flag(Payl) ->
     [BFlag, Data, round(C / 8)]
   end.
 
+check_dubl_in_path(BPath, BMAC_addr) ->
+  CheckL = lists:foldr(fun(X, A)-> [bin_to_num(X) | A] end, [], split_bin_comma(BPath)),
+  case lists:member(binary_to_integer(BMAC_addr), CheckL) of
+    true  -> BPath;
+    false -> list_to_binary([BPath, ",", BMAC_addr])
+  end.
 %%-------------------------------------------------- Addressing functions -------------------------------------------
 flag2num(Flag) when is_atom(Flag)->
   integer_to_binary(?FLAG2NUM(Flag)).
@@ -432,7 +486,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl,recv, Real_dst, Real_src,
     _ -> analyse(SM1, paths, NPath, {Real_src, Real_dst})
   end,
   SDParams = {data, [increase_pkgid(SM), readETS(SM, local_address), PAdditional]},
-  SDTuple = {nl,send, IDst, fill_msg(?PATH_DATA, {NPath, Msg})},
+  SDTuple = {nl, send, IDst, fill_msg(?PATH_DATA, {NPath, Msg})},
   case check_path(SM1, Real_src, Real_dst, NPath) of
     true  -> [SM1, SDParams, SDTuple];
     false -> [SM1, path_not_completed]
