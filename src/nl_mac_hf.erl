@@ -44,7 +44,7 @@
 -export([init_nl_addrs/1, add_to_table/3, get_dst_addr/1, set_dst_addr/2]).
 -export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1]).
 %% Extract functions
--export([extract_payload_mac_flag/1,extract_payload_nl_flag/2]).
+-export([extract_payload_mac_flag/1, extract_payload_nl_flag/1]).
 %% Send NL functions
 -export([send_nl_command/4, send_ack/3, send_path/2, send_helpers/4, send_cts/6, send_mac/4, fill_msg/2]).
 %% Parse NL functions
@@ -56,7 +56,7 @@
 %% command functions
 -export([process_command/2, save_stat/2, update_states_list/1]).
 %% Only MAC functions
--export([process_rcv_payload/3, parse_paylod/1, process_send_payload/2, process_retransmit/3]).
+-export([process_rcv_payload/3, parse_payload/1, process_send_payload/2, process_retransmit/3]).
 %% Other functions
 -export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
@@ -288,8 +288,8 @@ create_payload_nl_flag(SM, Flag, PkgID, Src, Dst, Data) ->
   % 6 bits DST
   % rest bits reserved for later (+ 1)
   CBitsFlag = count_flag_bits(?FLAGMAX),
-  CBitsPkgID = count_flag_bits(readETS(SM, max_pkg_id)),
-  CBitsAddr = count_flag_bits(readETS(SM, max_address)),
+  CBitsPkgID = count_flag_bits(?BITS_PKG_ID),
+  CBitsAddr = count_flag_bits(?BITS_ADDRESS),
 
   if CBitsPkgID < ?BITS_PKG_ID ->
     ?ERROR(?ID, "~s: Max package ID ~p is greater than memory reserved in header ~p~n", [?MODULE, CBitsPkgID, ?BITS_PKG_ID]);
@@ -333,10 +333,10 @@ create_payload_mac_flag(Flag, Data) ->
     TmpData
   end.
 
-extract_payload_nl_flag(SM, Payl) ->
+extract_payload_nl_flag(Payl) ->
   CBitsFlag = count_flag_bits(?FLAGMAX),
-  CBitsPkgID = count_flag_bits(readETS(SM, max_pkg_id)),
-  CBitsAddr = count_flag_bits(readETS(SM, max_address)),
+  CBitsPkgID = count_flag_bits(?BITS_PKG_ID),
+  CBitsAddr = count_flag_bits(?BITS_ADDRESS),
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
   if Data_bin =:= false ->
     <<BFlag:CBitsFlag, BPkgID:CBitsPkgID, BSrc:CBitsAddr, BDst:CBitsAddr, Rest/bitstring>> = Payl,
@@ -908,7 +908,7 @@ process_rcv_payload(SM, not_inside, _Payload) ->
   SM;
 process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
   [PFlag, SM1, HRcvPayload] =
-  case parse_paylod(RcvPayload) of
+  case parse_payload(RcvPayload) of
     [relay, Payload] ->
       [relay, SM, Payload];
     [reverse, Payload] ->
@@ -918,20 +918,14 @@ process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
   end,
 
   {at, _PID, _, _, _, CurrentPayload} = Current_msg,
-  [_CRole, HCurrentPayload] = parse_paylod(CurrentPayload),
+  [_CRole, HCurrentPayload] = parse_payload(CurrentPayload),
   check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload, Current_msg).
 
-parse_paylod(Payload) ->
-  DstReachedPatt = "([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
-  case re:run(Payload, DstReachedPatt, [dotall, {capture,[1, 2, 3, 4, 5], binary}]) of
-    {match, [BFlag, BPkgID, BDst, BSrc, _RPayload]} ->
-      Flag = binary_to_integer(BFlag),
-      PkgID = binary_to_integer(BPkgID),
-      Dst = binary_to_integer(BDst),
-      Src = binary_to_integer(BSrc),
-      [check_dst(Flag), {PkgID, Dst, Src}];
-    nomatch ->
-      [relay, Payload]
+parse_payload(Payload) ->
+  try
+    [Flag, PkgID, Dst, Src, _Data] = extract_payload_nl_flag(Payload),
+    [check_dst(Flag), {PkgID, Dst, Src}]
+  catch error: _Reason -> [relay, Payload]
   end.
 
 check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
@@ -961,7 +955,7 @@ check_dst(Flag) ->
 
 process_send_payload(SM, Msg) ->
   {at, _PID, _, _, _, Payload} = Msg,
-  case parse_paylod(Payload) of
+  case parse_payload(Payload) of
     [Flag, _P] when Flag == reverse; Flag == relay ->
       SM1 = clear_spec_timeout(SM, retransmit),
       Tmo_retransmit = readETS(SM1, tmo_retransmit),

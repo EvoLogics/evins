@@ -603,7 +603,7 @@ process_recv(SM, L) ->
 
 parse_rcv(SM, RcvParams, PayloadTail) ->
   try
-    DataParams = nl_mac_hf:extract_payload_nl_flag(SM, PayloadTail),
+    DataParams = nl_mac_hf:extract_payload_nl_flag(PayloadTail),
     process_rcv_wv(SM, RcvParams, DataParams)
   catch error: _Reason -> [SM, nothing]
   end.
