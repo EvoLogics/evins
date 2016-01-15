@@ -72,8 +72,8 @@
 %% + evoicrppfr      - based on ICRP protocol (Information carrying based routing protocol)
 %%                     Pathfind and relay, based on sequence number controlled flooding, path is chosend using Rssi and Integrity of Evo DMACE Header
 %% + evoicrppfrack   - Evologics information carrying routing protocol, path find and relay protocol with acknowledgement
-%% + dbfloodpfr      - Double flooding path finder, two flooding waves to find path and 1 wave to send path back
-%% + dbfloodpfrack   - Double flooding path finder with acknowledgement
+%% + dblfloodpfr     - Double flooding path finder, two flooding waves to find path and 1 wave to send path back
+%% + dblfloodpfrack  - Double flooding path finder with acknowledgement
 %% + laorp           - Low overhead routing protocol
 %%
 %% TODO: Max number protocol is p7, temporaly all bigger than 7, are equal 7

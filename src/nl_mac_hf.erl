@@ -506,18 +506,23 @@ create_neighbours_path(Type, Neighbours, Path) ->
   end.
 
 extract_neighbours_path(Payl) ->
-  CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
-  CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+  try
+    CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
+    CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
+    CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
 
-  <<BType:CBitsTypeMsg, BLenNeighbours:CBitsLenNeigbours, PTailNeighbours/bitstring>> = Payl,
+    <<BType:CBitsTypeMsg, BLenNeighbours:CBitsLenNeigbours, PTailNeighbours/bitstring>> = Payl,
 
-  [Neighbours, PTailPath] = bin_addrs_to_list(PTailNeighbours, BLenNeighbours),
-  <<BLenPath:CBitsLenPath, Rest/bitstring>> = PTailPath,
+    neighbours_path = ?NUM2TYPEMSG(BType),
 
-  [Path, _] = bin_addrs_to_list(Rest, BLenPath),
-  neighbours_path = ?NUM2TYPEMSG(BType),
-  [Neighbours, Path].
+    [Neighbours, PTailPath] = bin_addrs_to_list(PTailNeighbours, BLenNeighbours),
+    <<BLenPath:CBitsLenPath, Rest/bitstring>> = PTailPath,
+
+    [Path, _] = bin_addrs_to_list(Rest, BLenPath),
+    [Neighbours, Path]
+   catch error: _Reason ->
+     [[], nothing]
+   end.
 
 %%--------------- path_addit -------------------
 %-------> path_addit
@@ -562,6 +567,7 @@ extract_path_addit(Payl) ->
   [Additonal, _] = bin_addrs_to_list(Rest, BLenAdd),
   path_addit = ?NUM2TYPEMSG(BType),
   [Path, Additonal].
+
 %%-------------------------Addressing functions --------------------------------
 flag2num(Flag) when is_atom(Flag)->
   integer_to_binary(?FLAG2NUM(Flag)).
@@ -657,14 +663,14 @@ fill_msg(Format, Tuple) ->
       {Neighbours, Path} = Tuple,
       create_neighbours_path(Format, Neighbours, Path);
     path_data ->
-      {Path, Data} = Tuple,
+      {Data, Path} = Tuple,
       create_path_data(Format, Path, Data);
     path_addit ->
       {Path, Additional} = Tuple,
       create_path_addit(Format, Path, Additional)
   end.
 
-prepare_send_path(SM, [_ , _, PAdditional], {async,{nl,recv, Real_dst, Real_src, Payload}}) ->
+prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src, Payload}}) ->
   MAC_addr = convert_la(SM, integer, mac),
   {nl,send, IDst, Data} = readETS(SM, current_pkg),
 
@@ -672,14 +678,6 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl,recv, Real_dst, Real_src,
   NPathTuple = {ListNeighbours, ListPath},
   [SM1, BPath] = parse_path(SM, NPathTuple, {Real_src, Real_dst}),
   NPath = [MAC_addr | BPath],
-  % NPath =
-  % if Protocol#pr_conf.br_na ->
-  %      ListNeighbours = get_current_neighbours(SM),
-  %      DublListPath = check_dubl_in_path(BPath, BMAC_addr),
-  %      NewPayload = fill_msg(neighbours_path, {ListNeighbours, DublListPath}),
-  %      [_, NPTmp] = parse_path(SM, path, ?NEIGHBOUR_PATH, NPathTuple, {Real_src, Real_dst, NewPayload}),
-  %      NPTmp;
-  %    true -> BPath end,
 
   case get_routing_addr(SM, path, Real_dst) of
     255 -> nothing;
@@ -687,7 +685,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl,recv, Real_dst, Real_src,
   end,
 
   SDParams = {data, [increase_pkgid(SM), readETS(SM, local_address), PAdditional]},
-  SDTuple = {nl, send, IDst, fill_msg(path_data, {NPath, Data})},
+  SDTuple = {nl, send, IDst, fill_msg(path_data, {Data, NPath})},
 
   case check_path(SM1, Real_src, Real_dst, NPath) of
     true  -> [SM1, SDParams, SDTuple];
@@ -720,7 +718,8 @@ add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}) ->
   SM1 = fsm:set_timeout(SM, {s, readETS(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
   analyse(SM1, st_neighbours, NLSrcAT, {RealSrc, Real_dst}),
   case Current_neighbours of
-    not_inside -> insertETS(SM1, current_neighbours, [NLSrcAT]);
+    not_inside ->
+      insertETS(SM1, current_neighbours, [NLSrcAT]);
     _ ->
       case lists:member(NLSrcAT, Current_neighbours) of
         true -> SM1;

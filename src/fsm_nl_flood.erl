@@ -463,7 +463,7 @@ handle_wpath(_MM, SM, Term) ->
   Protocol = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
   nl_mac_hf:update_states_list(SM),
   case Term of
-    {relay_wv, Params={_, [Packet_id, Real_src,_PAdditional]}, Tuple={nl,send,Real_dst,Payload}} ->
+    {relay_wv, Params = {_, [Packet_id, Real_src, _]}, Tuple = {nl, send, Real_dst, Payload}} ->
       [ListNeighbours, ListPath] = nl_mac_hf:extract_neighbours_path(Payload),
       NPathTuple = {ListNeighbours, ListPath},
       [_, BPath] = nl_mac_hf:parse_path(SM, NPathTuple, {Real_src, Real_dst}),
@@ -475,7 +475,7 @@ handle_wpath(_MM, SM, Term) ->
           nl_mac_hf:analyse(SM1, paths, BPath, {Real_src, Real_dst}),
           SM1#sm{event = relay_wv, event_params = {relay_wv, {send, Params, Tuple}}}
       end;
-    {dst_reached, {path, Params=[Packet_id,_,_PAdditional]} ,Tuple={async,{nl,recv, Real_dst, Real_src, Data}}} ->
+    {dst_reached, {path, Params = [Packet_id, _, _]}, Tuple = {async,{nl,recv, Real_dst, Real_src, Data}}} ->
       ?TRACE(?ID, "Path tuple on src ~120p~n", [Data]),
       case nl_mac_hf:prepare_send_path(SM, Params, Tuple) of
         [SM1, SDParams, SDTuple]  ->
@@ -518,7 +518,7 @@ proccess_send(SM, Tuple) ->
        case (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) of
          true ->
            nl_mac_hf:save_stat(SM, source),
-           NTuple = {nl, send, Dst, nl_mac_hf:fill_msg(path_data, {[MAC_addr], Data})},
+           NTuple = {nl, send, Dst, nl_mac_hf:fill_msg(path_data, {Data, [MAC_addr]})},
            {send, {data, [PkgID, Local_address, []]}, NTuple};
          false when Protocol#pr_conf.ry_only ->
            nl_mac_hf:save_stat(SM, source),
@@ -588,7 +588,8 @@ process_recv(SM, L) ->
   ?INFO(?ID, "Blacklist : ~w ~n", [Blacklist]),
   NLSrcAT  = nl_mac_hf:addr_mac2nl(SM, ISrc),
   NLDstAT  = nl_mac_hf:addr_mac2nl(SM, IDst),
-  if NLSrcAT =:= error -> [SM, nothing];
+  if NLSrcAT =:= error ->
+    [SM, nothing];
      true ->
        %%----------- black list----------
        case lists:member(NLSrcAT, Blacklist) of
@@ -641,6 +642,9 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
   RProcTuple  = {rcv_processed, RParams, RAsyncTuple},
   RRelayTuple = {relay, RParams, RSendTuple},
   RDstTuple   = {dst_reached, RParams, RAsyncTuple},
+
+  %io:format("!!!!!!!!!!!!!!!!!!!!!!!!!!!! LA ~p Flag ~p ~p ~n", [nl_mac_hf:readETS(SM, local_address), Flag, DataParams]),
+
   SMN     = nl_mac_hf:add_neighbours(SM, Flag, NLSrcAT, {RecvNLSrc, RecvNLDst}),
   case PPkg_id of
     _ when Flag =:= dst_reached ->
@@ -717,7 +721,7 @@ process_send_flag(SM, Params={Flag, [Packet_id, Real_src, _PAdditional]}, Tuple)
     neighbours when  (Protocol#pr_conf.dbl and (Real_src =:= Local_address)) ->
       case fsm:check_timeout(SM, send_wv_dbl_tmo) of
         false ->
-          fsm:set_timeout(SM#sm{event = noack_data_sent}, {s, nl_mac_hf:readETS(SM, send_wv_dbl_tmo)}, {send_wv_dbl, Params, Tuple});
+          fsm:set_timeout(SM#sm{event = eps}, {s, nl_mac_hf:readETS(SM, send_wv_dbl_tmo)}, {send_wv_dbl, Params, Tuple});
         true ->
           SM#sm{event=eps}
       end;
@@ -744,7 +748,7 @@ process_rcv_flag(SM, Params={Flag,[Packet_id, _Real_src, PAdditional]}, Tuple={a
   SDParams = [Packet_id, IDst, PAdditional],
   case Flag of
     data when not Protocol#pr_conf.ack ->
-      SM#sm{event  = relay_wv, event_params = {relay_wv, {send, {dst_reached, SDParams}, {nl,send,ISrc,<<"">>}}} };
+      SM#sm{event  = relay_wv, event_params = {relay_wv, {send, {dst_reached, SDParams}, {nl,send, ISrc, <<"">>}}} };
       %SM#sm{event = dst_reached};
     data when Protocol#pr_conf.ack ->
       fsm:set_timeout(SM#sm{event = eps}, {ms, Rand_timeout_wack}, {send_ack, Params, Tuple});
