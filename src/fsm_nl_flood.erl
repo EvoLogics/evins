@@ -643,8 +643,6 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
   RRelayTuple = {relay, RParams, RSendTuple},
   RDstTuple   = {dst_reached, RParams, RAsyncTuple},
 
-  %io:format("!!!!!!!!!!!!!!!!!!!!!!!!!!!! LA ~p Flag ~p ~p ~n", [nl_mac_hf:readETS(SM, local_address), Flag, DataParams]),
-
   SMN     = nl_mac_hf:add_neighbours(SM, Flag, NLSrcAT, {RecvNLSrc, RecvNLDst}),
   case PPkg_id of
     _ when Flag =:= dst_reached ->

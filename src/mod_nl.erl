@@ -64,7 +64,7 @@
 %% + sncfloodrack    - Sequence Number Controlled Flooding with acknowledgement
 %% + dpfloodr        - Dynamic Probabilistic Flooding
 %% + dpfloodrack     - Dynamic Probabilistic Flooding with acknowledgement
-%% + icrp            - Information carrying routing protocol
+%% + icrpr           - Information carrying routing protocol
 %%
 %% Path finding
 %% + sncfloodpfr     - Pathfind and relay, based on sequence number controlled flooding
