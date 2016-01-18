@@ -58,7 +58,7 @@
 %% RTT functions
 -export([getRTT/2, smooth_RTT/3]).
 %% command functions
--export([process_command/2, save_stat/2, update_states_list/1]).
+-export([process_command/3, save_stat/2, update_states_list/1]).
 %% Only MAC functions
 -export([process_rcv_payload/3, parse_payload/1, process_send_payload/2, process_retransmit/3]).
 %% Other functions
@@ -433,6 +433,7 @@ parse_path_data(SM, Payl) ->
     MAC_addr = convert_la(SM, integer, mac),
     [Path, BData] = extract_path_data(Payl),
     CheckedDblPath = check_dubl_in_path(Path, MAC_addr),
+    ?TRACE(?ID, "recv parse path data ~p~n", [CheckedDblPath]),
     {BData, CheckedDblPath}
   catch error: _Reason ->
     {Payl, nothing}
@@ -1182,7 +1183,7 @@ process_retransmit(SM, Msg, Ev) ->
     [SM, {}]
   end.
 %%--------------------------------------------------  command functions -------------------------------------------
-process_command(SM, Command) ->
+process_command(SM, Debug, Command) ->
   Protocol   = readETS(SM, {protocol_config, readETS(SM, np)}),
   [Req, Asw] =
   case Command of
@@ -1202,52 +1203,59 @@ process_command(SM, Command) ->
     {protocol, _,info} ->
       [readETS(SM, np), protocol_info];
     {protocol, _,state} ->
-      [readETS(SM, pr_state), protocol_state];  % check if needed
+      [readETS(SM, pr_state), protocol_state];
     {protocol, _,states} ->
       Pr_states = readETS(SM, pr_states),
-      [queue:to_list(Pr_states), protocols_state]; % check if needed
+      [queue:to_list(Pr_states), protocols_state];
     {protocol, _,neighbours} ->
       [readETS(SM, current_neighbours), neighbours];
     {protocol, _,routing} ->
       [readETS(SM, routing_table), routing];
     _ -> [error, nothing]
   end,
+  Answer =
   case Req of
     error ->
-      fsm:cast(SM, nl, {send, {sync, {nl, error}} });
+      {nl, error};
     Req when Req =:= not_inside; Req =:= []; Req =:= {[],[]} ->
-      fsm:cast(SM, nl, {send, {sync, {nl, Asw, empty}} });
+      {nl, Asw, empty};
     _ ->
       case Command of
         {fsm,_} ->
           if Asw =:= state ->
                L = list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")"]),
-               fsm:cast(SM, nl, {send, {sync, {nl, fsm, Asw, L}} });
-             true -> fsm:cast(SM, nl, {send, {sync, {nl, fsm, Asw, list_to_binary(Req)}} })
+               {nl, fsm, Asw, L};
+             true ->
+               {nl, fsm, Asw, list_to_binary(Req)}
           end;
         {statistics,_,paths} when Protocol#pr_conf.pf ->
-          fsm:cast(SM, nl, {send, {sync, {nl, statistics, paths, get_stat(SM, paths) }} });
+          {nl, statistics, paths, get_stat(SM, paths) };
         {statistics, _,neighbours} ->
-          fsm:cast(SM, nl, {send, {sync, {nl, statistics, neighbours, get_stat(SM, st_neighbours) }} });
+          {nl, statistics, neighbours, get_stat(SM, st_neighbours) };
         {statistics, _,data} when Protocol#pr_conf.ack ->
-          fsm:cast(SM, nl, {send, {sync, {nl, statistics, data, get_stat_data(SM, st_data) }} });
+          {nl, statistics, data, get_stat_data(SM, st_data) };
         protocols ->
-          fsm:cast(SM, nl, {send, {sync, {nl, Command, Req}} });
+          {nl, Command, Req};
         {protocol, Name, info} ->
-          fsm:cast(SM, nl, {send, {sync, {nl, protocol, Asw, get_protocol_info(SM, Name)}} });
+          {nl, protocol, Asw, get_protocol_info(SM, Name)};
         {protocol, _, neighbours} ->
-          fsm:cast(SM, nl, {send, {sync, {nl, protocol, Asw, neighbours_to_bin(SM, nl)} }});
+          {nl, protocol, Asw, neighbours_to_bin(SM, nl)};
         {protocol, _, routing} ->
-          fsm:cast(SM, nl, {send, {sync, {nl, protocol, Asw, routing_to_bin(SM)} }});
+          {nl, protocol, Asw, routing_to_bin(SM)};
         {protocol, Name, state} ->
           L = list_to_binary([atom_to_binary(Name,utf8), ",", Req]),
-          fsm:cast(SM, nl, {send, {sync, {nl, protocol, state, L}} });
+          {nl, protocol, state, L};
         {protocol, Name, states} ->
           L = list_to_binary([atom_to_binary(Name,utf8), "\n", Req]),
-          fsm:cast(SM, nl, {send, {sync, {nl, protocol, states, L}} });
+          {nl, protocol, states, L};
         _ ->
-          fsm:cast(SM, nl, {send, {sync, {nl, error}} })
+          {nl, error}
       end
+  end,
+  if Debug =:= true ->
+    ?TRACE(?ID, "Command answer ~p~n", [Answer]);
+  true ->
+    fsm:cast(SM, nl, {send, {sync, Answer}})
   end,
   SM.
 
@@ -1301,8 +1309,17 @@ get_stat(SM, Qname) ->
          " Total:", integer_to_binary(TS)]) | A]
     end, [], queue:to_list(PT)).
 
+logs_additional(SM) ->
+  process_command(SM, true, {statistics,"",neighbours}),
+  process_command(SM, true, {statistics,"",paths}),
+  process_command(SM, true, {protocol,"",neighbours}),
+  process_command(SM, true, {protocol,"",routing}).
+
 analyse(SM, QName, BPath, {Real_src, Real_dst}) ->
   Local_address = readETS(SM, local_address),
+
+  logs_additional(SM),
+
   {T, Role, TSC}=
   if Local_address =:= Real_src; Local_address =:= Real_dst ->
        {readETS(SM, s_send_time), source, readETS(SM, s_total_sent)};

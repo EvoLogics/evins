@@ -262,7 +262,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl, {send, {nl,error}}),
       SM;
     {rcv_ul, get, Command} ->
-      nl_mac_hf:process_command(SM, Command),
+      nl_mac_hf:process_command(SM, false, Command),
       SM;
     {rcv_ul, PID, Tuple} ->
       case nl_mac_hf:readETS(SM, np) =:= PID of
