@@ -82,10 +82,11 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
   fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
-  CurrentProtocol = parse_conf(ArgS, Share),
+  CurrentProtocol = parse_conf(Mod_ID, ArgS, Share),
 
   InsideList = lists:filter(fun(X) -> X =:= CurrentProtocol end, ?LIST_ALL_PROTOCOLS),
   if InsideList =:= [] ->
+    ?ERROR(Mod_ID, "!!!  ERROR, no network layer protocol with the name ~p~n", [CurrentProtocol]),
     io:format("!!! ERROR, no network layer protocol with the name ~p~n", [CurrentProtocol]);
   true -> nothing
   end,
@@ -104,13 +105,13 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     [#sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
 %%-------------------------------------- Parse config file ---------------------------------
-parse_conf(ArgS, Share) ->
+parse_conf(Mod_ID, ArgS, Share) ->
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
   Addr_set      = [Addrs          || {local_addr, Addrs} <- ArgS],
   Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
   Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
   Max_address_set   = [Addrs          || {max_address, Addrs} <- ArgS],
-  Max_hops_set  = [Count_hops     || {max_hops, Count_hops} <- ArgS],
+  %RTT_set  = [Rtt     || {rtt, Rtt} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
 
   Tmo_wv            = [Time || {tmo_wv, Time} <- ArgS],
@@ -124,7 +125,7 @@ parse_conf(ArgS, Share) ->
 
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
-  RTT             = set_params(Max_hops_set, 80),
+  RTT             = 80,
   WTmo_path       = set_params(WTmo_path_set, 50),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, 30),
   Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, 10),
@@ -155,6 +156,14 @@ parse_conf(ArgS, Share) ->
   ets:insert(Share, [{rtt, RTT}]),
   ets:insert(Share, [{send_wv_dbl_tmo, Tmo_dbl_wv}]),
   ets:insert(Share, [{probability, Probability}]),
+  
+  ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
+  ?TRACE(Mod_ID, "Routing Table ~p ~n", [Routing_table]),
+  ?TRACE(Mod_ID, "Local address ~p ~n", [Addr]),
+  ?TRACE(Mod_ID, "MAX local address ~p ~n", [Max_address]),
+  ?TRACE(Mod_ID, "Blacklist ~p ~n", [Blacklist]),
+  ?TRACE(Mod_ID, "Probability ~p ~n", [Probability]),
+
   NL_Protocol.
 
 conf_fsm(Protocol) ->

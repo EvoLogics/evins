@@ -153,7 +153,7 @@ handle_event(MM, SM, Term) ->
       [SM1, P] = nl_mac_hf:process_retransmit(SM, Msg, rcv_ul),
       fsm:run_event(MM, SM1, P);
     {timeout, {retransmit, _Tuple}} ->
-      %nothing, the message has delivered state
+      %nothing, the message has delivered ste
       SM;
     {timeout, Event} ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
