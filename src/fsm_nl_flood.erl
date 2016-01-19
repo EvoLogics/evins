@@ -262,7 +262,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl, {send, {nl,error}}),
       SM;
     {rcv_ul, get, Command} ->
-      nl_mac_hf:process_command(SM, Command),
+      nl_mac_hf:process_command(SM, false, Command),
       SM;
     {rcv_ul, PID, Tuple} ->
       case nl_mac_hf:readETS(SM, np) =:= PID of
@@ -513,23 +513,23 @@ proccess_send(SM, Tuple) ->
   if Dst =:= Local_address -> error;
      true ->
        MAC_addr  = nl_mac_hf:addr_nl2mac(SM, Local_address),
-
        nl_mac_hf:insertETS(SM, current_pkg, Tuple),
        case (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) of
          true ->
-           nl_mac_hf:save_stat(SM, source),
+           nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
            NTuple = {nl, send, Dst, nl_mac_hf:fill_msg(path_data, {Data, [MAC_addr]})},
            {send, {data, [PkgID, Local_address, []]}, NTuple};
          false when Protocol#pr_conf.ry_only ->
-           nl_mac_hf:save_stat(SM, source),
+           nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
            {send, {data, [PkgID, Local_address, []]}, Tuple};
          false when Protocol#pr_conf.pf ->
            Path_exists = nl_mac_hf:get_routing_addr(SM, data, Dst),
            if (Path_exists =/= 255) ->
+                nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
                 nl_mac_hf:insertETS(SM, path_exists, true),
                 {send, {data, [PkgID, Local_address, []]}, Tuple};
               true ->
-                nl_mac_hf:save_stat(SM, source),
+                nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
                 [Flag, PAdditional, NTuple] =
                 case Protocol#pr_conf.lo of
                   true when Protocol#pr_conf.evo ->
@@ -595,7 +595,7 @@ process_recv(SM, L) ->
        case lists:member(NLSrcAT, Blacklist) of
          false ->
            %!!!!!!
-           fsm:cast(SM, nl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
+           %fsm:cast(SM, nl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
            Params = [NLSrcAT, NLDstAT, IRssi, IIntegrity],
            [SMN, RTuple] = parse_rcv(SM, Params, PayloadTail),
            form_rcv_tuple(SMN, RTuple);
@@ -705,12 +705,17 @@ check_probability(SM) ->
 multi_array(0, _, P) -> P;
 multi_array(Snbr, Pmax, P) -> multi_array(Snbr - 1, Pmax, P * Pmax).
 
-process_send_flag(SM, Params={Flag, [Packet_id, Real_src, _PAdditional]}, Tuple) ->
+process_send_flag(SM, Params, Tuple) ->
+  {Flag, [Packet_id, Real_src, _PAdditional]} = Params,
   Protocol    = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
   Local_address = nl_mac_hf:readETS(SM, local_address),
   Real_dst     = nl_mac_hf:get_dst_addr(Tuple),
 
   case Flag of
+    data when (Protocol#pr_conf.ry_only and Protocol#pr_conf.pf) ->
+      nl_mac_hf:save_stat(SM, {Real_src, Real_dst}, relay),
+      Rtt = nl_mac_hf:getRTT(SM, {rtt, Real_src, Real_dst}),
+      fsm:set_timeout(SM#sm{event=wait_ack}, {s, Rtt}, {wack_timeout, {Packet_id, Real_src, Real_dst} });
     data when not Protocol#pr_conf.ack ->
       SM#sm{event = noack_data_sent};
     data when Protocol#pr_conf.ack ->
@@ -724,12 +729,12 @@ process_send_flag(SM, Params={Flag, [Packet_id, Real_src, _PAdditional]}, Tuple)
           SM#sm{event=eps}
       end;
     neighbours when  Protocol#pr_conf.dbl ->
-      nl_mac_hf:save_stat(SM, relay),
+      nl_mac_hf:save_stat(SM, {Real_src, Real_dst}, relay),
       SM#sm{event = noack_data_sent};
     Flag when  Protocol#pr_conf.pf and (Flag =:= neighbours);
                Protocol#pr_conf.pf and (Flag =:= path_addit);
                Protocol#pr_conf.dbl and (Flag =:= path) ->
-      nl_mac_hf:save_stat(SM, relay),
+      nl_mac_hf:save_stat(SM, {Real_src, Real_dst}, relay),
       fsm:set_timeout(SM#sm{event=wait_pf}, {s, nl_mac_hf:readETS(SM, wpath_tmo)}, {wpath_timeout, {Packet_id, Real_src, Real_dst} });
     ack when  Protocol#pr_conf.ack ->
       SM#sm{event = rcv_ack};
