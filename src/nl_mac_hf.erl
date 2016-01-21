@@ -275,14 +275,14 @@ nl2at (SM, Tuple) when is_tuple(Tuple)->
   ETSPID =  list_to_binary(["p", integer_to_binary(readETS(SM, pid))]),
   case Tuple of
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  ->
-      NewData = create_payload_nl_flag(SM, Flag, BPacket_id, MAC_real_src, MAC_real_dst, Data),
+      NewData = create_payload_nl_flag(Flag, BPacket_id, MAC_real_src, MAC_real_dst, Data),
       {at,"*SENDIM", ETSPID, byte_size(NewData), IDst, noack, NewData};
     _ ->
       error
   end.
 
 %%------------------------- Extract functions ----------------------------------
-create_payload_nl_flag(SM, Flag, PkgID, Src, Dst, Data) ->
+create_payload_nl_flag(Flag, PkgID, Src, Dst, Data) ->
   % 3 first bits Flag (if max Flag vbalue is 5)
   % 8 bits PkgID
   % 6 bits SRC
@@ -291,16 +291,6 @@ create_payload_nl_flag(SM, Flag, PkgID, Src, Dst, Data) ->
   CBitsFlag = count_flag_bits(?FLAG_MAX),
   CBitsPkgID = count_flag_bits(?BITS_PKG_ID_MAX),
   CBitsAddr = count_flag_bits(?BITS_ADDRESS_MAX),
-
-  if CBitsPkgID > ?BITS_PKG_ID_MAX ->
-    ?ERROR(?ID, "~s: Max package ID ~p is greater than memory reserved in header ~p~n", [?MODULE, CBitsPkgID, ?BITS_PKG_ID_MAX]);
-  true -> nothing
-  end,
-
-  if CBitsAddr > ?BITS_ADDRESS_MAX ->
-    ?ERROR(?ID, "~s: Max address ~p is greater than memory reserved in header ~p ~n", [?MODULE, CBitsAddr, ?BITS_ADDRESS_MAX]);
-  true -> nothing
-  end,
 
   FlagNum = ?FLAG2NUM(Flag),
   BFlag = <<FlagNum:CBitsFlag>>,
@@ -988,21 +978,30 @@ getRTT(SM, RTTTuple) ->
 smooth_RTT(SM, Flag, RTTTuple={_,_,Dst}) ->
   ?TRACE(?ID, "RTT receiving AT command ~p~n", [RTTTuple]),
   Time_send_msg = readETS(SM, {last_nl_sent_time, RTTTuple}),
-
+  Max_rtt = readETS(SM, max_rtt),
+  Min_rtt = readETS(SM, min_rtt),
   if Time_send_msg =:= not_inside -> nothing;
      true ->
        EndValMicro = timer:now_diff(erlang:now(), Time_send_msg),
        CurrentRTT = getRTT(SM, RTTTuple),
        Smooth_RTT =
-       if Flag =:= direct -> lerp( CurrentRTT, convert_t(EndValMicro, {us, s}), 0.05);
-        true -> lerp(CurrentRTT, readETS(SM, rtt), 0.05)
+       if Flag =:= direct ->
+        lerp( CurrentRTT, convert_t(EndValMicro, {us, s}), 0.05);
+       true ->
+        lerp(CurrentRTT, readETS(SM, rtt), 0.05)
        end,
-       Max_rtt = readETS(SM, max_rtt),
        cleanETS(SM, {last_nl_sent_time, RTTTuple}),
        Val =
-       if Smooth_RTT > Max_rtt -> insertETS(SM, RTTTuple, Max_rtt), Max_rtt;
-        true -> insertETS(SM, RTTTuple, Smooth_RTT),
-                Smooth_RTT
+       case Smooth_RTT of
+        _ when Smooth_RTT < Min_rtt ->
+          insertETS(SM, RTTTuple, Min_rtt),
+          Min_rtt;
+        _ when Smooth_RTT > Max_rtt ->
+          insertETS(SM, RTTTuple, Max_rtt),
+          Max_rtt;
+        _ ->
+          insertETS(SM, RTTTuple, Smooth_RTT),
+          Smooth_RTT
        end,
 
        LA = readETS(SM, local_address),

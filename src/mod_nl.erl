@@ -111,8 +111,10 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
   Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
   Max_address_set   = [Addrs          || {max_address, Addrs} <- ArgS],
-  %RTT_set  = [Rtt     || {rtt, Rtt} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
+
+  Max_hops_Set  = [Hops           || {max_hops, Hops} <- ArgS],
+
 
   Tmo_wv            = [Time || {tmo_wv, Time} <- ArgS],
   Tmo_wack          = [Time || {tmo_wack, Time} <- ArgS],
@@ -125,19 +127,24 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
-  RTT             = 80,
+
   WTmo_path       = set_params(WTmo_path_set, 50),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, 30),
   Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, 10),
+
   Path_life       = set_params(Path_life_set, 120),
   Neighbour_life  = set_params(Neighbour_life_set, 120),
 
-  {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {1,3}),
-  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {1,3}),
-  {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {2,4}),
+  {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {0.3, 0.9}),
+  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {0.3, 0.9}),
+  {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
+
   Blacklist                       = set_blacklist(Bll_addrs, []),
   Routing_table                   = set_routing(Routing_addrs, NL_Protocol, 255),
   Probability                     = set_params(Prob_set, {0.4, 0.9}),
+
+  Max_hops        = set_params(Max_hops_Set, 8),
+  RTT = count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end),
 
   ets:insert(Share, [{nl_protocol, NL_Protocol}]),
   ets:insert(Share, [{routing_table, Routing_table}]),
@@ -150,21 +157,34 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ets:insert(Share, [{wpath_tmo, WTmo_path}]),
   ets:insert(Share, [{neighbour_tmo, Tmo_Neighbour}]),
   ets:insert(Share, [{max_rtt, 2 * RTT}]),
+  ets:insert(Share, [{min_rtt, RTT}]),
   ets:insert(Share, [{path_life, Path_life}]),
   ets:insert(Share, [{neighbour_life, Neighbour_life}]),
   ets:insert(Share, [{max_pkg_id, 255}]),
-  ets:insert(Share, [{rtt, RTT}]),
+  ets:insert(Share, [{rtt, RTT + RTT/2}]),
   ets:insert(Share, [{send_wv_dbl_tmo, Tmo_dbl_wv}]),
   ets:insert(Share, [{probability, Probability}]),
-  
+
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
   ?TRACE(Mod_ID, "Routing Table ~p ~n", [Routing_table]),
   ?TRACE(Mod_ID, "Local address ~p ~n", [Addr]),
   ?TRACE(Mod_ID, "MAX local address ~p ~n", [Max_address]),
   ?TRACE(Mod_ID, "Blacklist ~p ~n", [Blacklist]),
   ?TRACE(Mod_ID, "Probability ~p ~n", [Probability]),
+  ?TRACE(Mod_ID, "Max RTT ~p Start RTT ~p ~n", [2 * RTT, RTT + RTT/2]),
 
   NL_Protocol.
+
+count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end) ->
+  Count_waves     = 2,
+  RMax_timeout     = round(max(Wwv_tmo_end, Wack_tmo_end)),
+  Max_timeout =
+  if RMax_timeout == 0 ->
+    1;
+  true ->
+    RMax_timeout
+  end,
+  Max_hops * Count_waves * Max_timeout + Max_hops.
 
 conf_fsm(Protocol) ->
   [{_, Decr}] = lists:filter(fun({PN, _})-> PN =:= Protocol end, ?PROTOCOL_CONF),
