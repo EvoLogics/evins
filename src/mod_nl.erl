@@ -126,10 +126,6 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
 
-  WTmo_path       = set_params(WTmo_path_set, 50),
-  Path_life       = set_params(Path_life_set, 120),
-  Neighbour_life  = set_params(Neighbour_life_set, 120),
-
   {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {0.3, 0.9}),
   {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {0.3, 0.9}),
   {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
@@ -144,6 +140,10 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Default_Tmo_Neighbour = 5 + round(Spath_tmo_end),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, Default_Tmo_Neighbour),
   Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, Tmo_Neighbour + 1),
+  WTmo_path       = set_params(WTmo_path_set, RTT + RTT/2),
+
+  Path_life       = set_params(Path_life_set, 2 * WTmo_path),
+  Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
 
   ets:insert(Share, [{nl_protocol, NL_Protocol}]),
   ets:insert(Share, [{routing_table, Routing_table}]),
@@ -172,6 +172,9 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ?TRACE(Mod_ID, "Probability ~p ~n", [Probability]),
   ?TRACE(Mod_ID, "Max RTT ~p Start RTT ~p ~n", [2 * RTT, RTT + RTT/2]),
   ?TRACE(Mod_ID, "Tmo_Neighbour ~p ~n", [Tmo_Neighbour]),
+  ?TRACE(Mod_ID, "Wait Tmo_path ~p ~n", [WTmo_path]),
+  ?TRACE(Mod_ID, "Path_life ~p ~n", [Path_life]),
+  ?TRACE(Mod_ID, "Neighbour_life ~p ~n", [Neighbour_life]),
 
   NL_Protocol.
 
