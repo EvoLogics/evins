@@ -1128,8 +1128,7 @@ process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
   end,
 
   {at, _PID, _, _, _, CurrentPayload} = Current_msg,
-  [CRole, HCurrentPayload] = parse_payload(CurrentPayload),
-
+  [_CRole, HCurrentPayload] = parse_payload(CurrentPayload),
   check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload, Current_msg).
 
 parse_payload(Payload) ->
