@@ -129,7 +129,6 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Max_address     = set_params(Max_address_set, 20),
 
   WTmo_path       = set_params(WTmo_path_set, 50),
-  Tmo_Neighbour   = set_params(Tmo_Neighbour_set, 30),
   Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, 10),
 
   Path_life       = set_params(Path_life_set, 120),
@@ -145,6 +144,9 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   Max_hops        = set_params(Max_hops_Set, 8),
   RTT = count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end),
+
+  Default_Tmo_Neighbour = 5 + round(Spath_tmo_end),
+  Tmo_Neighbour   = set_params(Tmo_Neighbour_set, Default_Tmo_Neighbour),
 
   ets:insert(Share, [{nl_protocol, NL_Protocol}]),
   ets:insert(Share, [{routing_table, Routing_table}]),
@@ -172,6 +174,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ?TRACE(Mod_ID, "Blacklist ~p ~n", [Blacklist]),
   ?TRACE(Mod_ID, "Probability ~p ~n", [Probability]),
   ?TRACE(Mod_ID, "Max RTT ~p Start RTT ~p ~n", [2 * RTT, RTT + RTT/2]),
+  ?TRACE(Mod_ID, "Tmo_Neighbour ~p ~n", [Tmo_Neighbour]),
 
   NL_Protocol.
 
