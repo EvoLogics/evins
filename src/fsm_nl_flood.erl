@@ -95,6 +95,7 @@
                  [{timeout_ack, idle},
                  {dst_rcv_ack, idle},
                  {relay_wv, swv},
+                 {send_ack, sack},
                  {rcv_wv, wack}
                  ]},
 
@@ -104,6 +105,7 @@
                   {send_data, idle},
                   {relay_wv, swv},
                   {rcv_wv, wpath},
+                  {send_ack, sack},
                   {dst_rcv_path,swv}
                  ]},
 
@@ -455,6 +457,10 @@ handle_wack(_MM, SM, Term) ->
       true ->
         SM#sm{event = eps}
       end;
+    % TEST!!!
+    {dst_reached, Params = {data, _} , Tuple} ->
+        Rand_timeout_wack = nl_mac_hf:rand_float(SM, wack_tmo),
+        fsm:set_timeout(SM#sm{event = eps}, {ms, Rand_timeout_wack}, {send_ack, Params, Tuple});
     _ ->
       SM#sm{event = eps}
   end.
@@ -477,7 +483,15 @@ handle_wpath(_MM, SM, Term) ->
       end;
     {dst_reached, {path, Params = [Packet_id, _, _]}, Tuple = {async,{nl,recv, Real_dst, Real_src, Data}}} ->
       ?TRACE(?ID, "Path tuple on src ~120p~n", [Data]),
-      case nl_mac_hf:prepare_send_path(SM, Params, Tuple) of
+      Res =
+      try
+        nl_mac_hf:prepare_send_path(SM, Params, Tuple)
+      catch error: _Reason ->
+        not_inside
+      end,
+      case Res of
+        not_inside ->
+          SM#sm{event = eps};
         [SM1, SDParams, SDTuple]  ->
           SM2 = fsm:clear_timeout(SM1, {wpath_timeout, {Packet_id, Real_src, Real_dst}}),
           case nl_mac_hf:get_routing_addr(SM2, path, Real_dst) of
@@ -490,6 +504,10 @@ handle_wpath(_MM, SM, Term) ->
         [SM1, path_not_completed] ->
           SM1#sm{event = eps}
       end;
+    % TEST!!!
+    {dst_reached, Params = {data, _} , Tuple} ->
+        Rand_timeout_wack = nl_mac_hf:rand_float(SM, wack_tmo),
+        fsm:set_timeout(SM#sm{event = eps}, {ms, Rand_timeout_wack}, {send_ack, Params, Tuple});
     _ ->
       SM#sm{event = eps}
   end.
@@ -510,43 +528,45 @@ proccess_send(SM, Tuple) ->
   Local_address = nl_mac_hf:readETS(SM, local_address),
   PkgID = nl_mac_hf:increase_pkgid(SM),
   {nl, send, Dst, Data} = Tuple,
-  if Dst =:= Local_address -> error;
-     true ->
-       MAC_addr  = nl_mac_hf:addr_nl2mac(SM, Local_address),
-       nl_mac_hf:insertETS(SM, current_pkg, Tuple),
-       case (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) of
-         true ->
-           nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
-           NTuple = {nl, send, Dst, nl_mac_hf:fill_msg(path_data, {Data, [MAC_addr]})},
-           {send, {data, [PkgID, Local_address, []]}, NTuple};
-         false when Protocol#pr_conf.ry_only ->
-           nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
-           {send, {data, [PkgID, Local_address, []]}, Tuple};
-         false when Protocol#pr_conf.pf ->
-           Path_exists = nl_mac_hf:get_routing_addr(SM, data, Dst),
-           if (Path_exists =/= 255) ->
-                nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
-                nl_mac_hf:insertETS(SM, path_exists, true),
-                {send, {data, [PkgID, Local_address, []]}, Tuple};
-              true ->
-                nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
-                [Flag, PAdditional, NTuple] =
-                case Protocol#pr_conf.lo of
-                  true when Protocol#pr_conf.evo ->
-                    Payl = nl_mac_hf:fill_msg(path_addit, {[MAC_addr], [0, 0]}),
-                    [path_addit, [0,0], {nl, send, Dst, Payl}];
-                  true ->
-                    Payl = nl_mac_hf:fill_msg(path_addit, {[MAC_addr], 0}),
-                    [path_addit, [0,0], {nl, send, Dst, Payl}];
-                  false ->
-                    Payl = nl_mac_hf:fill_msg(neighbours, []),
-                    [neighbours, [] , {nl, send, Dst, Payl}]
-                end,
-                {send, {Flag, [PkgID, Local_address, PAdditional]}, NTuple}
-           end;
-         false ->
-           error
-       end
+
+  if Dst =:= Local_address ->
+    error;
+   true ->
+     MAC_addr  = nl_mac_hf:addr_nl2mac(SM, Local_address),
+     nl_mac_hf:insertETS(SM, current_pkg, Tuple),
+     case (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) of
+       true ->
+         nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
+         NTuple = {nl, send, Dst, nl_mac_hf:fill_msg(path_data, {Data, [MAC_addr]})},
+         {send, {data, [PkgID, Local_address, []]}, NTuple};
+       false when Protocol#pr_conf.ry_only ->
+         nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
+         {send, {data, [PkgID, Local_address, []]}, Tuple};
+       false when Protocol#pr_conf.pf ->
+         Path_exists = nl_mac_hf:get_routing_addr(SM, data, Dst),
+         if (Path_exists =/= 255) ->
+              nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
+              nl_mac_hf:insertETS(SM, path_exists, true),
+              {send, {data, [PkgID, Local_address, []]}, Tuple};
+            true ->
+              nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
+              [Flag, PAdditional, NTuple] =
+              case Protocol#pr_conf.lo of
+                true when Protocol#pr_conf.evo ->
+                  Payl = nl_mac_hf:fill_msg(path_addit, {[MAC_addr], [0, 0]}),
+                  [path_addit, [0,0], {nl, send, Dst, Payl}];
+                true ->
+                  Payl = nl_mac_hf:fill_msg(path_addit, {[MAC_addr], 0}),
+                  [path_addit, [0,0], {nl, send, Dst, Payl}];
+                false ->
+                  Payl = nl_mac_hf:fill_msg(neighbours, []),
+                  [neighbours, [] , {nl, send, Dst, Payl}]
+              end,
+              {send, {Flag, [PkgID, Local_address, PAdditional]}, NTuple}
+         end;
+       false ->
+         error
+     end
   end.
 
 parse_ll_msg(SM, Tuple) ->

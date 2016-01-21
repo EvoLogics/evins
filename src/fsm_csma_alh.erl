@@ -168,7 +168,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
-      nl_mac_hf:insertETS(SM, retransmit_count, 0),
+      nl_mac_hf:insertETS(SM, {retransmit_count, Msg}, 0),
       nl_mac_hf:insertETS(SM, current_msg, {not_delivered, Msg}),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       SM2 = nl_mac_hf:process_send_payload(SM1, Msg),
@@ -198,7 +198,6 @@ handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   case SM#sm.event of
     internal ->
-      nl_mac_hf:insertETS(SM, retransmit_count, 0),
       init_backoff(SM);
     _ -> nothing
   end,

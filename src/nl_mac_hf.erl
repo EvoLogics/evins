@@ -810,10 +810,12 @@ proccess_and_update_path(SM, {ISrc, IDst, ListPath}) ->
     false when MemberDstL ->
       lists:reverse(NLListPath)
   end,
+
   {LSrc, LDst} = lists:splitwith(fun(A) -> A =/= LAddr end, NLSortListPath),
   LengthLSrc  = length(LSrc),
   LengthLDst  = length(LDst),
   LRevSrc = lists:reverse(LSrc),
+
   SMN =
   case lists:member(LAddr, NLSortListPath) of
     true  when (( LengthLSrc =:= 1 ) and (LengthLDst =:= 1)) ->
@@ -849,7 +851,8 @@ proccess_rout_table_helper(SM, FromAddr, NListPath) ->
 proccess_rout_table(SM, [],_, Routing_table) ->
   [SM, lists:reverse([255 | Routing_table]) ];
 proccess_rout_table(SM, [H | T], NLFrom, Routing_table) ->
-  proccess_rout_table(fsm:set_timeout(SM, {s, readETS(SM, path_life)}, {path_life, {H, NLFrom}}), T, NLFrom, [ {H, NLFrom} | Routing_table]).
+  SM1 = fsm:set_timeout(SM, {s, readETS(SM, path_life)}, {path_life, {H, NLFrom}}),
+  proccess_rout_table(SM1, T, NLFrom, [ {H, NLFrom} | Routing_table]).
 
 process_path_life(SM, Tuple) ->
   NRouting_table =
