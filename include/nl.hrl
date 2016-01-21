@@ -51,7 +51,6 @@
 -define(BITS_ADDRESS_MAX, 63).
 -define(BITS_LEN_PATH, 63).
 -define(BITS_LEN_NEIGBOURS, 63).
--define(BITS_ADD_MAX, 250).
 -define(BITS_LEN_ADD, 3).
 
 -define(LIST_ALL_PROTOCOLS, [staticr,
