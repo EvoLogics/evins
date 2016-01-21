@@ -255,7 +255,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  insertETS(SM, ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
-                 %fsm:cast(SM, nl, {send, AT}),
+                 fsm:cast(SM, nl, {send, AT}),
                  fill_dets(SM),
                  fsm:set_event(SM1, eps)
             end
@@ -988,6 +988,7 @@ getRTT(SM, RTTTuple) ->
 smooth_RTT(SM, Flag, RTTTuple={_,_,Dst}) ->
   ?TRACE(?ID, "RTT receiving AT command ~p~n", [RTTTuple]),
   Time_send_msg = readETS(SM, {last_nl_sent_time, RTTTuple}),
+
   if Time_send_msg =:= not_inside -> nothing;
      true ->
        EndValMicro = timer:now_diff(erlang:now(), Time_send_msg),
@@ -1003,7 +1004,9 @@ smooth_RTT(SM, Flag, RTTTuple={_,_,Dst}) ->
         true -> insertETS(SM, RTTTuple, Smooth_RTT),
                 Smooth_RTT
        end,
-       ?TRACE(?ID, "Smooth_RTT for Src ~p and Dst ~p is ~120p~n", [readETS(SM, local_address), Dst, Val])
+
+       LA = readETS(SM, local_address),
+       ?TRACE(?ID, "Smooth_RTT for Src ~p and Dst ~p is ~120p~n", [LA, Dst, Val])
   end.
 %%--------------------------------------------------  Other functions -------------------------------------------
 sequence_more_recent(S1, S2, Max) ->
@@ -1177,15 +1180,20 @@ process_send_payload(SM, Msg) ->
   end.
 
 process_retransmit(SM, Msg, Ev) ->
-  Retransmit_count = readETS(SM, retransmit_count),
+  Retransmit_count = readETS(SM, {retransmit_count, Msg}),
   Max_retransmit_count = readETS(SM, max_retransmit_count),
   ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
-  if (Retransmit_count < Max_retransmit_count) ->
-    insertETS(SM, retransmit_count, Retransmit_count + 1),
-    SM1 = process_send_payload(SM, Msg),
-    [SM1#sm{event = Ev}, {Ev, Msg}];
-  true ->
-    [SM, {}]
+
+  case Retransmit_count of
+    not_inside ->
+      insertETS(SM, {retransmit_count, Msg}, 0),
+      [SM#sm{event = Ev}, {Ev, Msg}];
+    _ when Retransmit_count < Max_retransmit_count - 1 ->
+      insertETS(SM, {retransmit_count, Msg}, Retransmit_count + 1),
+      SM1 = process_send_payload(SM, Msg),
+      [SM1#sm{event = Ev}, {Ev, Msg}];
+    _ ->
+      [SM, {}]
   end.
 %%--------------------------------------------------  command functions -------------------------------------------
 process_command(SM, Debug, Command) ->

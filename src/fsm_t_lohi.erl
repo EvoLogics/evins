@@ -203,7 +203,7 @@ handle_event(MM, SM, Term) ->
 
 init_mac(SM) ->
   random:seed(erlang:now()),
-  nl_mac_hf:insertETS(SM, retransmit_count, 0),
+  %nl_mac_hf:insertETS(SM, retransmit_count, 0),
   init_ct(SM).
 
 handle_idle(_MM, SM, _Term) when SM#sm.event =:= internal ->
@@ -216,11 +216,25 @@ handle_idle(_MM, SM, Term) ->
 
 handle_blocking_state(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  SM#sm{event = eps}.
+  SM1=
+  case nl_mac_hf:readETS(SM, data_to_sent) of
+    {_St, SendT} ->
+      nl_mac_hf:process_send_payload(SM, SendT);
+    _ ->
+      SM#sm{event = eps}
+  end,
+  SM1#sm{event = eps}.
 
 handle_backoff_state(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  SM#sm{event = eps}.
+  SM1=
+  case nl_mac_hf:readETS(SM, data_to_sent) of
+    {_St, SendT} ->
+      nl_mac_hf:process_send_payload(SM, SendT);
+    _ ->
+      SM#sm{event = eps}
+  end,
+  SM1#sm{event = eps}.
 
 handle_cr(_MM, SMP, Term) ->
   [Param_Term, SM] = nl_mac_hf:event_params(SMP, Term, send_tone),
@@ -247,7 +261,6 @@ handle_transmit_data(_MM, SM, Term) ->
       nl_mac_hf:send_mac(SM, at, data, SendT),
       CR_Time = nl_mac_hf:readETS(SM, cr_time),
       R = CR_Time * random:uniform(),
-      %nl_mac_hf:insertETS(SM, retransmit_count, 0),
       SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, dp_ends),
       nl_mac_hf:process_send_payload(SM1, SendT);
     _ -> SM#sm{event = eps}
