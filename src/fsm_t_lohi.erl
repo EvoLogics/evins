@@ -141,8 +141,8 @@ handle_event(MM, SM, Term) ->
     {timeout, {retransmit, {not_delivered, Msg}}} when State =:= blocking_state;
                                                        State =:= backoff_state ->
       SM1 = fsm:clear_timeout(SM, dp_ends),
-      Tmo_retransmit = nl_mac_hf:readETS(SM, tmo_retransmit),
-      fsm:set_timeout(SM1, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
+      Tmo_retransmit = nl_mac_hf:rand_float(SM, tmo_retransmit),
+      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
     {timeout, {retransmit, {not_delivered, Msg}}} ->
       ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
       SM1 = fsm:clear_timeout(SM, dp_ends),
@@ -247,7 +247,7 @@ handle_transmit_data(_MM, SM, Term) ->
       nl_mac_hf:send_mac(SM, at, data, SendT),
       CR_Time = nl_mac_hf:readETS(SM, cr_time),
       R = CR_Time * random:uniform(),
-      nl_mac_hf:insertETS(SM, retransmit_count, 0),
+      %nl_mac_hf:insertETS(SM, retransmit_count, 0),
       SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, dp_ends),
       nl_mac_hf:process_send_payload(SM1, SendT);
     _ -> SM#sm{event = eps}

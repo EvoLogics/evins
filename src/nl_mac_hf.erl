@@ -1121,12 +1121,15 @@ process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
       [relay, SM, Payload];
     [reverse, Payload] ->
       [reverse, SM, Payload];
+    [ack, Payload] ->
+      [ack, SM, Payload];
     [dst, Payload] ->
       [dst, clear_spec_timeout(SM, retransmit), Payload]
   end,
 
   {at, _PID, _, _, _, CurrentPayload} = Current_msg,
-  [_CRole, HCurrentPayload] = parse_payload(CurrentPayload),
+  [CRole, HCurrentPayload] = parse_payload(CurrentPayload),
+
   check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload, Current_msg).
 
 parse_payload(Payload) ->
@@ -1141,7 +1144,7 @@ check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
   RevCurrentPayload = {PkgID, Src, Dst},
   ExaxtTheSame = (HCurrentPayload == HRcvPayload),
   IfDstReached = (Flag == dst),
-  AckReversed = (( Flag == reverse ) and (RevCurrentPayload == HRcvPayload)),
+  AckReversed = (( Flag == ack ) and (RevCurrentPayload == HRcvPayload)),
 
   if (ExaxtTheSame or IfDstReached or AckReversed) ->
        insertETS(SM, current_msg, {delivered, Current_msg}),
@@ -1155,7 +1158,7 @@ check_payload(SM, _, _, _, _) ->
 check_dst(Flag) ->
   case num2flag(Flag, nl) of
     dst_reached -> dst;
-    ack -> reverse;
+    ack -> ack;
     path -> reverse;
     path_addit -> reverse;
     _ -> relay
@@ -1164,10 +1167,10 @@ check_dst(Flag) ->
 process_send_payload(SM, Msg) ->
   {at, _PID, _, _, _, Payload} = Msg,
   case parse_payload(Payload) of
-    [Flag, _P] when Flag == reverse; Flag == relay ->
+    [Flag, _P] when Flag == reverse; Flag == relay; Flag =:= ack ->
       SM1 = clear_spec_timeout(SM, retransmit),
-      Tmo_retransmit = readETS(SM1, tmo_retransmit),
-      fsm:set_timeout(SM1, {s, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
+      Tmo_retransmit = rand_float(SM, tmo_retransmit),
+      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
     [dst, _P] ->
       SM;
     _ ->
@@ -1177,7 +1180,6 @@ process_send_payload(SM, Msg) ->
 process_retransmit(SM, Msg, Ev) ->
   Retransmit_count = readETS(SM, retransmit_count),
   Max_retransmit_count = readETS(SM, max_retransmit_count),
-
   ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
   if (Retransmit_count < Max_retransmit_count) ->
     insertETS(SM, retransmit_count, Retransmit_count + 1),
