@@ -112,9 +112,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
   Max_address_set   = [Addrs          || {max_address, Addrs} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
-
   Max_hops_Set  = [Hops           || {max_hops, Hops} <- ArgS],
-
 
   Tmo_wv            = [Time || {tmo_wv, Time} <- ArgS],
   Tmo_wack          = [Time || {tmo_wack, Time} <- ArgS],
@@ -129,8 +127,6 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Max_address     = set_params(Max_address_set, 20),
 
   WTmo_path       = set_params(WTmo_path_set, 50),
-  Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, 10),
-
   Path_life       = set_params(Path_life_set, 120),
   Neighbour_life  = set_params(Neighbour_life_set, 120),
 
@@ -147,6 +143,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   Default_Tmo_Neighbour = 5 + round(Spath_tmo_end),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, Default_Tmo_Neighbour),
+  Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, Tmo_Neighbour + 1),
 
   ets:insert(Share, [{nl_protocol, NL_Protocol}]),
   ets:insert(Share, [{routing_table, Routing_table}]),
