@@ -46,9 +46,9 @@
 %% NL header functions
 -export([fill_bin_addrs/1, parse_path_data/2]).
 %% Extract functions
--export([extract_payload_mac_flag/1, extract_payload_nl_flag/1, create_ack/1, extract_ack/1]).
+-export([extract_payload_mac_flag/1, extract_payload_nl_flag/1, create_ack/1, extract_ack/2]).
 %% Extract/create header functions
--export([extract_path_data/1, extract_neighbours_path/1]).
+-export([extract_neighbours_path/2]).
 %% Send NL functions
 -export([send_nl_command/4, send_ack/3, send_path/2, send_helpers/4, send_cts/6, send_mac/4, fill_msg/2]).
 %% Parse NL functions
@@ -60,7 +60,7 @@
 %% command functions
 -export([process_command/3, save_stat/3, update_states_list/1]).
 %% Only MAC functions
--export([process_rcv_payload/3, parse_payload/1, process_send_payload/2, process_retransmit/3]).
+-export([process_rcv_payload/3, process_send_payload/2, process_retransmit/3]).
 %% Other functions
 -export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4, logs_additional/2]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
@@ -207,11 +207,11 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, rec
           [SMNTmp, ExtrListPath] =
           case Flag of
             path_addit ->
-              [ListPath, [DIRssi, DIIntegr]] = extract_path_addit(Payload),
+              [ListPath, [DIRssi, DIIntegr]] = extract_path_addit(SM, Payload),
               NPathTuple = {[DIRssi, DIIntegr], ListPath},
               parse_path(SM,  NPathTuple, {Real_src, Real_dst});
             path     ->
-              [ListNeighbours, ListPath] = extract_neighbours_path(Payload),
+              [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
               NPathTuple = {ListNeighbours, ListPath},
               parse_path(SM, NPathTuple, {Real_src, Real_dst})
           end,
@@ -383,7 +383,7 @@ create_path_data(Type, Path, Data) ->
      TmpData
    end.
 
-extract_path_data(Payl) ->
+extract_path_data(SM, Payl) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
 
@@ -393,7 +393,7 @@ extract_path_data(Payl) ->
   [Path, Rest] = bin_addrs_to_list(PTail, BLenPath),
   path_data = ?NUM2TYPEMSG(BType),
   true = BLenPath > 0,
-
+  ?TRACE(?ID, "extract path data BType ~p BLenPath ~p~n", [BType, BLenPath]),
   if Data_bin =:= false ->
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
@@ -424,9 +424,9 @@ fill_bin_addrs_helper([HPath | TPath], LenPath, BAddrs) ->
 parse_path_data(SM, Payl) ->
   try
     MAC_addr = convert_la(SM, integer, mac),
-    [Path, BData] = extract_path_data(Payl),
+    [Path, BData] = extract_path_data(SM, Payl),
     CheckedDblPath = check_dubl_in_path(Path, MAC_addr),
-    ?TRACE(?ID, "recv parse path data ~p~n", [CheckedDblPath]),
+    ?TRACE(?ID, "recv parse path data ~p Data ~p~n", [CheckedDblPath, BData]),
     {BData, CheckedDblPath}
   catch error: _Reason ->
     {Payl, nothing}
@@ -445,9 +445,10 @@ create_ack(CountHops) ->
      BCountHops
    end.
 
-extract_ack(Payl) ->
+extract_ack(SM, Payl) ->
    CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
    <<CountHops:CBitsLenPath, _Rest/bitstring>> = Payl,
+   ?TRACE(?ID, "extract_ack CountHops ~p ~n", [CountHops]),
    CountHops.
 
 %%--------------- neighbours -------------------
@@ -499,7 +500,7 @@ create_neighbours_path(Type, Neighbours, Path) ->
      TmpData
   end.
 
-extract_neighbours_path(Payl) ->
+extract_neighbours_path(SM, Payl) ->
   try
     CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
     CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
@@ -513,6 +514,10 @@ extract_neighbours_path(Payl) ->
     <<BLenPath:CBitsLenPath, Rest/bitstring>> = PTailPath,
 
     [Path, _] = bin_addrs_to_list(Rest, BLenPath),
+
+    ?TRACE(?ID, "Extract neighbours path BType ~p BLenPath ~p Neighbours ~p Path ~p~n",
+          [BType, BLenPath, Neighbours, Path]),
+
     [Neighbours, Path]
    catch error: _Reason ->
      [[], nothing]
@@ -549,7 +554,7 @@ create_path_addit(Type, Path, Additional) ->
      TmpData
   end.
 
-extract_path_addit(Payl) ->
+extract_path_addit(SM, Payl) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
   CBitsLenAdd = count_flag_bits(?BITS_LEN_ADD),
@@ -560,6 +565,10 @@ extract_path_addit(Payl) ->
 
   [Additonal, _] = bin_addrs_to_list(Rest, BLenAdd),
   path_addit = ?NUM2TYPEMSG(BType),
+
+  ?TRACE(?ID, "extract path addit BType ~p BLenPath ~p Path ~p Additonal ~p~n",
+        [BType, BLenPath, Path, Additonal]),
+
   [Path, Additonal].
 
 %%-------------------------Addressing functions --------------------------------
@@ -668,7 +677,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src
   MAC_addr = convert_la(SM, integer, mac),
   {nl,send, IDst, Data} = readETS(SM, current_pkg),
 
-  [ListNeighbours, ListPath] = extract_neighbours_path(Payload),
+  [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
   NPathTuple = {ListNeighbours, ListPath},
   [SM1, BPath] = parse_path(SM, NPathTuple, {Real_src, Real_dst}),
   NPath = [MAC_addr | BPath],
@@ -750,7 +759,7 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
           [SM, {send, Params, {nl, send, IDst, Payl}}]
       end;
     path_addit when Protocol#pr_conf.evo ->
-      [Path, [DIRssi, DIIntegr]] = extract_path_addit(Payload),
+      [Path, [DIRssi, DIIntegr]] = extract_path_addit(SM, Payload),
       [IRcvRssi, IRcvIntegr] = PAdditional,
 
       ?INFO(?ID, "+++ IRcvRssi ~p, IRcvIntegr ~p ~n", [IRcvRssi, IRcvIntegr]),
@@ -767,7 +776,7 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
            [SM, {send, Params, {nl, send, IDst, NewPayload}}]
       end;
     path_addit ->
-      [Path, _] = extract_path_addit(Payload),
+      [Path, _] = extract_path_addit(SM, Payload),
       CheckDublPath = check_dubl_in_path(Path, MAC_addr),
       NewPayload = fill_msg(path_addit, {CheckDublPath, []}),
       [SM, {send, Params, {nl, send, IDst, NewPayload}}];
@@ -776,7 +785,7 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
         no_neighbours -> [SM, not_relay];
         _ ->
           Local_address = readETS(SM, local_address),
-          [ListNeighbours, ListPath] = extract_neighbours_path(Payload),
+          [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
           NPathTuple = {ListNeighbours, ListPath},
           %% save path and set path life
           [SMN, _] = parse_path(SM, NPathTuple, {ISrc, IDst}),
@@ -876,7 +885,7 @@ save_path(SM, {Flag,_} = Params, Tuple) ->
       analyse(SM, paths, Path, {Real_src, Real_dst});
     path_addit when Protocol#pr_conf.evo ->
       {async,{nl,recv, _, _, Payload}} = Tuple,
-      [_, [DIRssi, DIIntegr]] = extract_path_addit(Payload),
+      [_, [DIRssi, DIIntegr]] = extract_path_addit(SM, Payload),
       El = { DIRssi, DIIntegr, {Params, Tuple} },
       insertETS(SM, list_current_wvp, readETS(SM, list_current_wvp) ++ [El]);
     _ -> SM
@@ -1124,7 +1133,7 @@ process_rcv_payload(SM, not_inside, _Payload) ->
   SM;
 process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
   [PFlag, SM1, HRcvPayload] =
-  case parse_payload(RcvPayload) of
+  case parse_payload(SM, RcvPayload) of
     [relay, Payload] ->
       [relay, SM, Payload];
     [reverse, Payload] ->
@@ -1136,12 +1145,14 @@ process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
   end,
 
   {at, _PID, _, _, _, CurrentPayload} = Current_msg,
-  [_CRole, HCurrentPayload] = parse_payload(CurrentPayload),
+  [_CRole, HCurrentPayload] = parse_payload(SM, CurrentPayload),
   check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload, Current_msg).
 
-parse_payload(Payload) ->
+parse_payload(SM, Payload) ->
   try
     [Flag, PkgID, Dst, Src, _Data] = extract_payload_nl_flag(Payload),
+    ?TRACE(?ID, "parse_payload Flag ~p PkgID ~p Dst ~p Src ~p~n",
+          [num2flag(Flag, nl), PkgID, Dst, Src]),
     [check_dst(Flag), {PkgID, Dst, Src}]
   catch error: _Reason -> [relay, Payload]
   end.
@@ -1173,7 +1184,7 @@ check_dst(Flag) ->
 
 process_send_payload(SM, Msg) ->
   {at, _PID, _, _, _, Payload} = Msg,
-  case parse_payload(Payload) of
+  case parse_payload(SM, Payload) of
     [Flag, _P] when Flag == reverse; Flag == relay; Flag =:= ack ->
       SM1 = clear_spec_timeout(SM, retransmit),
       Tmo_retransmit = rand_float(SM, tmo_retransmit),
@@ -1323,7 +1334,7 @@ get_stat(SM, Qname) ->
       end
     end, [], queue:to_list(PT)).
 
-logs_additional(SM, _Role) ->
+logs_additional(SM, Role) ->
   if(Role =:= source) ->
     process_command(SM, false, {statistics, "", paths}),
     process_command(SM, false, {protocol, "", neighbours}),

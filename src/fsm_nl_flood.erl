@@ -230,7 +230,7 @@ handle_event(MM, SM, Term) ->
               NTuple=
               case Params of
                 {ack, _} ->
-                  Count_hops = nl_mac_hf:extract_ack(Payl),
+                  Count_hops = nl_mac_hf:extract_ack(SM, Payl),
                   BCount_hops = nl_mac_hf:create_ack(Count_hops + 1),
                   {nl,send, Real_dst, BCount_hops};
                 _ ->
@@ -443,7 +443,7 @@ handle_wack(_MM, SM, Term) ->
     {dst_reached,{ack, [Packet_id,_, PAdditional]} ,{async,{nl, recv, Real_dst, Real_src, Payl}}} ->
       case nl_mac_hf:readETS(SM, current_pkg) of
         {nl, send, TIDst, Payload} ->
-          Count_hops = nl_mac_hf:extract_ack(Payl),
+          Count_hops = nl_mac_hf:extract_ack(SM, Payl),
           nl_mac_hf:analyse(SM, st_data, {Payload, TIDst, Count_hops + 1, "Delivered"}, {Real_src, Real_dst});
         _ ->
           nothing
@@ -471,7 +471,7 @@ handle_wpath(_MM, SM, Term) ->
   nl_mac_hf:update_states_list(SM),
   case Term of
     {relay_wv, Params = {_, [Packet_id, Real_src, _]}, Tuple = {nl, send, Real_dst, Payload}} ->
-      [ListNeighbours, ListPath] = nl_mac_hf:extract_neighbours_path(Payload),
+      [ListNeighbours, ListPath] = nl_mac_hf:extract_neighbours_path(SM, Payload),
       NPathTuple = {ListNeighbours, ListPath},
       [_, BPath] = nl_mac_hf:parse_path(SM, NPathTuple, {Real_src, Real_dst}),
       SM1 = fsm:clear_timeout(SM, {wpath_timeout, {Packet_id, Real_dst, Real_src}}),
