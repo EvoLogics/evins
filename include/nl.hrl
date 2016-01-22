@@ -69,9 +69,11 @@
 			     loarpr,
 			     loarprack]).
 
--record(pr_conf,{brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, dbl=false, evo=false, lo=false, rm=false}).
+-record(pr_conf,{stat=false, brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, dbl=false, evo=false, lo=false, rm=false}).
 
--define(LIST_ALL_PARAMS, [brp,		% broadcast path on Dst, not follow path in unicast mode
+-define(LIST_ALL_PARAMS, [
+				stat,		% static routing
+				brp,		% broadcast path on Dst, not follow path in unicast mode
 			  br_na,	% broadcast not alowed
 			  ack,		% with acknowledgement
 			  ry_only, 	% relay only data without knowing path
@@ -85,8 +87,8 @@
 			  rm]).		% route maintenance
 
 -define(PROTOCOL_CONF, [
-			{staticr,	[0, {ry_only},             	fsm_nl_flood]},	% Simple static routing
-			{staticrack, 	[1, {ry_only, br_na, ack},  	fsm_nl_flood]},	% Simple static routing with acknowledgement
+			{staticr,	[0, {stat, ry_only},             	fsm_nl_flood]},	% Simple static routing
+			{staticrack, 	[1, {stat, ry_only, br_na, ack},  	fsm_nl_flood]},	% Simple static routing with acknowledgement
 			{sncfloodr,  	[2, {ry_only},              	fsm_nl_flood]},	% Sequence number controlled flooding
 			{sncfloodrack, 	[3, {ry_only, br_na, ack},  	fsm_nl_flood]},	% Sequence number controlled flooding with acknowledgement
 			{dpfloodr,		[4, {ry_only, prob},    fsm_nl_flood]},	% Dynamic Probabilistic Flooding
@@ -132,6 +134,7 @@
 -define(PROTOCOL_SPEC(P),
 	lists:foldr(fun(X,A) ->
 			    case X of
+				stat when P#pr_conf.stat 	  -> ["Type\t\t: Static Routing\n"  | A];
 				ry_only when P#pr_conf.ry_only 	  -> ["Type\t\t: Only relay\n"  | A];
 				ack 	when P#pr_conf.ack 	  -> ["Ack\t\t: true\n"  | A];
 				ack	when not P#pr_conf.ack 	  -> ["Ack\t\t: false\n" | A];

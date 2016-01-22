@@ -669,16 +669,16 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
       [SMN, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
     not_proccessed ->
       if  (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= Local_address);
-    (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= 255) ->
+          (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= 255) ->
             %% check probability, for probabilistic protocols
             if Protocol#pr_conf.prob ->
-                 case check_probability(SMN) of
-                   false when Flag =/= ack ->
-                     [SMN, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
-                   _ ->
-                     [SMN, [relay, RecvNLDst, RRelayTuple, RDstTuple]]
-                 end;
-               true ->
+             case check_probability(SMN) of
+               false when Flag =/= ack ->
+                 [SMN, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
+               _ ->
+                 [SMN, [relay, RecvNLDst, RRelayTuple, RDstTuple]]
+             end;
+            true ->
                  [SMN, [relay, RecvNLDst, RRelayTuple, RDstTuple]]
             end;
           true ->
@@ -693,13 +693,17 @@ form_rcv_tuple(SMN, RTuple) ->
        [Type, NLDst, RcvTuple, RDstTuple] = RTuple,
        case Type of
          rcv_processed when NLDst  =:= Local_address ->
-           [SMN, RcvTuple];  % received processed
+           % received processed
+           [SMN, RcvTuple];
          relay when NLDst  =:= Local_address ->
-           [SMN, RDstTuple]; % dst reached
+           % dst reached
+           [SMN, RDstTuple];
          _ when NLDst  =:= 255 ->
-           [SMN, {dst_and_relay, RDstTuple, RcvTuple}]; % if dst is broadcast, we have to receive and relay message
+           % if dst is broadcast, we have to receive and relay message
+           [SMN, {dst_and_relay, RDstTuple, RcvTuple}];
          relay when NLDst  =/= Local_address ->
-           [SMN, RcvTuple];   % only relay not processed msgs
+           % only relay not processed msgs
+           [SMN, RcvTuple];
          _ ->
            [SMN, nothing]
        end
@@ -707,17 +711,26 @@ form_rcv_tuple(SMN, RTuple) ->
 
 check_probability(SM) ->
   {Pmin, Pmax} = nl_mac_hf:readETS(SM, probability),
+  CN = nl_mac_hf:readETS(SM, current_neighbours),
   Snbr =
-  case CN = nl_mac_hf:readETS(SM, current_neighbours) of
+  case CN of
     not_inside -> 0;
     _ -> length(CN)
   end,
+
   P = multi_array(Snbr, Pmax, 1),
+
   ?TRACE(?ID, "Snbr ~p probability ~p ~n",[Snbr, P]),
-  if P < Pmin -> Pmin;
-     true -> P end,
+  PNew =
+  if P < Pmin ->
+    Pmin;
+  true -> P
+  end,
+
+  %random number between 0 and 1
   RN = random:uniform(),
-  P > RN.
+  ?TRACE(?ID, "Snbr ~p P ~p PNew ~p > RN ~p :  ~n", [Snbr, P, PNew, RN]),
+  PNew > RN.
 
 multi_array(0, _, P) -> P;
 multi_array(Snbr, Pmax, P) -> multi_array(Snbr - 1, Pmax, P * Pmax).

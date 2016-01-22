@@ -931,7 +931,8 @@ process_pkg_id(SM, ATParams, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
   %{ATSrc, ATDst} = ATParams,
   Local_address = readETS(SM, local_address),
   LocalPkgID = readETS(SM, packet_id),
-  MoreRecent = sequence_more_recent(RemotePkgID, LocalPkgID, readETS(SM, max_pkg_id)),
+  Max_pkg_id = readETS(SM, max_pkg_id),
+  MoreRecent = sequence_more_recent(RemotePkgID, LocalPkgID, Max_pkg_id),
   PkgIDOld =
   if MoreRecent -> insertETS(SM, packet_id, RemotePkgID), false;
     true -> true
@@ -1335,10 +1336,17 @@ get_stat(SM, Qname) ->
     end, [], queue:to_list(PT)).
 
 logs_additional(SM, Role) ->
+  Protocol   = readETS(SM, {protocol_config, readETS(SM, np)}),
+
   if(Role =:= source) ->
-    process_command(SM, false, {statistics, "", paths}),
+    if Protocol#pr_conf.pf  ->
+      process_command(SM, false, {statistics, "", paths});
+    true -> nothing end,
     process_command(SM, false, {protocol, "", neighbours}),
+    if Protocol#pr_conf.pf;
+       Protocol#pr_conf.stat->
     process_command(SM, false, {protocol, "", routing});
+    true -> nothing end;
   true ->
     nothing
   end,
