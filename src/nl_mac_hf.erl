@@ -62,7 +62,7 @@
 %% Only MAC functions
 -export([process_rcv_payload/3, parse_payload/1, process_send_payload/2, process_retransmit/3]).
 %% Other functions
--export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4]).
+-export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4, logs_additional/2]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
 count_flag_bits (F) ->
   count_flag_bits_helper(F, 0).
@@ -255,7 +255,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  insertETS(SM, ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
-                 fsm:cast(SM, nl, {send, AT}),
+                 %fsm:cast(SM, nl, {send, AT}),
                  fill_dets(SM),
                  fsm:set_event(SM1, eps)
             end
@@ -356,6 +356,9 @@ check_dubl_in_path(Path, MAC_addr) ->
     true  -> Path;
     false -> [MAC_addr | Path]
   end.
+
+remove_dubl_in_path([])    -> [];
+remove_dubl_in_path([H|T]) -> [H | [X || X <- remove_dubl_in_path(T), X /= H]].
 
 %%----------------NL functions create/extract protocol header-------------------
 %%--------------- path_data -------------------
@@ -1306,49 +1309,46 @@ get_stat(SM, Qname) ->
       {Role, Val, Time, Count, TS} = X,
       TRole = if Role =:= source -> "Source"; true -> "Relay" end,
       BTime = list_to_binary(lists:flatten(io_lib:format("~.1f", [Time]))),
-      TVal =
       case Qname of
-        paths -> "Path:";
-        st_neighbours -> "Neighbour:"
-      end,
-      [list_to_binary(
-        ["\n ", TRole, " ", TVal, covert_type_to_bin(Val),
-         " Time:", BTime, " Count:", integer_to_binary(Count),
-         " Total:", integer_to_binary(TS)]) | A]
+        paths ->
+          [list_to_binary(
+          ["\n ", TRole, " ", "Path:", covert_type_to_bin(Val),
+           " Time:", BTime, " Count:", integer_to_binary(Count),
+           " Total:", integer_to_binary(TS)]) | A];
+        st_neighbours ->
+          [list_to_binary(
+          ["\n ", TRole, " ", "Neighbour:", covert_type_to_bin(Val),
+           " Count:", integer_to_binary(Count),
+           " Total:", integer_to_binary(TS)]) | A]
+      end
     end, [], queue:to_list(PT)).
 
-logs_additional(SM, Role) ->
-   if(Role =:= source) ->
-     process_command(SM, false, {statistics, "", neighbours}),
-     process_command(SM, false, {statistics, "", paths}),
-     process_command(SM, false, {protocol, "", neighbours}),
-     process_command(SM, false, {protocol, "", routing});
-   true ->
-     nothing
-   end,
-   process_command(SM, true, {statistics, "", neighbours}),
-   process_command(SM, true, {statistics, "", paths}),
-   process_command(SM, true, {protocol, "", neighbours}),
-   process_command(SM, true, {protocol, "", routing}).
-
+logs_additional(SM, _Role) ->
+  if(Role =:= source) ->
+    process_command(SM, false, {statistics, "", paths}),
+    process_command(SM, false, {protocol, "", neighbours}),
+    process_command(SM, false, {protocol, "", routing});
+  true ->
+    nothing
+  end,
+  process_command(SM, true, {statistics,"",data}),
+  process_command(SM, true, {statistics, "", neighbours}),
+  process_command(SM, true, {statistics, "", paths}),
+  process_command(SM, true, {protocol, "", neighbours}),
+  process_command(SM, true, {protocol, "", routing}).
 
 save_stat(SM, {ISrc, IDst}, Role)->
-  if Role =:= source ->
-       S_total_sent = readETS(SM, s_total_sent),
-       insertETS(SM, s_send_time, {{ISrc, IDst}, erlang:now()}),
-       insertETS(SM, s_total_sent, S_total_sent + 1);
-     true ->
-       R_total_sent = readETS(SM, r_total_sent),
-       insertETS(SM, r_send_time, {{ISrc, IDst}, erlang:now()}),
-       insertETS(SM, r_total_sent, R_total_sent + 1)
-  end.
-
-parse_tuple(Tuple) ->
-  case Tuple of
-    not_inside ->
-      {not_inside, not_inside};
+  case Role of
+    source ->
+      S_total_sent = readETS(SM, s_total_sent),
+      insertETS(SM, s_send_time, {{ISrc, IDst}, erlang:now()}),
+      insertETS(SM, s_total_sent, S_total_sent + 1);
+    relay ->
+      R_total_sent = readETS(SM, r_total_sent),
+      insertETS(SM, r_send_time, {{ISrc, IDst}, erlang:now()}),
+      insertETS(SM, r_total_sent, R_total_sent + 1);
     _ ->
-      Tuple
+      nothing
   end.
 
 get_stats_time(SM, Real_src, Real_dst) ->
@@ -1366,66 +1366,62 @@ get_stats_time(SM, Real_src, Real_dst) ->
      {R_send_time, relay, R_total_sent, Addrs}
   end.
 
-check_reversed(Addrs1, Addrs2) ->
-  case Addrs2 of
+parse_tuple(Tuple) ->
+  case Tuple of
     not_inside ->
-      not_inside;
-    _ when Addrs1 =:= Addrs2 ->
-      direct;
+      {not_inside, not_inside};
     _ ->
-      reversed
+      Tuple
   end.
 
-analyse(SM, QName, BPath, {Real_src, Real_dst}) ->
-  {T, Role, TSC, Addrs} = get_stats_time(SM, Real_src, Real_dst),
-  Reversed = check_reversed({Real_src, Real_dst}, Addrs),
-  logs_additional(SM, Role),
-  NBPath =
+path_to_bin(SM, Path) ->
+  RevPath = lists:reverse(Path),
+  CheckDblPath = remove_dubl_in_path(RevPath),
+  lists:foldr(
+    fun(X, A) ->
+      Sign =
+      if byte_size(A) =:= 0 ->"";
+       true -> ","
+      end,
+      list_to_binary([integer_to_binary(addr_mac2nl(SM, X)), Sign, A])
+    end, <<>>, CheckDblPath).
+
+analyse(SM, QName, Path, {Real_src, Real_dst}) ->
+  {Time, Role, TSC, _Addrs} = get_stats_time(SM, Real_src, Real_dst),
+
+  BPath =
   case QName of
+    paths when Path =:= nothing ->
+      <<>>;
     paths ->
-       if BPath =:= nothing -> <<>>;
-          true ->
-            lists:foldr(
-              fun(X, A) ->
-                  Sign =
-                  if byte_size(A) =:= 0 -> "";
-                   true -> ","
-                  end,
-                  list_to_binary([ integer_to_binary(addr_mac2nl(SM, X)), Sign, A])
-              end, <<>>, lists:reverse(BPath))
-       end;
-    st_neighbours -> BPath;
-    st_data -> BPath
+      path_to_bin(SM, Path);
+    st_neighbours ->
+      Path;
+    st_data ->
+      Path
   end,
 
-  Path_exists = nl_mac_hf:get_routing_addr(SM, data, Real_dst),
-
-  case T of
-    _ when (QName =/= st_data) and (Reversed =:= reversed);
-           (QName =/= st_data) and (Path_exists =/= 255);
-           (QName =/= st_data) and (Path_exists =/= 255) and (SM#sm.state =:= wack);
-           (QName =/= st_data) and (Path_exists =/= 255) and (SM#sm.state =:= wpath)->
-      SM;
-    not_inside  when QName =/= st_data;
-                    (QName =/= st_data) and (Reversed =:= not_inside)->
-      Tuple = {Role, NBPath, 0.0, 1, TSC},
-      add_item_to_queue_nd(SM, QName, Tuple, 100);
+  case Time of
+    not_inside  when QName =/= st_data ->
+      Tuple = {Role, BPath, 0.0, 1, TSC},
+      add_item_to_queue_nd(SM, QName, Tuple, 300);
     _ when QName =/= st_data ->
-      TDiff = timer:now_diff(erlang:now(), T),
+      TDiff = timer:now_diff(erlang:now(), Time),
       CTDiff = convert_t(TDiff, {us, s}),
-      Tuple = {Role, NBPath, CTDiff, 1, TSC},
-      add_item_to_queue_nd(SM, QName, Tuple, 100);
+      Tuple = {Role, BPath, CTDiff, 1, TSC},
+      add_item_to_queue_nd(SM, QName, Tuple, 300);
     not_inside  when QName =:= st_data ->
-      {P, Dst, Count_hops, St} = NBPath,
+      {P, Dst, Count_hops, St} = BPath,
       Tuple = {Role, P, 0.0, byte_size(P), St, TSC, Dst, Count_hops},
-      add_item_to_queue_nd(SM, QName, Tuple, 100);
+      add_item_to_queue_nd(SM, QName, Tuple, 300);
     _ when QName =:= st_data ->
-      {P, Dst, Count_hops, St} = NBPath,
-      TDiff = timer:now_diff(erlang:now(), T),
+      {P, Dst, Count_hops, St} = BPath,
+      TDiff = timer:now_diff(erlang:now(), Time),
       CTDiff = convert_t(TDiff, {us, s}),
       Tuple = {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops},
-      add_item_to_queue_nd(SM, QName, Tuple, 100)
-  end.
+      add_item_to_queue_nd(SM, QName, Tuple, 300)
+  end,
+  logs_additional(SM, Role).
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
   Q = readETS(SM, Qname),
