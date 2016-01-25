@@ -179,6 +179,7 @@ handle_event(MM, SM, Term) ->
       SM;
     T =
     {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
+      ?TRACE(?ID, "MAC_AT_RECV ~p~n", [Tuple]),
       [H |_] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
       [SMN, {Flag, STuple}] = parse_ll_msg(SM, T),
@@ -258,6 +259,7 @@ handle_transmit_data(_MM, SM, Term) ->
   case nl_mac_hf:readETS(SM, data_to_sent) of
     {_St, SendT} ->
       nl_mac_hf:cleanETS(SM, data_to_sent),
+      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [SendT]),
       nl_mac_hf:send_mac(SM, at, data, SendT),
       CR_Time = nl_mac_hf:readETS(SM, cr_time),
       R = CR_Time * random:uniform(),

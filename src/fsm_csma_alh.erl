@@ -176,6 +176,7 @@ handle_event(MM, SM, Term) ->
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
     {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, Payload}} ->
+      ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [Tuple]),
       Current_msg = nl_mac_hf:readETS(SM, current_msg),
       SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Payload),
       [H | T] = tuple_to_list(Tuple),
@@ -225,10 +226,12 @@ handle_write_alh(_MM, SM, Term) ->
   change_backoff(SM, decrement),
   case Term of
     {rcv_ul, Msg} ->
+      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
       fsm:send_at_command(SM1, Msg),
       SM1#sm{event = data_sent};
     _ when SM#sm.event =:= backoff_timeout ->
       {_State, Current_msg} = nl_mac_hf:readETS(SM1, current_msg),
+      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Current_msg]),
       fsm:send_at_command(SM1, Current_msg),
       SM1#sm{event = data_sent}
   end.

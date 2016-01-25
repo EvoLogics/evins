@@ -1040,9 +1040,10 @@ increase_pkgid(SM) ->
   Max_pkg_id = readETS(SM, max_pkg_id),
   PkgID =
   case TmpPId = readETS(SM, packet_id) of
-    _ when TmpPId >= Max_pkg_id -> -1;
+    _ when TmpPId >= Max_pkg_id -> 0; %-1;
     _ -> TmpPId
   end,
+  ?TRACE(?ID, "Increase Pkg, Current Pkg id ~p~n", [PkgID + 1]),
   insertETS(SM, packet_id, PkgID + 1),
   PkgID.
 
