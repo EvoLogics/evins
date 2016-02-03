@@ -362,7 +362,8 @@ handle_rwv(_MM, SM, Term) ->
     {dst_reached, Params={Flag, _}, Tuple={async, {nl, recv, ISrc, IDst, Payload}}} ->
       if Flag =:= data ->
           {NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
-          fsm:cast(SM, nl, {send, {async, {nl, recv, ISrc, IDst, NData}}});
+          Protocol = nl_mac_hf:readETS(SM, np),
+          fsm:cast(SM, nl, {send, {async, {nl, recv, Protocol, ISrc, IDst, NData}}});
          true ->
            nothing
       end,
