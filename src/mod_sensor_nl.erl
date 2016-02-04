@@ -52,11 +52,14 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
 
 parse_conf(ArgS, Share) ->
   SensorSet      = [S     || {sensor, S} <- ArgS],
-  Sensor         = set_params(SensorSet, no_sensor),
-  ets:insert(Share, [{sensor, Sensor}]),
-  io:format("!!! Name of current sensor ~p~n", [Sensor]),
-  Sensor.
+  FileSet      = [S     || {file, S} <- ArgS],
 
+  Sensor         = set_params(SensorSet, no_sensor),
+  File         = set_params(FileSet, no_file),
+
+  ets:insert(Share, [{sensor, Sensor}]),
+  ets:insert(Share, [{sensor_file, File}]),
+  Sensor.
 
 set_params(Param, Default) ->
   case Param of

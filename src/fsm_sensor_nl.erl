@@ -86,7 +86,7 @@ handle_event(MM, SM, Term) ->
       nl_mac_hf:cleanETS(SM, last_sent),
       fsm:cast(SM, sensor_nl, {send, {string, "OK"} });
     {rcv_ll, {nl, busy}} ->
-      fsm:set_timeout(SM, {ms, 500}, busy_timeout);
+      fsm:set_timeout(SM, {ms, 100}, busy_timeout);
     {rcv_ul, Protocol, Dst, Payl} ->
       T = {rcv_ul, Protocol, Dst, get_data, Payl},
       fsm:run_event(MM, SM#sm{state=idle, event=send_data}, T);
@@ -115,17 +115,15 @@ handle_send(_MM, SM, Term) ->
 handle_recv(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   case Term of
-    {rcv_ll, Protocol, ISrc, _IDst, Payload} ->
+    {rcv_ll, _, _, _, Payload} ->
       SensorData = extract_sensor_command(Payload),
       case SensorData of
+        [error, Sensor, Data] ->
+          parse_recv_data(SM, Sensor, Data);
         [get_data, _, _] ->
-          Data = read_from_sensor(SM),
-          io:format("!!!!!!!!!!! ~p~n", [Data]),
-          T = {rcv_ul, Protocol, ISrc, recv_data, <<"12345667">>},
-          SM#sm{event = send_data, event_params = T};
-        [recv_data, _Sensor, _Data] ->
-          fsm:cast(SM, sensor_nl, {send, {string, "SENSOR DATA"} }),
-          SM#sm{event = recvd}
+          parse_get_data(SM, Term);
+        [recv_data, Sensor, Data] ->
+          parse_recv_data(SM, Sensor, Data)
       end;
     _ ->
       SM#sm{event = recvd}
@@ -139,6 +137,30 @@ handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
 
 %%--------------------------------Helper functions-------------------------------
+parse_get_data(SM, {rcv_ll, Protocol, ISrc, _, _}) ->
+  Data = read_from_sensor(SM),
+  if (Data == nothing) ->
+    ?ERROR(?ID, "Sensor Format is wrong, check configuration ! ~n", []),
+    T = {rcv_ul, Protocol, ISrc, error, <<"">>},
+    SM#sm{event = send_data, event_params = T};
+  true ->
+    ?TRACE(?ID, "Data read from sensor length: ~p, Data ~p~n", [byte_size(Data), Data]),
+    T = {rcv_ul, Protocol, ISrc, recv_data, Data},
+    SM#sm{event = send_data, event_params = T}
+  end.
+
+parse_recv_data(SM, Sensor, Data) ->
+  PData = parse_sensor_data(SM, Sensor, Data),
+  if (PData == nothing) ->
+    ?ERROR(?ID, "Sensor Format is wrong, check configuration ! ~n", []),
+    Str = "Remote sensor data, format error!",
+    fsm:cast(SM, sensor_nl, {send, {string, Str} }),
+    SM#sm{event = recvd};
+  true ->
+    ?TRACE(?ID, "Data received from remote sensor ~p~n", [PData]),
+    fsm:cast(SM, sensor_nl, {send, {string, PData} }),
+    SM#sm{event = recvd}
+  end.
 
 send_sensor_command(SM, Protocol, Dst, TypeMsg, Data) ->
   Sensor = nl_mac_hf:readETS(SM, sensor),
@@ -184,13 +206,84 @@ extract_sensor_command(Payl) ->
 
 read_from_sensor(SM) ->
   Sensor = nl_mac_hf:readETS(SM, sensor),
-  Line = readlines("/usr/local/etc/sensor/sensor_data"),
-  case Sensor of
-    conductivity -> parse_conductivity(Line);
-    _ -> nothing
+  File = nl_mac_hf:readETS(SM, sensor_file),
+  if(File == no_file) ->
+    nothing;
+  true ->
+    Line = readlines(File),
+    case Sensor of
+      conductivity -> create_payl_conductivity(Line);
+      oxygen -> create_payl_oxygen(Line);
+      pressure -> create_payl_pressure(Line);
+      _ -> nothing
+    end
   end.
 
-parse_conductivity(Line) ->
+parse_sensor_data(SM, Sensor, Data) ->
+  case Sensor of
+    conductivity ->
+      Str = extract_payl_conductivity(Data),
+      ?TRACE(?ID, "Received string from remote sensor ~p~n", [Str]),
+      Str;
+    oxygen ->
+      Str = extract_payl_oxygen(Data),
+      ?TRACE(?ID, "Received string from remote sensor ~p~n", [Str]),
+      Str;
+    pressure ->
+      Str = extract_payl_pressure(Data),
+      ?TRACE(?ID, "Received string from remote sensor ~p~n", [Str]),
+      Str;
+    _ ->
+      nothing
+  end.
+
+bin_to_float(Bin) when is_binary(Bin) ->
+  L = re:replace(Bin, "(^\\s+)|(\\s+$)", "", [global,{return, list}]),
+  nl_mac_hf:bin_to_num(L);
+bin_to_float(Bin) ->
+  nl_mac_hf:bin_to_num(Bin).
+
+readlines(FileName) ->
+  {ok, Device} = file:open(FileName, [read]),
+  try get_all_lines(Device)
+    after file:close(Device)
+  end.
+
+get_all_lines(Device) ->
+  case io:get_line(Device, "") of
+      eof  -> [];
+      Line -> Line ++ get_all_lines(Device)
+  end.
+
+%------------------------------ Create/extract functions sensors ------------------------
+extract_payl_conductivity(Data) ->
+  try
+    <<BM1:16, BM2:16, BConductivity:32/float, BTemperature:32/float,
+    BConductance:32/float, BRawCond0:16, BRawCond1:16, BZAmp:32/float, BRawTemp:32/float>> = Data,
+
+    M1 = integer_to_list(BM1),
+    M2 = integer_to_list(BM2),
+    Conductivity = float_to_list(BConductivity, [{scientific, 6}]),
+    Temperature = float_to_list(BTemperature, [{scientific, 6}]),
+    Conductance = float_to_list(BConductance, [{scientific, 6}]),
+    RawCond0 = integer_to_list(BRawCond0),
+    RawCond1 = integer_to_list(BRawCond1),
+    ZAmp = float_to_list(BZAmp, [{scientific, 6}]),
+    RawTemp = float_to_list(BRawTemp, [{scientific, 6}]),
+
+    "MEASUREMENT     " ++ M1 ++ "     " ++ M2 ++ "     " ++
+    "Conductivity[mS/cm]     " ++ Conductivity ++ "     " ++
+    "Temperature[Deg.C]     " ++ Temperature ++ "     " ++
+    "Conductance[mS]     " ++ Conductance ++ "     " ++
+    "RawCond0[LSB]     " ++ RawCond0 ++ "     " ++
+    "RawCond1[LSB]     " ++ RawCond1 ++ "     " ++
+    "ZAmp[mV]     " ++ ZAmp ++ "     " ++
+    "RawTemp[mV]     " ++ RawTemp
+  catch error: _Reason ->
+    nothing
+  end.
+
+create_payl_conductivity(Line) ->
   R = "^(MEASUREMENT)(.*)(Conductivity\\[mS\/cm\\])(.*)(Temperature\\[Deg\.C\\])(.*)(Conductance\\[mS\\])(.*)",
   Regexp = R ++ "(RawCond0\\[LSB\\])(.*)(RawCond1\\[LSB\\])(.*)(ZAmp\\[mV\\])(.*)(RawTemp\\[mV\\])(.*)",
   Elms = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
@@ -203,35 +296,148 @@ parse_conductivity(Line) ->
         <<"RawCond1[LSB]">>, BRawCond1,
         <<"ZAmp[mV]">>, BZAmp,
         <<"RawTemp[mV]">>, BRawTemp]} ->
-        IConductivity = bin_to_float(BConductivity),
-        ITemperature = bin_to_float(BTemperature),
-        IConductance = bin_to_float(BConductance),
-        IRawCond0 = bin_to_float(BRawCond0),
-        IRawCond1 = bin_to_float(BRawCond1),
-        IZAmp = bin_to_float(BZAmp),
-        IRawTemp = bin_to_float(BRawTemp),
-        {match, [MEASUREMENT1, MEASUREMENT2]} = re:run(MEASUREMENT, "[0-9]+", [global, {capture, all, binary}]),
-        [M1] = MEASUREMENT1,
-        [M2] = MEASUREMENT2,
-        IM1 =  nl_mac_hf:bin_to_num(M1),
-        IM2 =  nl_mac_hf:bin_to_num(M2),
-        io:format("~p ~p ~p ~p ~p ~p ~p ~p ~p ~n", [IM1, IM2, IConductivity, ITemperature, IConductance, IRawCond0, IRawCond1, IZAmp, IRawTemp]);
+      IConductivity = bin_to_float(BConductivity),
+      ITemperature = bin_to_float(BTemperature),
+      IConductance = bin_to_float(BConductance),
+      IRawCond0 = bin_to_float(BRawCond0),
+      IRawCond1 = bin_to_float(BRawCond1),
+      IZAmp = bin_to_float(BZAmp),
+      IRawTemp = bin_to_float(BRawTemp),
+      {match, [MEASUREMENT1, MEASUREMENT2]} = re:run(MEASUREMENT, "[0-9]+",
+                                              [global, {capture, all, binary}]),
+      [M1] = MEASUREMENT1,
+      [M2] = MEASUREMENT2,
+      IM1 =  nl_mac_hf:bin_to_num(M1),
+      IM2 =  nl_mac_hf:bin_to_num(M2),
+
+      BStrM1 = <<IM1:16>>,
+      BStrM2 = <<IM2:16>>,
+      BStrRawCond0 = <<IRawCond0:16>>,
+      BStrRawCond1 = <<IRawCond1:16>>,
+
+      BStrConductivity = <<IConductivity:32/float>>,
+      BStrTemperature = <<ITemperature:32/float>>,
+      BStrConductance = <<IConductance:32/float>>,
+      BStrZAmp = <<IZAmp:32/float>>,
+      BStrRawTemp = <<IRawTemp:32/float>>,
+
+      <<BStrM1/bitstring, BStrM2/bitstring, BStrConductivity/bitstring,
+      BStrTemperature/bitstring, BStrConductance/bitstring,
+      BStrRawCond0/bitstring, BStrRawCond1/bitstring,
+      BStrZAmp/bitstring, BStrRawTemp/bitstring>>;
     nomatch ->
       nothing
   end.
 
-bin_to_float(Bin) ->
-  L = re:replace(Bin, "(^\\s+)|(\\s+$)", "", [global,{return,list}]),
-  nl_mac_hf:bin_to_num(L).
+extract_payl_oxygen(Data) ->
+  try
+    <<BM1:16, BM2:16, BConcentration:32/float, BAirSaturation:32/float,
+    BTemperature:32/float, BCalPhase:32/float, BTCPhase:32/float, BC1RPh:32/float,
+    BC2RPh:32/float, BC1Amp:32/float, BC2Amp:32/float, BRawTemp:32/float>> = Data,
 
-readlines(FileName) ->
-  {ok, Device} = file:open(FileName, [read]),
-  try get_all_lines(Device)
-    after file:close(Device)
+    M1 = integer_to_list(BM1),
+    M2 = integer_to_list(BM2),
+
+    Concentration = io_lib:format("~.3f",[BConcentration]),
+    AirSaturation = io_lib:format("~.3f",[BAirSaturation]),
+    Temperature = io_lib:format("~.3f",[BTemperature]),
+    CalPhase = io_lib:format("~.3f",[BCalPhase]),
+    TCPhase = io_lib:format("~.3f",[BTCPhase]),
+    C1RPh = io_lib:format("~.3f",[BC1RPh]),
+    C2RPh = io_lib:format("~.3f",[BC2RPh]),
+    C1Amp = io_lib:format("~.1f",[BC1Amp]),
+    C2Amp = io_lib:format("~.1f",[BC2Amp]),
+    RawTemp = io_lib:format("~.1f",[BRawTemp]),
+
+    "MEASUREMENT     " ++ M1 ++ "     " ++ M2 ++ "     " ++
+    "O2Concentration(uM)     " ++ Concentration ++ "     " ++
+    "AirSaturation(%)     " ++ AirSaturation ++ "     " ++
+    "Temperature(Deg.C)     " ++ Temperature ++ "     " ++
+    "CalPhase(Deg)     " ++ CalPhase ++ "     " ++
+    "TCPhase(Deg)     " ++ TCPhase ++ "     " ++
+    "C1RPh(Deg)     " ++ C1RPh ++ "     " ++
+    "C2RPh(Deg)     " ++ C2RPh ++ "     " ++
+    "C1Amp(mV)     " ++ C1Amp ++ "     " ++
+    "C2Amp(mV)     " ++ C2Amp ++ "     " ++
+    "RawTemp(mV)     " ++ RawTemp
+  catch error: _Reason ->
+    nothing
   end.
 
-get_all_lines(Device) ->
-  case io:get_line(Device, "") of
-      eof  -> [];
-      Line -> Line ++ get_all_lines(Device)
+create_payl_oxygen(Line) ->
+  R1 = "^(MEASUREMENT)(.*)(O2Concentration\\(uM\\))(.*)(AirSaturation\\(\\%\\))(.*)(Temperature\\(Deg\\.C\\))(.*)",
+  R2 = R1 ++ "(CalPhase\\(Deg\\))(.*)(TCPhase\\(Deg\\))(.*)(C1RPh\\(Deg\\))(.*)(C2RPh\\(Deg\\))(.*)",
+  Regexp = R2 ++ "(C1Amp\\(mV\\))(.*)(C2Amp\\(mV\\))(.*)(RawTemp\\(mV\\))(.*)",
+  Elms = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
+  case re:run(Line, Regexp, [dotall, {capture, Elms, binary}]) of
+    {match,[<<"MEASUREMENT">>, MEASUREMENT,
+        <<"O2Concentration(uM)">>, BConcentration,
+        <<"AirSaturation(%)">>, BAirSaturation,
+        <<"Temperature(Deg.C)">>, BTemperature,
+        <<"CalPhase(Deg)">>, BCalPhase,
+        <<"TCPhase(Deg)">>, BTCPhase,
+        <<"C1RPh(Deg)">>, BC1RPh,
+        <<"C2RPh(Deg)">>, BC2RPh,
+        <<"C1Amp(mV)">>, BC1Amp,
+        <<"C2Amp(mV)">>, BC2Amp,
+        <<"RawTemp(mV)">>, BRawTemp]} ->
+
+      IConcentration = bin_to_float(BConcentration),
+      IAirSaturation = bin_to_float(BAirSaturation),
+      ITemperature = bin_to_float(BTemperature),
+      ICalPhase = bin_to_float(BCalPhase),
+      ITCPhase = bin_to_float(BTCPhase),
+      IC1RPh = bin_to_float(BC1RPh),
+      IC2RPh = bin_to_float(BC2RPh),
+      IC1Amp = bin_to_float(BC1Amp),
+      IC2Amp = bin_to_float(BC2Amp),
+      IRawTemp = bin_to_float(BRawTemp),
+
+      {match, [MEASUREMENT1, MEASUREMENT2]} = re:run(MEASUREMENT, "[0-9]+",
+                                              [global, {capture, all, binary}]),
+      [M1] = MEASUREMENT1,
+      [M2] = MEASUREMENT2,
+      IM1 =  nl_mac_hf:bin_to_num(M1),
+      IM2 =  nl_mac_hf:bin_to_num(M2),
+
+      BStrM1 = <<IM1:16>>,
+      BStrM2 = <<IM2:16>>,
+
+      BStrConcentration = <<IConcentration:32/float>>,
+      BStrAirSaturation = <<IAirSaturation:32/float>>,
+      BStrTemperature = <<ITemperature:32/float>>,
+      BStrCalPhase = <<ICalPhase:32/float>>,
+      BStrTCPhase = <<ITCPhase:32/float>>,
+      BStrC1RPh = <<IC1RPh:32/float>>,
+      BStrC2RPh = <<IC2RPh:32/float>>,
+      BStrC1Amp = <<IC1Amp:32/float>>,
+      BStrC2Amp = <<IC2Amp:32/float>>,
+      BStrRawTemp = <<IRawTemp:32/float>>,
+
+      <<BStrM1/bitstring, BStrM2/bitstring, BStrConcentration/bitstring,
+      BStrAirSaturation/bitstring, BStrTemperature/bitstring,
+      BStrCalPhase/bitstring, BStrTCPhase/bitstring,
+      BStrC1RPh/bitstring, BStrC2RPh/bitstring,
+      BStrC1Amp/bitstring, BStrC2Amp/bitstring, BStrRawTemp/bitstring>>;
+    nomatch ->
+      nothing
+  end.
+
+extract_payl_pressure(Data) ->
+  try
+    <<BVal:32/float>> = Data,
+    Val = io_lib:format("~.4f",[BVal]),
+    "PRESSURE     " ++ Val
+  catch error: _Reason ->
+    nothing
+  end.
+
+create_payl_pressure(Line) ->
+  case re:run(Line, "[0-9]+.[0-9]+", [{capture, first, list}]) of
+    {match,[BVal]} ->
+      IVal = bin_to_float(BVal),
+      BStrVal = <<IVal:32/float>>,
+      <<BStrVal/bitstring>>;
+    nomatch ->
+      nothing
   end.

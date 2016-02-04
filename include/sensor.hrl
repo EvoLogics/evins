@@ -13,8 +13,9 @@
 
 -define(TYPEMSG2NUM(N),
   case N of
-      get_data  -> 0;
-      recv_data  -> 1
+      error  -> 0;
+      get_data  -> 1;
+      recv_data  -> 2
   end).
 
 -define(TYPESENSOR2NUM(N),
@@ -27,8 +28,9 @@
 
 -define(NUM2TYPEMSG(N),
   case N of
-      0 -> get_data;
-      1 -> recv_data
+      0 -> error;
+      1 -> get_data;
+      2 -> recv_data
   end).
 
 -define(NUM2TYPESENSOR(N),
