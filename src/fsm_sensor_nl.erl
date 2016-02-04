@@ -78,7 +78,8 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event=Event}, {});
     {connected} ->
       SM;
-    {sensor_data, L} ->
+    {sensor_data, Sensor, L} ->
+      nl_mac_hf:insertETS(SM, sensor, Sensor),
       nl_mac_hf:insertETS(SM, last_sensor_read, L);
     {format, error} ->
       fsm:cast(SM, sensor_nl, {send, {string, "FORMAT ERROR"} });
