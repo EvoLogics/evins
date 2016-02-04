@@ -25,44 +25,35 @@
 %% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 %% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
--module(mod_sensor_nl).
--behaviour(fsm_worker).
+-module(role_read_sensor).
+-behaviour(role_worker).
 
--include("fsm.hrl").
--include("sensor.hrl").
+-include("nl.hrl").
 
--export([start/4, register_fsms/4]).
+-export([start/3, stop/1, to_term/3, from_term/2, ctrl/2, split/2]).
 
-start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-    fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+stop(_) -> ok.
 
-register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
-    Sensor = parse_conf(ArgS, Share),
+start(Role_ID, Mod_ID, MM) ->
+  role_worker:start(?MODULE, Role_ID, Mod_ID, MM).
 
-    InsideList = lists:filter(fun(X) -> X =:= Sensor end, ?LIST_ALL_SENSORS),
-    if InsideList =:= [] ->
-      ?ERROR(Mod_ID, "!!!  ERROR, no defined sensor with the name ~p~n", [Sensor]),
-      io:format("!!! ERROR, no defined sensor with the name ~p~n", [Sensor]);
-    true ->
-      ?TRACE(Mod_ID, "Name of current sensor ~p~n", [Sensor])
-    end,
+ctrl(_,Cfg) -> Cfg.
 
-    Roles = fsm_worker:role_info(Role_IDs, [nl, read_sensor, sensor_nl]),
-    [#sm{roles = Roles, module = fsm_sensor_nl}].
+to_term(Tail, Chunk, Cfg) ->
+  role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
 
-parse_conf(ArgS, Share) ->
-  SensorSet      = [S     || {sensor, S} <- ArgS],
-  FileSet      = [S     || {file, S} <- ArgS],
-
-  Sensor         = set_params(SensorSet, no_sensor),
-  File         = set_params(FileSet, no_file),
-
-  ets:insert(Share, [{sensor, Sensor}]),
-  ets:insert(Share, [{sensor_file, File}]),
-  Sensor.
-
-set_params(Param, Default) ->
-  case Param of
-    []     -> Default;
-    [Value]-> Value
+split(L, _Cfg) ->
+  case re:run(L, "\r\n") of
+    {match, [{_, _}]} ->
+      case re:run(L, "^(MEASUREMENT)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2], binary}]) of
+        {match, [<<"MEASUREMENT">>, P]} -> [{sensor_data, list_to_binary(["MEASUREMENT", P]) }];
+        nomatch ->
+          [{format, error}]
+      end;
+    nomatch -> [{more, L}]
   end.
+
+from_term({string, S}, Cfg) -> [list_to_binary(S ++ "\n"), Cfg];
+from_term({binary, B}, Cfg) -> [B, Cfg];
+from_term({prompt}, Cfg)    -> [<<"> ">>, Cfg];
+from_term(_, _)             -> {error, term_not_supported}.

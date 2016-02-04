@@ -78,6 +78,8 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event=Event}, {});
     {connected} ->
       SM;
+    {sensor_data, L} ->
+      nl_mac_hf:insertETS(SM, last_sensor_read, L);
     {format, error} ->
       fsm:cast(SM, sensor_nl, {send, {string, "FORMAT ERROR"} });
     {rcv_ll, Protocol, {nl, recv, ISrc, IDst, Payload}} ->
@@ -207,16 +209,18 @@ extract_sensor_command(Payl) ->
 read_from_sensor(SM) ->
   Sensor = nl_mac_hf:readETS(SM, sensor),
   File = nl_mac_hf:readETS(SM, sensor_file),
+  Line =
   if(File == no_file) ->
-    nothing;
+    nl_mac_hf:readETS(SM, last_sensor_read);
   true ->
-    Line = readlines(File),
-    case Sensor of
-      conductivity -> create_payl_conductivity(Line);
-      oxygen -> create_payl_oxygen(Line);
-      pressure -> create_payl_pressure(Line);
-      _ -> nothing
-    end
+    readlines(File)
+  end,
+  case Sensor of
+    _ when Line == not_inside -> nothing;
+    conductivity -> create_payl_conductivity(Line);
+    oxygen -> create_payl_oxygen(Line);
+    pressure -> create_payl_pressure(Line);
+    _ -> nothing
   end.
 
 parse_sensor_data(SM, Sensor, Data) ->
