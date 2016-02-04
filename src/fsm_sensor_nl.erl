@@ -271,14 +271,14 @@ extract_payl_conductivity(Data) ->
     ZAmp = float_to_list(BZAmp, [{scientific, 6}]),
     RawTemp = float_to_list(BRawTemp, [{scientific, 6}]),
 
-    "MEASUREMENT     " ++ M1 ++ "     " ++ M2 ++ "     " ++
-    "Conductivity[mS/cm]     " ++ Conductivity ++ "     " ++
-    "Temperature[Deg.C]     " ++ Temperature ++ "     " ++
-    "Conductance[mS]     " ++ Conductance ++ "     " ++
-    "RawCond0[LSB]     " ++ RawCond0 ++ "     " ++
-    "RawCond1[LSB]     " ++ RawCond1 ++ "     " ++
-    "ZAmp[mV]     " ++ ZAmp ++ "     " ++
-    "RawTemp[mV]     " ++ RawTemp
+    "MEASUREMENT\t" ++ M1 ++ "\t" ++ M2 ++ "\t" ++
+    "Conductivity[mS/cm]\t " ++ Conductivity ++ "\t" ++
+    "Temperature[Deg.C]\t" ++ Temperature ++ "\t" ++
+    "Conductance[mS]\t" ++ Conductance ++ "\t" ++
+    "RawCond0[LSB]\t" ++ RawCond0 ++ "\t" ++
+    "RawCond1[LSB]\t" ++ RawCond1 ++ "\t" ++
+    "ZAmp[mV]\t" ++ ZAmp ++ "\t" ++
+    "RawTemp[mV]\t" ++ RawTemp
   catch error: _Reason ->
     nothing
   end.
@@ -349,17 +349,17 @@ extract_payl_oxygen(Data) ->
     C2Amp = io_lib:format("~.1f",[BC2Amp]),
     RawTemp = io_lib:format("~.1f",[BRawTemp]),
 
-    "MEASUREMENT     " ++ M1 ++ "     " ++ M2 ++ "     " ++
-    "O2Concentration(uM)     " ++ Concentration ++ "     " ++
-    "AirSaturation(%)     " ++ AirSaturation ++ "     " ++
-    "Temperature(Deg.C)     " ++ Temperature ++ "     " ++
-    "CalPhase(Deg)     " ++ CalPhase ++ "     " ++
-    "TCPhase(Deg)     " ++ TCPhase ++ "     " ++
-    "C1RPh(Deg)     " ++ C1RPh ++ "     " ++
-    "C2RPh(Deg)     " ++ C2RPh ++ "     " ++
-    "C1Amp(mV)     " ++ C1Amp ++ "     " ++
-    "C2Amp(mV)     " ++ C2Amp ++ "     " ++
-    "RawTemp(mV)     " ++ RawTemp
+    "MEASUREMENT\t" ++ M1 ++ "\t" ++ M2 ++ "\t" ++
+    "O2Concentration(uM)\t" ++ Concentration ++ "\t" ++
+    "AirSaturation(%)\t" ++ AirSaturation ++ "\t" ++
+    "Temperature(Deg.C)\t" ++ Temperature ++ "\t" ++
+    "CalPhase(Deg)\t" ++ CalPhase ++ "\t" ++
+    "TCPhase(Deg)\t" ++ TCPhase ++ "\t" ++
+    "C1RPh(Deg)\t" ++ C1RPh ++ "\t" ++
+    "C2RPh(Deg)\t" ++ C2RPh ++ "\t" ++
+    "C1Amp(mV)\t" ++ C1Amp ++ "\t" ++
+    "C2Amp(mV)\t" ++ C2Amp ++ "\t" ++
+    "RawTemp(mV)\t" ++ RawTemp
   catch error: _Reason ->
     nothing
   end.
@@ -427,7 +427,7 @@ extract_payl_pressure(Data) ->
   try
     <<BVal:32/float>> = Data,
     Val = io_lib:format("~.4f",[BVal]),
-    "PRESSURE     " ++ Val
+    "PRESSURE\t" ++ Val
   catch error: _Reason ->
     nothing
   end.
