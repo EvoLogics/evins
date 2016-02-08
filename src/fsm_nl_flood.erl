@@ -240,7 +240,8 @@ handle_event(MM, SM, Term) ->
             {rcv_processed, {data, _}, DTuple} ->
               {async,{nl,recv,ISrc,IDst,Payload}} = DTuple,
               {NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
-              fsm:cast(SM, nl, {send, {async,{nl,recv,ISrc,IDst,NData}}});
+              NP = nl_mac_hf:readETS(SM, np),
+              fsm:cast(SM, nl, {send, {async, {nl, recv, NP, ISrc, IDst, NData}}});
             {dst_reached, Params, DTuple} ->
               SMN1 = nl_mac_hf:save_path(SMN, Params, DTuple),
               fsm:run_event(MM, SMN1#sm{event=rcv_wv}, {dst_reached, Params, DTuple});

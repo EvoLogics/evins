@@ -79,8 +79,7 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       SM;
     {sensor_data, Sensor, L} ->
-      nl_mac_hf:insertETS(SM, sensor, Sensor),
-      nl_mac_hf:insertETS(SM, last_sensor_read, L);
+      nl_mac_hf:insertETS(SM, last_sensor_read, {Sensor, L});
     {format, error} ->
       fsm:cast(SM, sensor_nl, {send, {string, "FORMAT ERROR"} });
     {rcv_ll, Protocol, {nl, recv, ISrc, IDst, Payload}} ->
@@ -89,7 +88,7 @@ handle_event(MM, SM, Term) ->
       nl_mac_hf:cleanETS(SM, last_sent),
       fsm:cast(SM, sensor_nl, {send, {string, "OK"} });
     {rcv_ll, {nl, busy}} ->
-      fsm:set_timeout(SM, {ms, 100}, busy_timeout);
+      fsm:set_timeout(SM, {ms, 500}, busy_timeout);
     {rcv_ul, Protocol, Dst, Payl} ->
       T = {rcv_ul, Protocol, Dst, get_data, Payl},
       fsm:run_event(MM, SM#sm{state=idle, event=send_data}, T);
@@ -141,7 +140,7 @@ handle_final(_MM, SM, Term) ->
 
 %%--------------------------------Helper functions-------------------------------
 parse_get_data(SM, {rcv_ll, Protocol, ISrc, _, _}) ->
-  Data = read_from_sensor(SM),
+  [_, Data] = read_from_sensor(SM),
   if (Data == nothing) ->
     ?ERROR(?ID, "Sensor Format is wrong, check configuration ! ~n", []),
     T = {rcv_ul, Protocol, ISrc, error, <<"">>},
@@ -165,9 +164,18 @@ parse_recv_data(SM, Sensor, Data) ->
     SM#sm{event = recvd}
   end.
 
-send_sensor_command(SM, Protocol, Dst, TypeMsg, Data) ->
-  Sensor = nl_mac_hf:readETS(SM, sensor),
-  Payl = create_payload_sensor(TypeMsg, Sensor, Data),
+send_sensor_command(SM, Protocol, Dst, TypeMsg, D) ->
+  File = nl_mac_hf:readETS(SM, sensor_file),
+  [SRead, SData] = read_from_sensor(SM),
+  {Sensor, Data} =
+  if( (File == no_file) and
+      (SData =/= nothing)) ->
+    {SRead, SData};
+  true ->
+    S = nl_mac_hf:readETS(SM, sensor),
+    {S, D}
+  end,
+  qPayl = create_payload_sensor(TypeMsg, Sensor, Data),
   fsm:cast(SM, nl, {send, {nl, send, Protocol, Dst, Payl}}).
 
 %--------------- MAIN HEADER -----------------
@@ -208,20 +216,32 @@ extract_sensor_command(Payl) ->
   end.
 
 read_from_sensor(SM) ->
-  Sensor = nl_mac_hf:readETS(SM, sensor),
   File = nl_mac_hf:readETS(SM, sensor_file),
-  Line =
-  if(File == no_file) ->
-    nl_mac_hf:readETS(SM, last_sensor_read);
-  true ->
-    readlines(File)
+  Last_sensor_read = nl_mac_hf:readETS(SM, last_sensor_read),
+
+  {Sensor, Line} =
+  case File of
+    no_file when Last_sensor_read =/= not_inside ->
+      Last_sensor_read;
+    no_file ->
+      S = nl_mac_hf:readETS(SM, sensor),
+      {S, not_inside};
+    _ ->
+      S = nl_mac_hf:readETS(SM, sensor),
+      {S, readlines(File)}
   end,
+
   case Sensor of
-    _ when Line == not_inside -> nothing;
-    conductivity -> create_payl_conductivity(Line);
-    oxygen -> create_payl_oxygen(Line);
-    pressure -> create_payl_pressure(Line);
-    _ -> nothing
+    _ when Line == not_inside ->
+      [Sensor, nothing];
+    conductivity ->
+      [Sensor, create_payl_conductivity(Line)];
+    oxygen ->
+      [Sensor, create_payl_oxygen(Line)];
+    pressure ->
+      [Sensor, create_payl_pressure(Line)];
+    _ ->
+      [Sensor, nothing]
   end.
 
 parse_sensor_data(SM, Sensor, Data) ->
@@ -248,6 +268,8 @@ bin_to_float(Bin) when is_binary(Bin) ->
 bin_to_float(Bin) ->
   nl_mac_hf:bin_to_num(Bin).
 
+readlines(not_inside) ->
+  not_inside;
 readlines(FileName) ->
   {ok, Device} = file:open(FileName, [read]),
   try get_all_lines(Device)
