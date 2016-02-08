@@ -34,6 +34,7 @@
 -export([start/3, stop/1, to_term/3, from_term/2, ctrl/2, split/2]).
 
 -record(config, {filter, mode, waitsync, request, telegram, eol, ext_networking, pid}).
+-define(EOL_RECV, <<"\r">>).
 
 stop(_) -> ok.
 
@@ -53,27 +54,42 @@ from_term(Term, Cfg) ->
 
 from_term_helper(Tuple,_,_) when is_tuple(Tuple) ->
   case Tuple of
-    {nl, error} -> [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple))];
-    {async, T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T))];
-    {sync,  T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T))];
+    {nl, error} -> [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), ?EOL_RECV];
+    {async, T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
+    {sync,  T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
     T -> [nl_mac_hf:convert_to_binary(tuple_to_list(T))]
   end.
 
 split(L, Cfg) ->
+  case re:run(L, "\r\n") of
+    {match, [{_, _}]} -> try_recv(L, Cfg);
+    nomatch -> try_send(L, Cfg)
+  end.
+
+try_recv(L, Cfg) ->
+  case re:run(L,"(NL,recv,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+    {match, [<<"NL,recv,">>, P, L1]} -> [nl_recv_extract(P, Cfg) | split(L1, Cfg)];
+    nomatch ->
+      case re:run(L,"^(NL,busy|NL,ok)[\r\n]+(.*)", [dotall, {capture, [1, 2], binary}]) of
+        {match, [<<"NL,busy">>, L1]} -> [ {rcv_ll, {nl, busy}} | split(L1, Cfg)];
+        {match, [<<"NL,ok">>, L1]} -> [ {rcv_ll, {nl, ok}} | split(L1, Cfg)];
+        nomatch -> [{more, L}]
+      end
+  end.
+
+try_send(L, Cfg) ->
   case re:run(L, "\n") of
     {match, [{_, _}]} ->
-      case re:run(L, "^(NL,send,|NL,recv,|NL,busy|NL,ok)(.*)", [dotall, {capture, [1, 2], binary}]) of
-        {match, [<<"NL,send,">>, P]}	-> nl_send_extract(P, Cfg);
-        {match, [<<"NL,recv,">> ,P]} -> nl_recv_extract(P, Cfg);
-        {match, [<<"NL,busy">>, _P]} -> [ {rcv_ll, {nl, busy}} ];
-        {match, [<<"NL,ok">>, _P]} -> [ {rcv_ll, {nl, ok}} ];
+      case re:run(L, "^(NL,send,)(.*)", [dotall, {capture, [1, 2], binary}]) of
+        {match, [<<"NL,send,">>, P]}  -> nl_send_extract(P, Cfg);
         nomatch ->
           case re:run(L,"^(NL,get,)(.*?)[\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
             {match, [<<"NL,get,">>, P, L1]} -> [ param_extract(P) | split(L1, Cfg)];
-            nomatch -> [ {nl, error} ]
+            nomatch -> [{more, L}]
           end
       end;
-    nomatch -> [{more, L}]
+    nomatch ->
+      [{more, L}]
   end.
 
 nl_send_extract(P, Cfg) ->
@@ -96,24 +112,23 @@ nl_send_extract(P, Cfg) ->
   catch error: _Reason -> [{nl, error}]
   end.
 
-nl_recv_extract(P, Cfg) ->
+nl_recv_extract(P, _Cfg) ->
   try
-    {match, [ProtocolID, BSrc, BDst, PayloadTail]} = re:run(P,"([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
-    PLLen = byte_size(PayloadTail),
+    {match, [ProtocolID, BSrc, BDst, Payload]} = re:run(P,"([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    PLLen = byte_size(Payload),
     IDst = binary_to_integer(BDst),
     ISrc = binary_to_integer(BSrc),
     AProtocolID = binary_to_atom(ProtocolID, utf8),
 
-    true = PLLen < 60,
+    io:format("!!!!!!!!!!!nl_recv_extract ~p~n", [P]),
+
     case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
       true ->
-        OPLLen = PLLen - 1,
-        {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
         Tuple = {nl, recv, ISrc, IDst, Payload},
-        [{rcv_ll, AProtocolID, Tuple} | split(Tail1,Cfg)];
-      false -> [{nl, error}]
+        {rcv_ll, AProtocolID, Tuple};
+      false -> {nl, error}
     end
-  catch error: _Reason -> [{nl, error}]
+  catch error: _Reason -> {nl, error}
   end.
 
 param_extract(P) ->

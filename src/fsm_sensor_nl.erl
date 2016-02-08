@@ -68,7 +68,7 @@ stop(_SM)      -> ok.
 %%--------------------------------Handler Event----------------------------------
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
-  ?TRACE(?ID, "~p~n", [Term]),
+  ?TRACE(?ID, "sensor state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.state, Term]),
   case Term of
     {timeout, answer_timeout} -> SM;
     {timeout, busy_timeout} ->

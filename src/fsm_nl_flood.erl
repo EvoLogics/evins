@@ -263,7 +263,7 @@ handle_event(MM, SM, Term) ->
     {async, _Tuple} ->
       SM;
     {nl,error} ->
-      fsm:cast(SM, nl, {send, {nl,error}}),
+      fsm:cast(SM, nl, {send, {nl, error}}),
       SM;
     {rcv_ul, get, Command} ->
       nl_mac_hf:process_command(SM, false, Command),
@@ -277,7 +277,8 @@ handle_event(MM, SM, Term) ->
                  Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
                end;
              true ->
-               fsm:cast(SM, nl, {send, {sync, {nl, busy} } }),SM end;
+               fsm:cast(SM, nl, {send, {sync, {nl, busy} } }),
+               SM end;
         false ->
           ?TRACE(?ID, "Message is not applicable with current protocol ~p~n", [Tuple]), SM
       end;
@@ -387,7 +388,8 @@ handle_sack(_MM, SM, Term) ->
       end,
       SM2 = nl_mac_hf:send_ack(SM1, Term, 0),
       if SM2 =:= error ->
-           fsm:cast(SM, nl, {send, {nl,error}}), SM#sm{event = error, event_params={error,{ISrc,IDst}}};
+           fsm:cast(SM, nl, {send, {nl, error}}),
+           SM#sm{event = error, event_params={error,{ISrc,IDst}}};
          true ->
            SM2#sm{event = ack_data_sent}
       end
@@ -403,8 +405,10 @@ handle_spath(_MM, SM, Term) ->
       SM1 = nl_mac_hf:send_path(SM, {send_path, Params, NTerm}),
       Local_address = nl_mac_hf:readETS(SM, local_address),
       WTP = if Local_address =:= IDst -> {Packet_id, IDst, ISrc}; true -> {Packet_id, ISrc, IDst} end,
-      if SM1 =:= error-> fsm:cast(SM, nl, {send, {nl,error}}), SM#sm{event = error, event_params={error,{ISrc,IDst}}};
-         true -> fsm:set_timeout(SM1#sm{event=wait_pf}, {s, nl_mac_hf:readETS(SM, wpath_tmo)}, {wpath_timeout,WTP})
+      if SM1 =:= error->
+        fsm:cast(SM, nl, {send, {nl, error}}),
+        SM#sm{event = error, event_params={error, {ISrc, IDst}}};
+      true -> fsm:set_timeout(SM1#sm{event=wait_pf}, {s, nl_mac_hf:readETS(SM, wpath_tmo)}, {wpath_timeout,WTP})
       end;
     {send_path,_,{async,{nl,recv,_,_,_}}} ->
       %% choose path with best integrity and rssii
@@ -422,7 +426,7 @@ handle_spath(_MM, SM, Term) ->
       {send_path,_, {async,{nl,recv,ISrc,IDst,_}}} = NTerm,
       SM1 = nl_mac_hf:send_path(SM, NTerm),
       if SM1 =:= error ->
-           fsm:cast(SM, nl, {send, {nl,error}}),
+           fsm:cast(SM, nl, {send, {nl, error}}),
            SM#sm{event = error, event_params={error,{ISrc,IDst}}};
          true ->
            SM1#sm{event = path_data_sent}
