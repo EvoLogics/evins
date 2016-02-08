@@ -62,8 +62,11 @@ from_term_helper(Tuple,_,_) when is_tuple(Tuple) ->
 split(L, Cfg) ->
   case re:run(L, "\n") of
     {match, [{_, _}]} ->
-      case re:run(L, "^(NL,send,)(.*)", [dotall, {capture, [1, 2], binary}]) of
-        {match, [<<"NL,send,">>,P]}	-> nl_send_extract(P, Cfg);
+      case re:run(L, "^(NL,send,|NL,recv,|NL,busy|NL,ok)(.*)", [dotall, {capture, [1, 2], binary}]) of
+        {match, [<<"NL,send,">>, P]}	-> nl_send_extract(P, Cfg);
+        {match, [<<"NL,recv,">> ,P]} -> nl_recv_extract(P, Cfg);
+        {match, [<<"NL,busy">>, _P]} -> [ {rcv_ll, {nl, busy}} ];
+        {match, [<<"NL,ok">>, _P]} -> [ {rcv_ll, {nl, ok}} ];
         nomatch ->
           case re:run(L,"^(NL,get,)(.*?)[\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
             {match, [<<"NL,get,">>, P, L1]} -> [ param_extract(P) | split(L1, Cfg)];
@@ -88,6 +91,26 @@ nl_send_extract(P, Cfg) ->
         {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
         Tuple = {nl, send, IDst, Payload},
         [{rcv_ul, AProtocolID, Tuple} | split(Tail1,Cfg)];
+      false -> [{nl, error}]
+    end
+  catch error: _Reason -> [{nl, error}]
+  end.
+
+nl_recv_extract(P, Cfg) ->
+  try
+    {match, [ProtocolID, BSrc, BDst, PayloadTail]} = re:run(P,"([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    PLLen = byte_size(PayloadTail),
+    IDst = binary_to_integer(BDst),
+    ISrc = binary_to_integer(BSrc),
+    AProtocolID = binary_to_atom(ProtocolID, utf8),
+
+    true = PLLen < 60,
+    case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
+      true ->
+        OPLLen = PLLen - 1,
+        {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
+        Tuple = {nl, recv, ISrc, IDst, Payload},
+        [{rcv_ll, AProtocolID, Tuple} | split(Tail1,Cfg)];
       false -> [{nl, error}]
     end
   catch error: _Reason -> [{nl, error}]

@@ -1029,8 +1029,13 @@ sequence_more_recent(S1, S2, Max) ->
     true -> false
   end.
 
-bin_to_num(Bin) ->
+bin_to_num(Bin) when is_binary(Bin) ->
   N = binary_to_list(Bin),
+  case string:to_float(N) of
+    {error, no_float} -> list_to_integer(N);
+    {F, _Rest} -> F
+  end;
+bin_to_num(N) when is_list(N) ->
   case string:to_float(N) of
     {error, no_float} -> list_to_integer(N);
     {F, _Rest} -> F
