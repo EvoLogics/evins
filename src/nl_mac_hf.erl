@@ -1346,6 +1346,7 @@ logs_additional(SM, Role) ->
 
   if(Role =:= source) ->
     if Protocol#pr_conf.pf  ->
+      process_command(SM, false, {statistics, "", data}),
       process_command(SM, false, {statistics, "", paths});
     true -> nothing end,
     process_command(SM, false, {protocol, "", neighbours}),
