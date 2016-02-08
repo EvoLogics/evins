@@ -88,7 +88,7 @@ handle_event(MM, SM, Term) ->
       nl_mac_hf:cleanETS(SM, last_sent),
       fsm:cast(SM, sensor_nl, {send, {string, "OK"} });
     {rcv_ll, {nl, busy}} ->
-      fsm:set_timeout(SM, {ms, 500}, busy_timeout);
+      fsm:set_timeout(SM, {ms, 100}, busy_timeout);
     {rcv_ul, Protocol, Dst, Payl} ->
       T = {rcv_ul, Protocol, Dst, get_data, Payl},
       fsm:run_event(MM, SM#sm{state=idle, event=send_data}, T);
@@ -117,15 +117,15 @@ handle_send(_MM, SM, Term) ->
 handle_recv(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   case Term of
-    {rcv_ll, _, _, _, Payload} ->
+    {rcv_ll, _, ISrc, _, Payload} ->
       SensorData = extract_sensor_command(Payload),
       case SensorData of
         [error, Sensor, Data] ->
-          parse_recv_data(SM, Sensor, Data);
+          parse_recv_data(SM, Sensor, ISrc, Data);
         [get_data, _, _] ->
           parse_get_data(SM, Term);
         [recv_data, Sensor, Data] ->
-          parse_recv_data(SM, Sensor, Data)
+          parse_recv_data(SM, Sensor, ISrc, Data)
       end;
     _ ->
       SM#sm{event = recvd}
@@ -151,16 +151,20 @@ parse_get_data(SM, {rcv_ll, Protocol, ISrc, _, _}) ->
     SM#sm{event = send_data, event_params = T}
   end.
 
-parse_recv_data(SM, Sensor, Data) ->
+parse_recv_data(SM, Sensor, ISrc, Data) ->
+  LSrc = integer_to_list(ISrc),
   PData = parse_sensor_data(SM, Sensor, Data),
   if (PData == nothing) ->
     ?ERROR(?ID, "Sensor Format is wrong, check configuration ! ~n", []),
-    Str = "Remote sensor data, format error!",
+    Str = "Remote sensor (node " ++ LSrc ++ ") data, format error!",
     fsm:cast(SM, sensor_nl, {send, {string, Str} }),
     SM#sm{event = recvd};
   true ->
     ?TRACE(?ID, "Data received from remote sensor ~p~n", [PData]),
-    fsm:cast(SM, sensor_nl, {send, {string, PData} }),
+    LSensor = atom_to_list(Sensor),
+    Str = "Received data from node " ++ LSrc ++
+          " with " ++ LSensor ++ " sensor" ++ "\n" ++ PData,
+    fsm:cast(SM, sensor_nl, {send, {string, Str} }),
     SM#sm{event = recvd}
   end.
 
@@ -175,7 +179,7 @@ send_sensor_command(SM, Protocol, Dst, TypeMsg, D) ->
     S = nl_mac_hf:readETS(SM, sensor),
     {S, D}
   end,
-  qPayl = create_payload_sensor(TypeMsg, Sensor, Data),
+  Payl = create_payload_sensor(TypeMsg, Sensor, Data),
   fsm:cast(SM, nl, {send, {nl, send, Protocol, Dst, Payl}}).
 
 %--------------- MAIN HEADER -----------------
