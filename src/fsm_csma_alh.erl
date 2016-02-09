@@ -175,21 +175,25 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM2#sm{event = rcv_ul}, {rcv_ul, Msg});
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
-    {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, Payload}} ->
+    {async, {pid, NPid}, Tuple = {recvim, _, Src, _, _, _, _, _, _, Payload}} ->
       ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [Tuple]),
       Current_msg = nl_mac_hf:readETS(SM, current_msg),
       SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Payload),
       [H | T] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
       fsm:cast(SM, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
-      fsm:run_event(MM, SM1, {});
+      SM2 = send_multipath(SM1, Src),
+      fsm:run_event(MM, SM2, {});
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       Ev = process_async(SM, Tuple),
       fsm:run_event(MM, SM#sm{event = Ev}, {});
+    {sync, "?P", Answer} ->
+      get_multipath(SM, Term, Answer);
     {sync, _Req, Answer} ->
-      fsm:cast(SM, alh, {send, {sync, Answer} }),
-      SM;
+      SMAT = fsm:clear_timeout(SM, answer_timeout),
+      fsm:cast(SMAT, alh, {send, {sync, Answer} }),
+      SMAT;
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -284,3 +288,24 @@ process_async(_SM, Tuple) ->
     _ ->
       eps
   end.
+
+
+send_multipath(SM, Src) ->
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
+  if Answer_timeout == false ->
+    SMT = SM#sm{event_params = {recv, Src}},
+    fsm:send_at_command(SMT, {at, "?P", ""});
+  true -> SM
+  end.
+
+get_multipath(SM, Term, Answer) ->
+  SMAT = fsm:clear_timeout(SM, answer_timeout),
+  LA = nl_mac_hf:readETS(SM, local_address),
+  [Event_params, SMP] = nl_mac_hf:event_params(SMAT, Term, recv),
+  case Event_params of
+    {recv, Src} ->
+      ?TRACE(?ID, "Multipath LA ~p from ~p : ~p~n", [LA, Src, Answer]);
+    _ -> nothing
+  end,
+  fsm:cast(SMP, alh, {send, {sync, Answer} }),
+  SMP.

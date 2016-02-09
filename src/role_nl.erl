@@ -119,9 +119,6 @@ nl_recv_extract(P, _Cfg) ->
     IDst = binary_to_integer(BDst),
     ISrc = binary_to_integer(BSrc),
     AProtocolID = binary_to_atom(ProtocolID, utf8),
-
-    io:format("!!!!!!!!!!!nl_recv_extract ~p~n", [P]),
-
     case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
       true ->
         Tuple = {nl, recv, ISrc, IDst, Payload},
