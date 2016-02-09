@@ -51,14 +51,18 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     [#sm{roles = Roles, module = fsm_sensor_nl}].
 
 parse_conf(ArgS, Share) ->
-  SensorSet      = [S     || {sensor, S} <- ArgS],
-  FileSet      = [S     || {file, S} <- ArgS],
+  SensorSet    = [S     || {sensor, S} <- ArgS],
+  SensorFileSet      = [S     || {sensor_file, S} <- ArgS],
+  SaveFileSet  = [S     || {save_file, S} <- ArgS],
 
   Sensor         = set_params(SensorSet, no_sensor),
-  File         = set_params(FileSet, no_file),
+  SensorFile     = set_params(SensorFileSet, no_file),
+  SaveFile       = set_params(SaveFileSet, "/tmp/recv_sensor"),
 
   ets:insert(Share, [{sensor, Sensor}]),
-  ets:insert(Share, [{sensor_file, File}]),
+  ets:insert(Share, [{sensor_file, SensorFile}]),
+  ets:insert(Share, [{save_file, SaveFile}]),
+
   Sensor.
 
 set_params(Param, Default) ->

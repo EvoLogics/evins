@@ -164,9 +164,20 @@ parse_recv_data(SM, Sensor, ISrc, Data) ->
     LSensor = atom_to_list(Sensor),
     Str = "Received data from node " ++ LSrc ++
           " with " ++ LSensor ++ " sensor" ++ "\n" ++ PData,
+    save_data_to_file(SM, LSrc, PData),
     fsm:cast(SM, sensor_nl, {send, {string, Str} }),
     SM#sm{event = recvd}
   end.
+
+save_data_to_file(SM, LSrc, PData) ->
+  File = nl_mac_hf:readETS(SM, save_file),
+  Str = io_lib:fwrite("~s : ~s.\n", [LSrc, PData]),
+  case file:read_file_info(File) of
+    {ok, _FileInfo} ->
+      file:write_file(File, Str, [append]);
+    {error, enoent} ->
+      file:write_file(File, Str)
+ end.
 
 send_sensor_command(SM, Protocol, Dst, TypeMsg, D) ->
   File = nl_mac_hf:readETS(SM, sensor_file),
