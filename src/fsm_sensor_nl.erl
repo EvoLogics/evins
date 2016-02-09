@@ -173,6 +173,8 @@ save_data_to_file(SM, LSrc, PData) ->
   File = nl_mac_hf:readETS(SM, save_file),
   Str = io_lib:fwrite("~s : ~s.\n", [LSrc, PData]),
   case file:read_file_info(File) of
+    _ when File =:= no_file ->
+      nothing;
     {ok, _FileInfo} ->
       file:write_file(File, Str, [append]);
     {error, enoent} ->

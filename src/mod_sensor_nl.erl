@@ -55,9 +55,15 @@ parse_conf(ArgS, Share) ->
   SensorFileSet      = [S     || {sensor_file, S} <- ArgS],
   SaveFileSet  = [S     || {save_file, S} <- ArgS],
 
+  SaveFileDefault = "/opt/evins/recv_sensor_" ++ get_timestamp(),
+  SaveFile =
+  case SaveFileSet of
+    no_file -> no_file;
+    _ -> set_params(SaveFileSet, SaveFileDefault)
+  end,
+
   Sensor         = set_params(SensorSet, no_sensor),
   SensorFile     = set_params(SensorFileSet, no_file),
-  SaveFile       = set_params(SaveFileSet, "/tmp/recv_sensor"),
 
   ets:insert(Share, [{sensor, Sensor}]),
   ets:insert(Share, [{sensor_file, SensorFile}]),
@@ -70,3 +76,8 @@ set_params(Param, Default) ->
     []     -> Default;
     [Value]-> Value
   end.
+
+get_timestamp() ->
+  {Mega, Sec, Micro} = os:timestamp(),
+  T = (Mega*1000000 + Sec)*1000 + round(Micro/1000),
+  integer_to_list(T).
