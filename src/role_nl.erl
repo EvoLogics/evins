@@ -73,7 +73,7 @@ try_recv(L, Cfg) ->
       case re:run(L,"^(NL,busy|NL,ok)[\r\n]+(.*)", [dotall, {capture, [1, 2], binary}]) of
         {match, [<<"NL,busy">>, L1]} -> [ {rcv_ll, {nl, busy}} | split(L1, Cfg)];
         {match, [<<"NL,ok">>, L1]} -> [ {rcv_ll, {nl, ok}} | split(L1, Cfg)];
-        nomatch -> [{more, L}]
+        nomatch -> [{nl, error}]
       end
   end.
 
@@ -85,7 +85,7 @@ try_send(L, Cfg) ->
         nomatch ->
           case re:run(L,"^(NL,get,)(.*?)[\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
             {match, [<<"NL,get,">>, P, L1]} -> [ param_extract(P) | split(L1, Cfg)];
-            nomatch -> [{more, L}]
+            nomatch -> [{nl, error}]
           end
       end;
     nomatch ->

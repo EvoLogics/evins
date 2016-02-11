@@ -88,6 +88,7 @@
                   {send_tone,	cr},
                   {rcv_ct, cr},
                   {end_of_frame, cr},
+                  {dp_ends, cr},
                   {no_ct,	transmit_data},
                   {ct_exist, backoff_state}
                  ]},
