@@ -394,37 +394,37 @@ extract_payl_oxygen(Data) ->
     RawTemp = io_lib:format("~.1f",[BRawTemp]),
 
     "MEASUREMENT\t" ++ M1 ++ "\t" ++ M2 ++ "\t" ++
-    "O2Concentration(uM)\t" ++ Concentration ++ "\t" ++
-    "AirSaturation(%)\t" ++ AirSaturation ++ "\t" ++
-    "Temperature(Deg.C)\t" ++ Temperature ++ "\t" ++
-    "CalPhase(Deg)\t" ++ CalPhase ++ "\t" ++
-    "TCPhase(Deg)\t" ++ TCPhase ++ "\t" ++
-    "C1RPh(Deg)\t" ++ C1RPh ++ "\t" ++
-    "C2RPh(Deg)\t" ++ C2RPh ++ "\t" ++
-    "C1Amp(mV)\t" ++ C1Amp ++ "\t" ++
-    "C2Amp(mV)\t" ++ C2Amp ++ "\t" ++
-    "RawTemp(mV)\t" ++ RawTemp
+    "O2Concentration[uM]\t" ++ Concentration ++ "\t" ++
+    "AirSaturation[%]\t" ++ AirSaturation ++ "\t" ++
+    "Temperature[Deg.C]\t" ++ Temperature ++ "\t" ++
+    "CalPhase[Deg]\t" ++ CalPhase ++ "\t" ++
+    "TCPhase[Deg]\t" ++ TCPhase ++ "\t" ++
+    "C1RPh[Deg]\t" ++ C1RPh ++ "\t" ++
+    "C2RPh[Deg]\t" ++ C2RPh ++ "\t" ++
+    "C1Amp[mV]\t" ++ C1Amp ++ "\t" ++
+    "C2Amp[mV]\t" ++ C2Amp ++ "\t" ++
+    "RawTemp[mV]\t" ++ RawTemp
   catch error: _Reason ->
     nothing
   end.
 
 create_payl_oxygen(Line) ->
-  R1 = "^(MEASUREMENT)(.*)(O2Concentration\\(uM\\))(.*)(AirSaturation\\(\\%\\))(.*)(Temperature\\(Deg\\.C\\))(.*)",
-  R2 = R1 ++ "(CalPhase\\(Deg\\))(.*)(TCPhase\\(Deg\\))(.*)(C1RPh\\(Deg\\))(.*)(C2RPh\\(Deg\\))(.*)",
-  Regexp = R2 ++ "(C1Amp\\(mV\\))(.*)(C2Amp\\(mV\\))(.*)(RawTemp\\(mV\\))(.*)",
+  R1 = "^(MEASUREMENT)(.*)(O2Concentration\\[uM\\])(.*)(AirSaturation\\[\\%\\])(.*)(Temperature\\[Deg\\.C\\])(.*)",
+  R2 = R1 ++ "(CalPhase\\[Deg\\])(.*)(TCPhase\\[Deg\\])(.*)(C1RPh\\[Deg\\])(.*)(C2RPh\\[Deg\\])(.*)",
+  Regexp = R2 ++ "(C1Amp\\[mV\\])(.*)(C2Amp\\[mV\\])(.*)(RawTemp\\[mV\\])(.*)",
   Elms = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
   case re:run(Line, Regexp, [dotall, {capture, Elms, binary}]) of
     {match,[<<"MEASUREMENT">>, MEASUREMENT,
-        <<"O2Concentration(uM)">>, BConcentration,
-        <<"AirSaturation(%)">>, BAirSaturation,
-        <<"Temperature(Deg.C)">>, BTemperature,
-        <<"CalPhase(Deg)">>, BCalPhase,
-        <<"TCPhase(Deg)">>, BTCPhase,
-        <<"C1RPh(Deg)">>, BC1RPh,
-        <<"C2RPh(Deg)">>, BC2RPh,
-        <<"C1Amp(mV)">>, BC1Amp,
-        <<"C2Amp(mV)">>, BC2Amp,
-        <<"RawTemp(mV)">>, BRawTemp]} ->
+        <<"O2Concentration[uM]">>, BConcentration,
+        <<"AirSaturation[%]">>, BAirSaturation,
+        <<"Temperature[Deg.C]">>, BTemperature,
+        <<"CalPhase[Deg]">>, BCalPhase,
+        <<"TCPhase[Deg]">>, BTCPhase,
+        <<"C1RPh[Deg]">>, BC1RPh,
+        <<"C2RPh[Deg]">>, BC2RPh,
+        <<"C1Amp[mV]">>, BC1Amp,
+        <<"C2Amp[mV]">>, BC2Amp,
+        <<"RawTemp[mV]">>, BRawTemp]} ->
 
       IConcentration = bin_to_float(BConcentration),
       IAirSaturation = bin_to_float(BAirSaturation),

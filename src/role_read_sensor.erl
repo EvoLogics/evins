@@ -45,7 +45,7 @@ to_term(Tail, Chunk, Cfg) ->
 split(L, Cfg) ->
   case re:run(L, "\r\n") of
     {match, [{_, _}]} ->
-      case re:run(L, "^(MEASUREMENT)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+      case re:run(L, "(MEASUREMENT)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
         {match, [<<"MEASUREMENT">>, P, L1]} -> sensor_extract(P, L1, Cfg);
         nomatch ->
           case re:run(L, "(.*)[\r\n]+(.*)", [dotall, {capture, [1, 2], binary}]) of
@@ -71,22 +71,22 @@ sensor_extract(P, L1, Cfg) ->
   end.
 
 test_oxygen(Payl, L1, Cfg) ->
-  R1 = "^(MEASUREMENT)(.*)(O2Concentration\\(uM\\))(.*)(AirSaturation\\(\\%\\))(.*)(Temperature\\(Deg\\.C\\))(.*)",
-  R2 = R1 ++ "(CalPhase\\(Deg\\))(.*)(TCPhase\\(Deg\\))(.*)(C1RPh\\(Deg\\))(.*)(C2RPh\\(Deg\\))(.*)",
-  Regexp = R2 ++ "(C1Amp\\(mV\\))(.*)(C2Amp\\(mV\\))(.*)(RawTemp\\(mV\\))(.*)",
+  R1 = "^(MEASUREMENT)(.*)(O2Concentration\\[uM\\])(.*)(AirSaturation\\[\\%\\])(.*)(Temperature\\[Deg\\.C\\])(.*)",
+  R2 = R1 ++ "(CalPhase\\[Deg\\])(.*)(TCPhase\\[Deg\\])(.*)(C1RPh\\[Deg\\])(.*)(C2RPh\\[Deg\\])(.*)",
+  Regexp = R2 ++ "(C1Amp\\[mV\\])(.*)(C2Amp\\[mV\\])(.*)(RawTemp\\[mV\\])(.*)",
   Elms = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
   case re:run(Payl, Regexp, [dotall, {capture, Elms, binary}]) of
     {match,[<<"MEASUREMENT">>, _MEASUREMENT,
-        <<"O2Concentration(uM)">>, _BConcentration,
-        <<"AirSaturation(%)">>, _BAirSaturation,
-        <<"Temperature(Deg.C)">>, _BTemperature,
-        <<"CalPhase(Deg)">>, _BCalPhase,
-        <<"TCPhase(Deg)">>, _BTCPhase,
-        <<"C1RPh(Deg)">>, _BC1RPh,
-        <<"C2RPh(Deg)">>, _BC2RPh,
-        <<"C1Amp(mV)">>, _BC1Amp,
-        <<"C2Amp(mV)">>, _BC2Amp,
-        <<"RawTemp(mV)">>, _BRawTemp]} ->
+        <<"O2Concentration[uM]">>, _BConcentration,
+        <<"AirSaturation[%]">>, _BAirSaturation,
+        <<"Temperature[Deg.C]">>, _BTemperature,
+        <<"CalPhase[Deg]">>, _BCalPhase,
+        <<"TCPhase[Deg]">>, _BTCPhase,
+        <<"C1RPh[Deg]">>, _BC4RPh,
+        <<"C2RPh[Deg]">>, _BC2RPh,
+        <<"C1Amp[mV]">>, _BC1Amp,
+        <<"C2Amp[mV]">>, _BC2Amp,
+        <<"RawTemp[mV]">>, _BRawTemp]} ->
       [{sensor_data, oxygen, Payl} | split(L1, Cfg)];
     nomatch -> [{format, error}]
   end.
