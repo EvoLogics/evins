@@ -36,7 +36,6 @@
 -export([init/1,handle_event/3,stop/1]).
 
 -define(TRANS, []).
-
 -define(MODE,xyz).
 %% -define(MODE,enu).
 
@@ -49,7 +48,6 @@ final()        -> [alarm].
 init_event()   -> eps.
 stop(_SM)      -> ok.
 
-%%--------------------------------Handler Event----------------------------------
 handle_event(_MM, SM, Term) ->
   case Term of
     {timeout, initial} ->
@@ -68,17 +66,12 @@ encode_sendim(SM) ->
   Payload = encode_position(SM),
   {at, {pid,0}, "*SENDIM", Target, ack, Payload}.
 
-encode_position(SM) ->
-  #{mode := Mode} = SM#sm.env,
-  case maps:get(position, SM#sm.env, nothing) of
-    {_,Xm,Ym,Zm,_,_,_}  when Mode == xyz ->
-      [X, Y, Z] = [round(V*10) || V <- [Xm,Ym,Zm]],
-      <<"X", X:16/little, Y:16/little, Z:16/little>>;
-    {_,_,_,_,Em,Nm,Um}  when Mode == enu ->
-      [E, N, U] = [round(V*10) || V <- [Em,Nm,Um]],
-      <<"E", E:16/little, N:16/little, U:16/little>>;
-    _Otherwise ->
-      <<"N">>
-  end.
-
+encode_position(#sm{env = #{mode := xyz, position := {_,Xm,Ym,Zm,_,_,_}}}) ->
+  [X, Y, Z] = [round(V*10) || V <- [Xm,Ym,Zm]],
+  <<"X", X:16/little, Y:16/little, Z:16/little>>;
+encode_position(#sm{env = #{mode := enu, position := {_,_,_,_,Em,Nm,Um}}}) ->
+  [E, N, U] = [round(V*10) || V <- [Em,Nm,Um]],
+  <<"E", E:16/little, N:16/little, U:16/little>>;
+encode_position(_) ->
+  <<"N">>.
 
