@@ -78,6 +78,10 @@ handle_call(Request, From, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {Request, From}}}),
   {noreply, SM}.
 
+handle_cast({chan, nothing, Term}, #sm{module = Module} = SM) ->
+  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, nothing, Term}}}),
+  handle_event(Module, nothing, SM, Term);
+
 handle_cast({chan, MM, Term}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, MM#mm.role_id, Term}}}),
   handle_event(Module, MM, SM, Term);

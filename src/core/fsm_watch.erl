@@ -36,7 +36,7 @@
 %% gen_server callbacks
 -export([code_change/3, handle_call/3, handle_cast/2, handle_info/2, init/1, terminate/2]).
 
--record(watchstate, {sup_id, fabric_config, user_config, status, configured_modules, configuration}).
+-record(watchstate, {sup_id, fabric_config, user_config, status, configured_modules, configuration = []}).
 
 -define(TIMEOUT, 10000).
 
@@ -55,22 +55,35 @@ choose_config(Fabric_config, User_config) ->
     _ -> Fabric_config
   end.
 
-consult(Reply, #watchstate{sup_id = Sup_ID, fabric_config = Fabric_config, user_config = User_config} = State) ->
+run_modules(#watchstate{sup_id = Sup_ID} = State, Configuration) ->
+  Modules =
+    lists:map(fun(ModuleSpec) ->
+                  {module, ID, ModuleConfig} = ModuleSpec,
+                  [Name] = [M || {mfa, M, _, _} <- ModuleConfig],
+                  {ok, _} = supervisor:start_child(Sup_ID, {ID,
+                                                            {fsm_mod_supervisor, start_link, [ModuleSpec]},
+                                                            permanent, 1000, supervisor, []}),
+                  {Name, ID}
+              end, Configuration),
+  State#watchstate{configured_modules = Modules, configuration = Configuration}.
+
+configure_modules(State, Configuration) ->
+  Modules =
+    lists:map(fun(ModuleSpec) ->
+                  {module, ID, ModuleConfig} = ModuleSpec,
+                  [Name] = [M || {mfa, M, _, _} <- ModuleConfig],
+                  {Name, ID}
+              end, Configuration),
+  State#watchstate{configured_modules = Modules, configuration = Configuration}.
+
+consult(Reply, #watchstate{fabric_config = Fabric_config, user_config = User_config} = State) ->
   gen_event:notify(error_logger, {fsm_event, self(), {retry, Fabric_config, User_config}}),
   ConfigFile = choose_config(Fabric_config, User_config),
   case file:consult(ConfigFile) of
-    {ok, ModemDataList} ->
-      case fsm_supervisor:check_terms(ModemDataList) of
+    {ok, Configuration} ->
+      case fsm_supervisor:check_terms(Configuration) of
         [] ->
-          Modules = lists:map(fun(ModemData) ->
-                                  {module, ID, ModuleConfig} = ModemData,
-                                  [Name] = [M || {mfa, M, _, _} <- ModuleConfig],
-                                  {ok, _} = supervisor:start_child(Sup_ID, {ID,
-                                                                            {fsm_mod_supervisor, start_link, [ModemData]},
-                                                                            permanent, 1000, supervisor, []}),
-                                  {Name, ID}
-                              end, ModemDataList),
-          {Reply, State#watchstate{configured_modules = Modules, configuration = ModemDataList}, ?TIMEOUT};
+          {Reply, run_modules(State, Configuration), ?TIMEOUT};
         Errors ->
           error_logger:error_report([{file,?MODULE,?LINE}, "Syntax error: terms check", ConfigFile, Errors]),
           {Reply, State, ?TIMEOUT}
@@ -166,7 +179,7 @@ handle_call({roles, Module_ID, Role_spec_old, Role_spec_new}, _From, #watchstate
                                      end, ModuleConfig)};
                          (Item) -> Item
                       end, ModuleList),
-          {reply, ok, State#watchstate{configuration = NewModuleList}};
+          {reply, ok, configure_modules(State, NewModuleList)};
         _ ->
           {reply, {error, "Role spec not found"}, State}
       end;
@@ -221,19 +234,33 @@ handle_call({store, Filename}, _From, #watchstate{configuration = ModuleList} = 
 
 handle_call({add, Module_spec}, _From, #watchstate{configuration = ModuleList} = State) ->
   case fsm_supervisor:check_terms([Module_spec | ModuleList]) of
-    [] -> {reply, ok, State#watchstate{configuration = [Module_spec | ModuleList]}};
+    []     -> {reply, ok, configure_modules(State, [Module_spec | ModuleList])};
     Errors -> {reply, Errors, State}
   end;
 
 handle_call({delete, Module_ID}, _From, #watchstate{configuration = ModuleList} = State) ->
   NewModuleList = lists:filter(fun({module, ID, _}) -> ID /= Module_ID end, ModuleList),
-  {reply, ok, State#watchstate{configuration = NewModuleList}};
+  {reply, ok, configure_modules(State, NewModuleList)};
 
 handle_call({module_id, Module_ID, Module_ID_new}, _From, #watchstate{configuration = ModuleList} = State) ->
   NewModuleList = lists:map(fun({module,ID,ModuleConfig}) when ID == Module_ID -> {module,Module_ID_new,ModuleConfig};
                                (Module_spec) -> Module_spec
                             end, ModuleList),    
-  {reply, ok, State#watchstate{configuration = NewModuleList}};
+  {reply, ok, configure_modules(State, NewModuleList)};
+
+handle_call({restart, Module_ID}, _From, #watchstate{sup_id = Sup_ID, configuration = ModuleList} = State) ->
+  supervisor:terminate_child(fsm_supervisor, Module_ID),
+  supervisor:delete_child(fsm_supervisor, Module_ID),
+  case lists:keyfind(Module_ID, 2, ModuleList) of
+    {_,_,_} = ModuleSpec ->
+      io:format("ModuleSpec: ~p, Sup_ID = ~p~n", [ModuleSpec, Sup_ID]),
+      {ok, _} = supervisor:start_child(Sup_ID, {Module_ID,
+                                                {fsm_mod_supervisor, start_link, [ModuleSpec]},
+                                                permanent, 1000, supervisor, []}),
+      {reply, ok, State};
+    false ->
+      {reply, {error, module_not_configured}, State}
+  end;
 
 handle_call({update_config, Filename}, _From, State) ->
   case signed_config(Filename) of

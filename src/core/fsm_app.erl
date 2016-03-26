@@ -37,9 +37,15 @@ start(_Type, _Args) ->
     _ ->
       ok
   end,
-  {ok, Fabric_config} = application:get_env(evins, fabric_config),
-  {ok, User_config} = application:get_env(evins, user_config),
+  User_config = maybe_config(user_config),
+  Fabric_config = maybe_config(fabric_config),
   fsm_supervisor:start_link([Fabric_config, User_config]).
+
+maybe_config(Name) ->
+  case application:get_env(evins, Name) of
+    {ok, Path} -> Path;
+    _ -> nothing
+  end.
 
 stop(_State) ->
   ok.

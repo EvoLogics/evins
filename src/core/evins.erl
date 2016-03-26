@@ -31,12 +31,11 @@
 -include("fsm.hrl").
 
 %% running modules
--export([supervisors/0,stop/1,stop_all/0,restart/1,restart_all/0]).
+-export([supervisors/0,stop/1,stop_all/0,restart/1,restart_all/0,add/1,delete/1,delete_all/0]).
 -export([loaded_modules/0,find_id/1,fabric_config/0,user_config/0,configured_modules/0,update_config/0,update_config/1,sign_config/1,cast/2]).
 
 -export([module_parameters/1,module_parameters/2,roles/1,roles/3,store_config/0,store_config/1,config/1,config/0]).
 -export([module_id/2,mfa/1,mfa/2]).
--export([add_module/1,delete_module/1]).
 
 %% TODO: reflect status, that running configuration doesn't correspond to the stored in the memory
 
@@ -63,8 +62,11 @@ fabric_config() -> gen_server:call(fsm_watch, fabric_config).
 user_config() -> gen_server:call(fsm_watch, user_config).
 configured_modules() -> gen_server:call(fsm_watch, configured_modules).
 
-add_module(Module_spec) -> gen_server:call(fsm_watch, {add, Module_spec}).
-delete_module(Module_id) -> gen_server:call(fsm_watch, {delete, Module_id}).   
+add(Module_spec) -> gen_server:call(fsm_watch, {add, Module_spec}).
+delete(Module_id) -> gen_server:call(fsm_watch, {delete, Module_id}).   
+
+delete_all() ->
+  lists:map(fun(ID) -> delete(ID) end, configured_modules()).
 
 module_parameters(Module_ID) -> gen_server:call(fsm_watch, {module_parameters, Module_ID}).
 module_parameters(Module_ID, Opts) -> gen_server:call(fsm_watch, {module_parameters, Module_ID, Opts}).
@@ -226,19 +228,19 @@ cast({Name,Id}, Message) ->
   FSM_Id = list_to_atom(lists:flatten(["fsm_",atom_to_list(Name), "_", atom_to_list(Id)])),
   gen_server:cast(FSM_Id, {chan, #mm{role_id = evins}, Message}).
 
-stop(Id) ->
-  supervisor:terminate_child(fsm_supervisor, Id).
-
-restart(Id) ->
-  stop(Id),
-  case supervisor:restart_child(fsm_supervisor,Id) of
-    {ok, _} -> ok;
-    Other -> Other
-  end.
+stop(ID) ->
+  supervisor:terminate_child(fsm_supervisor, ID),
+  supervisor:delete_child(fsm_supervisor, ID).
 
 stop_all() ->
   Modules = configured_modules(),
   [stop(ID) || {_,ID} <- Modules].
+
+restart(Id) ->
+  case gen_server:call(fsm_watch, {restart, Id}) of
+    ok -> ok;
+    Other -> Other
+  end.
 
 restart_all() ->
   Modules = configured_modules(),
