@@ -64,7 +64,7 @@
 %% + sncfloodrack    - Sequence Number Controlled Flooding with acknowledgement
 %% + dpfloodr        - Dynamic Probabilistic Flooding
 %% + dpfloodrack     - Dynamic Probabilistic Flooding with acknowledgement
-%% + icrp            - Information carrying routing protocol
+%% + icrpr           - Information carrying routing protocol
 %%
 %% Path finding
 %% + sncfloodpfr     - Pathfind and relay, based on sequence number controlled flooding
@@ -72,8 +72,8 @@
 %% + evoicrppfr      - based on ICRP protocol (Information carrying based routing protocol)
 %%                     Pathfind and relay, based on sequence number controlled flooding, path is chosend using Rssi and Integrity of Evo DMACE Header
 %% + evoicrppfrack   - Evologics information carrying routing protocol, path find and relay protocol with acknowledgement
-%% + dbfloodpfr      - Double flooding path finder, two flooding waves to find path and 1 wave to send path back
-%% + dbfloodpfrack   - Double flooding path finder with acknowledgement
+%% + dblfloodpfr     - Double flooding path finder, two flooding waves to find path and 1 wave to send path back
+%% + dblfloodpfrack  - Double flooding path finder with acknowledgement
 %% + laorp           - Low overhead routing protocol
 %%
 %% TODO: Max number protocol is p7, temporaly all bigger than 7, are equal 7
@@ -82,7 +82,15 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
   fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
-  CurrentProtocol = parse_conf(ArgS, Share),
+  CurrentProtocol = parse_conf(Mod_ID, ArgS, Share),
+
+  InsideList = lists:filter(fun(X) -> X =:= CurrentProtocol end, ?LIST_ALL_PROTOCOLS),
+  if InsideList =:= [] ->
+    ?ERROR(Mod_ID, "!!!  ERROR, no network layer protocol with the name ~p~n", [CurrentProtocol]),
+    io:format("!!! ERROR, no network layer protocol with the name ~p~n", [CurrentProtocol]);
+  true -> nothing
+  end,
+
   lists:foldr(fun(X, _)-> [PIDTmp, ParamsTmp, SMTmp] = conf_fsm(X), conf_protocol(CurrentProtocol, Share, X, PIDTmp, ParamsTmp, SMTmp) end, [], ?LIST_ALL_PROTOCOLS),
 
   Module = conf_fsm(CurrentProtocol),
@@ -97,14 +105,14 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     [#sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
 %%-------------------------------------- Parse config file ---------------------------------
-parse_conf(ArgS, Share) ->
+parse_conf(Mod_ID, ArgS, Share) ->
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
   Addr_set      = [Addrs          || {local_addr, Addrs} <- ArgS],
   Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
   Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
-  Max_hops_set  = [Count_hops     || {max_hops, Count_hops} <- ArgS],
-  Max_rc_set    = [Retry_count    || {max_retry_count, Retry_count} <- ArgS],
+  Max_address_set   = [Addrs          || {max_address, Addrs} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
+  Max_hops_Set  = [Hops           || {max_hops, Hops} <- ArgS],
 
   Tmo_wv            = [Time || {tmo_wv, Time} <- ArgS],
   Tmo_wack          = [Time || {tmo_wack, Time} <- ArgS],
@@ -116,24 +124,31 @@ parse_conf(ArgS, Share) ->
   Tmo_dbl_wv_set    = [Time || {tmo_dbl_wv, Time} <- ArgS],
 
   Addr            = set_params(Addr_set, 1),
-  RTT             = set_params(Max_hops_set, 60),
-  Max_Retry_count = set_params(Max_rc_set, 1),
-  WTmo_path       = set_params(WTmo_path_set, 30),
-  Tmo_Neighbour   = set_params(Tmo_Neighbour_set, 30),
-  Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, 10),
-  Path_life       = set_params(Path_life_set, 120),
-  Neighbour_life  = set_params(Neighbour_life_set, 120),
+  Max_address     = set_params(Max_address_set, 20),
 
-  {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {1,3}),
-  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {1,3}),
-  {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {2,4}),
+  {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {0.3, 0.9}),
+  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {0.3, 0.9}),
+  {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
+
   Blacklist                       = set_blacklist(Bll_addrs, []),
   Routing_table                   = set_routing(Routing_addrs, NL_Protocol, 255),
   Probability                     = set_params(Prob_set, {0.4, 0.9}),
 
+  Max_hops        = set_params(Max_hops_Set, 8),
+  RTT = count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end),
+
+  Default_Tmo_Neighbour = 5 + round(Spath_tmo_end),
+  Tmo_Neighbour   = set_params(Tmo_Neighbour_set, Default_Tmo_Neighbour),
+  Tmo_dbl_wv      = set_params(Tmo_dbl_wv_set, Tmo_Neighbour + 1),
+  WTmo_path       = set_params(WTmo_path_set, RTT + RTT/2),
+
+  Path_life       = set_params(Path_life_set, 2 * WTmo_path),
+  Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
+
   ets:insert(Share, [{nl_protocol, NL_Protocol}]),
   ets:insert(Share, [{routing_table, Routing_table}]),
   ets:insert(Share, [{local_address, Addr}]),
+  ets:insert(Share, [{max_address, Max_address}]),
   ets:insert(Share, [{blacklist, Blacklist}]),
   ets:insert(Share, [{wwv_tmo,   {Wwv_tmo_start, Wwv_tmo_end} }]),
   ets:insert(Share, [{wack_tmo,  {Wack_tmo_start, Wack_tmo_end} }]),
@@ -141,14 +156,38 @@ parse_conf(ArgS, Share) ->
   ets:insert(Share, [{wpath_tmo, WTmo_path}]),
   ets:insert(Share, [{neighbour_tmo, Tmo_Neighbour}]),
   ets:insert(Share, [{max_rtt, 2 * RTT}]),
+  ets:insert(Share, [{min_rtt, RTT}]),
   ets:insert(Share, [{path_life, Path_life}]),
   ets:insert(Share, [{neighbour_life, Neighbour_life}]),
   ets:insert(Share, [{max_pkg_id, 255}]),
-  ets:insert(Share, [{rtt, RTT}]),
-  ets:insert(Share, [{max_retry_count, Max_Retry_count}]),
+  ets:insert(Share, [{rtt, RTT + RTT/2}]),
   ets:insert(Share, [{send_wv_dbl_tmo, Tmo_dbl_wv}]),
   ets:insert(Share, [{probability, Probability}]),
+
+  ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
+  ?TRACE(Mod_ID, "Routing Table ~p ~n", [Routing_table]),
+  ?TRACE(Mod_ID, "Local address ~p ~n", [Addr]),
+  ?TRACE(Mod_ID, "MAX local address ~p ~n", [Max_address]),
+  ?TRACE(Mod_ID, "Blacklist ~p ~n", [Blacklist]),
+  ?TRACE(Mod_ID, "Probability ~p ~n", [Probability]),
+  ?TRACE(Mod_ID, "Max RTT ~p Start RTT ~p ~n", [2 * RTT, RTT + RTT/2]),
+  ?TRACE(Mod_ID, "Tmo_Neighbour ~p ~n", [Tmo_Neighbour]),
+  ?TRACE(Mod_ID, "Wait Tmo_path ~p ~n", [WTmo_path]),
+  ?TRACE(Mod_ID, "Path_life ~p ~n", [Path_life]),
+  ?TRACE(Mod_ID, "Neighbour_life ~p ~n", [Neighbour_life]),
+
   NL_Protocol.
+
+count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end) ->
+  Count_waves     = 2,
+  RMax_timeout     = round(max(Wwv_tmo_end, Wack_tmo_end)),
+  Max_timeout =
+  if RMax_timeout == 0 ->
+    1;
+  true ->
+    RMax_timeout
+  end,
+  Max_hops * Count_waves * Max_timeout + Max_hops.
 
 conf_fsm(Protocol) ->
   [{_, Decr}] = lists:filter(fun({PN, _})-> PN =:= Protocol end, ?PROTOCOL_CONF),
@@ -210,7 +249,7 @@ set_timeouts(Tmo, Defaults) ->
 set_routing(Routing_addrs, NL_Protocol, Default) ->
   case NL_Protocol of
     _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs =:= [])) ->
-      io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a defualt value will be set 255 broadcast ~n",[]),
+      io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a default value will be set 255 broadcast ~n",[]),
       Default;
     _ when (Routing_addrs =/= []) ->
       [TupleRouting] = Routing_addrs, [{255,255} | tuple_to_list(TupleRouting)];

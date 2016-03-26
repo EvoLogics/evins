@@ -1,34 +1,57 @@
 %% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
-%% 
-%% Redistribution and use in source and binary forms, with or without 
-%% modification, are permitted provided that the following conditions 
-%% are met: 
-%% 1. Redistributions of source code must retain the above copyright 
-%%    notice, this list of conditions and the following disclaimer. 
-%% 2. Redistributions in binary form must reproduce the above copyright 
-%%    notice, this list of conditions and the following disclaimer in the 
-%%    documentation and/or other materials provided with the distribution. 
-%% 3. The name of the author may not be used to endorse or promote products 
-%%    derived from this software without specific prior written permission. 
-%% 
-%% Alternatively, this software may be distributed under the terms of the 
-%% GNU General Public License ("GPL") version 2 as published by the Free 
-%% Software Foundation. 
-%% 
-%% THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR 
-%% IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES 
-%% OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. 
-%% IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, 
-%% INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT 
-%% NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
-%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY 
-%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
-%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF 
-%% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
--define(NEIGHBOURS, 	"n:(.*)").
--define(PATH_DATA, 	"p:(.*),d:(.*)").
--define(NEIGHBOUR_PATH, "n:(.*),p:(.*)").
--define(PATH_ADDIT,  	"p:(.*),a:(.*)").
+%%
+%% Redistribution and use in source and binary forms, with or without
+%% modification, are permitted provided that the following conditions
+%% are met:
+%% 1. Redistributions of source code must retain the above copyright
+%%    notice, this list of conditions and the following disclaimer.
+%% 2. Redistributions in binary form must reproduce the above copyright
+%%    notice, this list of conditions and the following disclaimer in the
+%%    documentation and/or other materials provided with the distribution.
+%% 3. The name of the author may not be used to endorse or promote products
+%%    derived from this software without specific prior written permission.
+%%
+%% Alternatively, this software may be distributed under the terms of the
+%% GNU General Public License ("GPL") version 2 as published by the Free
+%% Software Foundation.
+%%
+%% THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+%% IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+%% OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+%% IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+%% INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+%% NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+%% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+%--------------- MAIN HEADER -----------------
+% 	3b			8b			6b			6b			1b
+%		Flag 		PKGID 	SRC 		DST 		ADD
+%---------------------------------------------
+%--------------- PROTOCOL HEADER -----------------
+%-------> neighbours
+% 	3b				6b 								LenNeighbours * 6b		REST till / 8
+%		TYPEMSG 	LenNeighbours 		Neighbours 						ADD
+%-------> path_data
+% 	3b				6b				LenPath * 6b   REST till / 8
+%		TYPEMSG 	LenPath 	Path 					 ADD
+%-------> neighbour_path
+% 	3b				6b 								LenNeighbours * 6b		6b				LenPath * 6b 			REST till / 8
+%		TYPEMSG 	LenNeighbours 		Neighbours 						LenPath 	Path 							ADD
+%-------> path_addit
+% 	3b				6b 				LenPath * 6b 	 	2b 				LenAdd * 8b 			REST till / 8
+%		TYPEMSG 	LenPath 	Path 					 	LenAdd 		Addtional Info 		ADD
+%---------------------------------------------
+-define(FLAG_MAX, 5).
+-define(TYPE_MSG_MAX, 5).
+-define(BITS_PKG_ID_MAX, 255).
+-define(BITS_ADDRESS_MAX, 63).
+-define(BITS_LEN_PATH, 63).
+-define(BITS_LEN_NEIGBOURS, 63).
+-define(BITS_LEN_ADD, 3).
 
 -define(LIST_ALL_PROTOCOLS, [staticr,
 			     staticrack,
@@ -46,9 +69,11 @@
 			     loarpr,
 			     loarprack]).
 
--record(pr_conf,{brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, dbl=false, evo=false, lo=false, rm=false}).
+-record(pr_conf,{stat=false, brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, dbl=false, evo=false, lo=false, rm=false}).
 
--define(LIST_ALL_PARAMS, [brp,		% broadcast path on Dst, not follow path in unicast mode
+-define(LIST_ALL_PARAMS, [
+				stat,		% static routing
+				brp,		% broadcast path on Dst, not follow path in unicast mode
 			  br_na,	% broadcast not alowed
 			  ack,		% with acknowledgement
 			  ry_only, 	% relay only data without knowing path
@@ -62,8 +87,8 @@
 			  rm]).		% route maintenance
 
 -define(PROTOCOL_CONF, [
-			{staticr,	[0, {ry_only},             	fsm_nl_flood]},	% Simple static routing
-			{staticrack, 	[1, {ry_only, br_na, ack},  	fsm_nl_flood]},	% Simple static routing with acknowledgement
+			{staticr,	[0, {stat, ry_only},             	fsm_nl_flood]},	% Simple static routing
+			{staticrack, 	[1, {stat, ry_only, br_na, ack},  	fsm_nl_flood]},	% Simple static routing with acknowledgement
 			{sncfloodr,  	[2, {ry_only},              	fsm_nl_flood]},	% Sequence number controlled flooding
 			{sncfloodrack, 	[3, {ry_only, br_na, ack},  	fsm_nl_flood]},	% Sequence number controlled flooding with acknowledgement
 			{dpfloodr,		[4, {ry_only, prob},    fsm_nl_flood]},	% Dynamic Probabilistic Flooding
@@ -109,6 +134,7 @@
 -define(PROTOCOL_SPEC(P),
 	lists:foldr(fun(X,A) ->
 			    case X of
+				stat when P#pr_conf.stat 	  -> ["Type\t\t: Static Routing\n"  | A];
 				ry_only when P#pr_conf.ry_only 	  -> ["Type\t\t: Only relay\n"  | A];
 				ack 	when P#pr_conf.ack 	  -> ["Ack\t\t: true\n"  | A];
 				ack	when not P#pr_conf.ack 	  -> ["Ack\t\t: false\n" | A];
@@ -135,7 +161,7 @@
 			      {255, 255}
 			     ]).
 
--define(FRAG2NUM(F),
+-define(FLAG2NUM(F),
 	case F of
 	    %% NL and MAC flags
 	    data 	-> 0;
@@ -149,7 +175,8 @@
 	    neighbours  -> 2;
 	    path 	-> 3;
 	    path_addit 	-> 4;
-	    dst_reached -> 5 % data type, sending only the neighbours, info: data reached dst
+	    % data type, sending only to the neighbours, info: data reached dst
+	    dst_reached -> 5
 	end).
 
 -define(NUM2FLAG(N, Layer),
@@ -167,4 +194,22 @@
 	    3 when Layer =:= nl  -> path;
 	    4 when Layer =:= nl  -> path_addit;
 	    5			 -> dst_reached
+	end).
+
+-define(NUM2TYPEMSG(N),
+	case N of
+	    %% NL layer
+	    0 			 -> neighbours; % n:(.*)
+	    1 			 -> path_data;  % p:(.*),d:(.*)
+	    2 			 -> neighbours_path; % n:(.*),p:(.*)
+	    3 			 -> path_addit % p:(.*),a:(.*)
+	end).
+
+-define(TYPEMSG2NUM(N),
+	case N of
+	    %% NL layer
+	    neighbours 	-> 0;
+	    path_data 	-> 1;
+	    neighbours_path -> 2;
+	    path_addit -> 3
 	end).

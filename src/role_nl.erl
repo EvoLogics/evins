@@ -1,30 +1,30 @@
 %% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
-%% 
-%% Redistribution and use in source and binary forms, with or without 
-%% modification, are permitted provided that the following conditions 
-%% are met: 
-%% 1. Redistributions of source code must retain the above copyright 
-%%    notice, this list of conditions and the following disclaimer. 
-%% 2. Redistributions in binary form must reproduce the above copyright 
-%%    notice, this list of conditions and the following disclaimer in the 
-%%    documentation and/or other materials provided with the distribution. 
-%% 3. The name of the author may not be used to endorse or promote products 
-%%    derived from this software without specific prior written permission. 
-%% 
-%% Alternatively, this software may be distributed under the terms of the 
-%% GNU General Public License ("GPL") version 2 as published by the Free 
-%% Software Foundation. 
-%% 
-%% THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR 
-%% IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES 
-%% OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. 
-%% IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, 
-%% INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT 
-%% NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
-%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY 
-%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
-%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF 
-%% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+%%
+%% Redistribution and use in source and binary forms, with or without
+%% modification, are permitted provided that the following conditions
+%% are met:
+%% 1. Redistributions of source code must retain the above copyright
+%%    notice, this list of conditions and the following disclaimer.
+%% 2. Redistributions in binary form must reproduce the above copyright
+%%    notice, this list of conditions and the following disclaimer in the
+%%    documentation and/or other materials provided with the distribution.
+%% 3. The name of the author may not be used to endorse or promote products
+%%    derived from this software without specific prior written permission.
+%%
+%% Alternatively, this software may be distributed under the terms of the
+%% GNU General Public License ("GPL") version 2 as published by the Free
+%% Software Foundation.
+%%
+%% THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+%% IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+%% OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+%% IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+%% INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+%% NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+%% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -module(role_nl).
 -behaviour(role_worker).
 
@@ -34,6 +34,7 @@
 -export([start/3, stop/1, to_term/3, from_term/2, ctrl/2, split/2]).
 
 -record(config, {filter, mode, waitsync, request, telegram, eol, ext_networking, pid}).
+-define(EOL_RECV, <<"\r">>).
 
 stop(_) -> ok.
 
@@ -53,24 +54,42 @@ from_term(Term, Cfg) ->
 
 from_term_helper(Tuple,_,_) when is_tuple(Tuple) ->
   case Tuple of
-    {nl, error} -> [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple))];
-    {async, T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T))];
-    {sync,  T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T))];
+    {nl, error} -> [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), ?EOL_RECV];
+    {async, T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
+    {sync,  T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
     T -> [nl_mac_hf:convert_to_binary(tuple_to_list(T))]
   end.
 
 split(L, Cfg) ->
+  case re:run(L, "\r\n") of
+    {match, [{_, _}]} -> try_recv(L, Cfg);
+    nomatch -> try_send(L, Cfg)
+  end.
+
+try_recv(L, Cfg) ->
+  case re:run(L,"(NL,recv,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+    {match, [<<"NL,recv,">>, P, L1]} -> [nl_recv_extract(P, Cfg) | split(L1, Cfg)];
+    nomatch ->
+      case re:run(L,"^(NL,busy|NL,ok)[\r\n]+(.*)", [dotall, {capture, [1, 2], binary}]) of
+        {match, [<<"NL,busy">>, L1]} -> [ {rcv_ll, {nl, busy}} | split(L1, Cfg)];
+        {match, [<<"NL,ok">>, L1]} -> [ {rcv_ll, {nl, ok}} | split(L1, Cfg)];
+        nomatch -> [{nl, error}]
+      end
+  end.
+
+try_send(L, Cfg) ->
   case re:run(L, "\n") of
     {match, [{_, _}]} ->
       case re:run(L, "^(NL,send,)(.*)", [dotall, {capture, [1, 2], binary}]) of
-        {match, [<<"NL,send,">>,P]}	-> nl_send_extract(P, Cfg);
+        {match, [<<"NL,send,">>, P]}  -> nl_send_extract(P, Cfg);
         nomatch ->
           case re:run(L,"^(NL,get,)(.*?)[\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
             {match, [<<"NL,get,">>, P, L1]} -> [ param_extract(P) | split(L1, Cfg)];
-            nomatch -> [ {nl, error} ]
+            nomatch -> [{nl, error}]
           end
       end;
-    nomatch -> [{more, L}]
+    nomatch ->
+      [{more, L}]
   end.
 
 nl_send_extract(P, Cfg) ->
@@ -79,6 +98,9 @@ nl_send_extract(P, Cfg) ->
     PLLen = byte_size(PayloadTail),
     IDst = binary_to_integer(BDst),
     AProtocolID = binary_to_atom(ProtocolID, utf8),
+
+    true = PLLen < 60,
+
     case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
       true ->
         OPLLen = PLLen - 1,
@@ -88,6 +110,22 @@ nl_send_extract(P, Cfg) ->
       false -> [{nl, error}]
     end
   catch error: _Reason -> [{nl, error}]
+  end.
+
+nl_recv_extract(P, _Cfg) ->
+  try
+    {match, [ProtocolID, BSrc, BDst, Payload]} = re:run(P,"([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    PLLen = byte_size(Payload),
+    IDst = binary_to_integer(BDst),
+    ISrc = binary_to_integer(BSrc),
+    AProtocolID = binary_to_atom(ProtocolID, utf8),
+    case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
+      true ->
+        Tuple = {nl, recv, ISrc, IDst, Payload},
+        {rcv_ll, AProtocolID, Tuple};
+      false -> {nl, error}
+    end
+  catch error: _Reason -> {nl, error}
   end.
 
 param_extract(P) ->

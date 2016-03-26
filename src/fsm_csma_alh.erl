@@ -146,12 +146,17 @@ handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
   ?TRACE(?ID, "~p~n", [Term]),
   case Term of
+    {timeout, answer_timeout} ->
+      SM;
+    {timeout, {retransmit, {not_delivered, Msg}}} ->
+      ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
+      [SM1, P] = nl_mac_hf:process_retransmit(SM, Msg, rcv_ul),
+      fsm:run_event(MM, SM1, P);
+    {timeout, {retransmit, _Tuple}} ->
+      %nothing, the message has delivered state
+      SM;
     {timeout, Event} ->
-      ?INFO(?ID, "timeout ~140p~n", [Event]),
-      case Event of
-        answer_timeout -> SM;
-        _ -> fsm:run_event(MM, SM#sm{event = Event}, {})
-      end;
+      fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
@@ -163,29 +168,32 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
-      fsm:run_event(MM, SM#sm{event = rcv_ul}, {rcv_ul, Msg});
+      nl_mac_hf:insertETS(SM, {retransmit_count, Msg}, 0),
+      nl_mac_hf:insertETS(SM, current_msg, {not_delivered, Msg}),
+      SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
+      SM2 = nl_mac_hf:process_send_payload(SM1, Msg),
+      fsm:run_event(MM, SM2#sm{event = rcv_ul}, {rcv_ul, Msg});
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
-    {async, PID, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
+    {async, {pid, NPid}, Tuple = {recvim, _, Src, _, _, _, _, _, _, Payload}} ->
+      ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [Tuple]),
+      Current_msg = nl_mac_hf:readETS(SM, current_msg),
+      SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Payload),
       [H | T] = tuple_to_list(Tuple),
-      BPid =
-      case PID of
-        {pid, NPid} -> <<"p", (integer_to_binary(NPid))/binary>>
-      end,
+      BPid = <<"p", (integer_to_binary(NPid))/binary>>,
       fsm:cast(SM, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
-      SM;
+      SM2 = send_multipath(SM1, Src),
+      fsm:run_event(MM, SM2, {});
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
-      case Tuple of
-        {sendstart, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = sendstart},{});
-        {sendend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = sendend},{});
-        {recvstart}       -> fsm:run_event(MM, SM#sm{event = recvstart},{});
-        {recvend, _, _, _, _} -> fsm:run_event(MM, SM#sm{event = recvend},{});
-        _ -> SM
-      end;
-    {sync, _Req,Answer} ->
-      fsm:cast(SM, alh, {send, {sync, Answer} }),
-      SM;
+      Ev = process_async(SM, Tuple),
+      fsm:run_event(MM, SM#sm{event = Ev}, {});
+    {sync, "?P", Answer} ->
+      get_multipath(SM, Term, Answer);
+    {sync, _Req, Answer} ->
+      SMAT = fsm:clear_timeout(SM, answer_timeout),
+      fsm:cast(SMAT, alh, {send, {sync, Answer} }),
+      SMAT;
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -194,24 +202,22 @@ handle_event(MM, SM, Term) ->
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   case SM#sm.event of
-    internal -> init_backoff(SM);
+    internal ->
+      init_backoff(SM);
     _ -> nothing
   end,
   SM#sm{event = eps}.
 
 handle_sp(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_sp ~120p~n", [Term]),
+  Backoff_timeout = fsm:check_timeout(SM, backoff_timeout),
   case Term of
-    {rcv_ul, Msg} ->
-      nl_mac_hf:insertETS(SM, current_msg, Msg),
-      case fsm:check_timeout(SM, backoff_timeout) of
-        false ->
-          Backoff_tmp = change_backoff(SM, increment),
-          fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
-        true  ->
-          fsm:cast(SM, alh,  {send, {sync, "OK"} }),
-          SM#sm{event = eps}
-      end;
+    {rcv_ul, _Msg} when Backoff_timeout =:= false ->
+      Backoff_tmp = change_backoff(SM, increment),
+      fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
+    {rcv_ul, _Msg} when Backoff_timeout =:= true ->
+      fsm:cast(SM, alh,  {send, {sync, "OK"} }),
+      SM#sm{event = eps};
     _ when SM#sm.event =:= backoff_timeout ->
       Backoff_tmp = change_backoff(SM, increment),
       fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
@@ -224,29 +230,35 @@ handle_write_alh(_MM, SM, Term) ->
   change_backoff(SM, decrement),
   case Term of
     {rcv_ul, Msg} ->
+      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
       fsm:send_at_command(SM1, Msg),
-      SM#sm{event = data_sent};
+      SM1#sm{event = data_sent};
     _ when SM#sm.event =:= backoff_timeout ->
-      fsm:send_at_command(SM1, nl_mac_hf:readETS(SM1, current_msg)),
-      SM#sm{event = data_sent}
+      {_State, Current_msg} = nl_mac_hf:readETS(SM1, current_msg),
+      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Current_msg]),
+      fsm:send_at_command(SM1, Current_msg),
+      SM1#sm{event = data_sent}
   end.
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
-    exit({alarm, SM#sm.module}).
+  exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
 
-%%--------------------------------------Helper functions--------------------------------------------------
+%%--------------------------------------Helper functions------------------------
 init_backoff(SM)->
   nl_mac_hf:insertETS(SM, current_step, 0). % 2 ^ 0
 
 check_limit(SM, Current_Backoff, Current_Step) ->
   case Current_Backoff of
-    Current_Backoff when ((Current_Backoff =< 200) and (Current_Backoff >= 1)) -> Current_Step;
-    Current_Backoff when (Current_Backoff > 200) -> Current_Step - 1;
-    Current_Backoff when (Current_Backoff < 1) -> init_backoff(SM)
+    Current_Backoff when ((Current_Backoff =< 200) and (Current_Backoff >= 1)) ->
+      Current_Step;
+    Current_Backoff when (Current_Backoff > 200) ->
+      Current_Step - 1;
+    Current_Backoff when (Current_Backoff < 1) ->
+      init_backoff(SM)
   end.
 
 change_backoff(SM, Type) ->
@@ -262,3 +274,38 @@ change_backoff(SM, Type) ->
   Val = math:pow(2, nl_mac_hf:readETS(SM, current_step)),
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
   Val.
+
+process_async(_SM, Tuple) ->
+  case Tuple of
+    {sendstart, _, _, _, _} ->
+      sendstart;
+    {sendend, _, _, _, _} ->
+      sendend;
+    {recvstart} ->
+      recvstart;
+    {recvend, _, _, _, _} ->
+      recvend;
+    _ ->
+      eps
+  end.
+
+
+send_multipath(SM, Src) ->
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
+  if Answer_timeout == false ->
+    SMT = SM#sm{event_params = {recv, Src}},
+    fsm:send_at_command(SMT, {at, "?P", ""});
+  true -> SM
+  end.
+
+get_multipath(SM, Term, Answer) ->
+  SMAT = fsm:clear_timeout(SM, answer_timeout),
+  LA = nl_mac_hf:readETS(SM, local_address),
+  [Event_params, SMP] = nl_mac_hf:event_params(SMAT, Term, recv),
+  case Event_params of
+    {recv, Src} ->
+      ?TRACE(?ID, "Multipath LA ~p from ~p : ~p~n", [LA, Src, Answer]);
+    _ -> nothing
+  end,
+  fsm:cast(SMP, alh, {send, {sync, Answer} }),
+  SMP.

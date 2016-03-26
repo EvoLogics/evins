@@ -44,15 +44,19 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   Module =
-  case parse_conf(ArgS, Share) of
+  case P = parse_conf(ArgS, Share) of
     csma_alh  -> fsm_csma_alh;
     cut_lohi  -> fsm_t_lohi;
+    aut_lohi  -> fsm_t_lohi;
     dacap     -> fsm_dacap;
-    _         -> error
+    _         -> io:format("!!! ERROR, no MAC protocol with the name ~p~n", [P]),
+                error
   end,
   Roles = fsm_worker:role_info(Role_IDs, [at, alh]),
-  if Module =:= error-> ?ERROR(Mod_ID, "No MAC protocol ID!~n", []);
-    true             -> [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = Module}]
+  if Module =:= error->
+      ?ERROR(Mod_ID, "No MAC protocol ID!~n", []);
+    true ->
+      [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = Module}]
   end.
 
 
@@ -63,25 +67,37 @@ parse_conf(ArgS, Share) ->
   TDectSet        = [Time  || {t_detect_time, Time} <- ArgS],
   DistSet         = [D     || {distance, D} <- ArgS],
   Tmo_backoff_set = [Time  || {tmo_backoff, Time} <- ArgS],
+  Tmo_retransmit_set = [Time  || {tmo_retransmit, Time} <- ArgS],
+  Max_rc_set         = [Retry_count    || {max_retransmit_count, Retry_count} <- ArgS],
 
   PMax        = set_params(PMaxSet, 500), %ms
   TDect       = set_params(TDectSet, 5),  %ms
   Sound_speed = set_params(SoundSpeedSet, 1500),  %m
   U           = set_params(DistSet, 3000),  %m
   Tmo_backoff = set_timeouts(Tmo_backoff_set, {1,3}), %s
-
+  Max_Retry_count = set_params(Max_rc_set, 3),
+  {_Tmo_backoff_min, Tmo_backoff_max} = Tmo_backoff,
+  Tmo_retransmit = set_timeouts(Tmo_retransmit_set, {Tmo_backoff_max, 2 * Tmo_backoff_max + 1}),
   ets:insert(Share, [{sound_speed, Sound_speed}]),
   ets:insert(Share, [{pmax, PMax}]),
   ets:insert(Share, [{tdetect, TDect}]),
+  ets:insert(Share, [{max_retransmit_count, Max_Retry_count}]),
+  ets:insert(Share, [{tmo_retransmit, Tmo_retransmit}]),
 
   case Protocol of
-    cut_lohi -> ets:insert(Share, [{cr_time, 2 * (PMax + TDect)}]);
-    aut_lohi -> ets:insert(Share, [{cr_time, (PMax + TDect)}]);
-    dacap    -> ets:insert(Share, [{tmo_backoff, Tmo_backoff}]),
-                ets:insert(Share, [{t_data, 1}]),     % duration of the data packet to be transmitted in s % !!!!!!!!!!!!!!!!!!! TODO
-                ets:insert(Share, [{u, U}]);          % max distance between nodes in the network in m
-    _        -> nothing
+    cut_lohi ->
+      ets:insert(Share, [{cr_time, 2 * (PMax + TDect)}]);
+    aut_lohi ->
+      ets:insert(Share, [{cr_time, (PMax + TDect)}]);
+    dacap ->
+      ets:insert(Share, [{tmo_backoff, Tmo_backoff}]),
+      % TODO: duration of the data packet to be transmitted in s
+      ets:insert(Share, [{t_data, 1}]),
+      % max distance between nodes in the network in m
+      ets:insert(Share, [{u, U}]);
+    _  -> nothing
   end,
+  io:format("!!! Name of current protocol ~p~n", [Protocol]),
   Protocol.
 
 set_params(Param, Default) ->
