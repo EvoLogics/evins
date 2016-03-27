@@ -235,25 +235,32 @@ handle_call({store, Filename}, _From, #watchstate{configuration = ModuleList} = 
 handle_call({add, Module_spec}, _From, #watchstate{configuration = ModuleList} = State) ->
   case fsm_supervisor:check_terms([Module_spec | ModuleList]) of
     []     -> {reply, ok, configure_modules(State, [Module_spec | ModuleList])};
-    Errors -> {reply, Errors, State}
+    Errors -> {reply, {error, Errors}, State}
   end;
 
 handle_call({delete, Module_ID}, _From, #watchstate{configuration = ModuleList} = State) ->
-  NewModuleList = lists:filter(fun({module, ID, _}) -> ID /= Module_ID end, ModuleList),
-  {reply, ok, configure_modules(State, NewModuleList)};
+  {Report, NewModuleList} =
+    case lists:keymember(Module_ID, 2, ModuleList) of
+      true ->  {ok, lists:filter(fun({module, ID, _}) -> ID /= Module_ID end, ModuleList)};
+      false -> {{error, notfound}, ModuleList}
+    end,
+  {reply, Report, configure_modules(State, NewModuleList)};
 
 handle_call({module_id, Module_ID, Module_ID_new}, _From, #watchstate{configuration = ModuleList} = State) ->
   NewModuleList = lists:map(fun({module,ID,ModuleConfig}) when ID == Module_ID -> {module,Module_ID_new,ModuleConfig};
                                (Module_spec) -> Module_spec
-                            end, ModuleList),    
-  {reply, ok, configure_modules(State, NewModuleList)};
+                            end, ModuleList),
+  Report = case lists:keymember(Module_ID_new, 2, NewModuleList) of
+             true -> ok;
+             false -> {error, notfound}
+           end,
+  {reply, Report, configure_modules(State, NewModuleList)};
 
 handle_call({restart, Module_ID}, _From, #watchstate{sup_id = Sup_ID, configuration = ModuleList} = State) ->
   supervisor:terminate_child(fsm_supervisor, Module_ID),
   supervisor:delete_child(fsm_supervisor, Module_ID),
   case lists:keyfind(Module_ID, 2, ModuleList) of
     {_,_,_} = ModuleSpec ->
-      io:format("ModuleSpec: ~p, Sup_ID = ~p~n", [ModuleSpec, Sup_ID]),
       {ok, _} = supervisor:start_child(Sup_ID, {Module_ID,
                                                 {fsm_mod_supervisor, start_link, [ModuleSpec]},
                                                 permanent, 1000, supervisor, []}),
