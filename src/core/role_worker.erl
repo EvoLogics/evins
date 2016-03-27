@@ -250,14 +250,21 @@ handle_info({tcp, Socket, Bin}, #ifstate{socket = Socket} = State) ->
 handle_info({PortID,{data,Bin}}, #ifstate{port = PortID} = State) ->
   process_bin(Bin, State);
 
+handle_info({PortID,eof}, #ifstate{port = PortID} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {PortID, eof}}),
+  {ok, _} = timer:send_after(1000, timeout),
+  {noreply, State#ifstate{port = nothing}};
+
 handle_info({bridge,Term}, #ifstate{fsm_pid = FSM, mm = MM} = State) ->
   gen_server:cast(FSM, {chan, MM, Term}),
   {noreply, State};
 
-handle_info(timeout, #ifstate{id = ID, type = client} = State) ->
+handle_info(timeout, #ifstate{id = ID, type = client, fsm_pid = FSM, mm = MM} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, timeout}}),
   case connect(State) of
-    {ok, NewState} -> {noreply, NewState};
+    {ok, NewState} ->
+      gen_server:cast(FSM, {chan, MM, {connected}}),
+      {noreply, NewState};
     {stop, Reason} -> {stop, Reason, State}
   end;
 
@@ -283,8 +290,10 @@ handle_info({http, _Socket, Request}, #ifstate{id = ID, fsm_pid = FSM, type = se
   gen_server:cast(FSM, {chan, MM, Request}),
   {noreply, State};
 
-handle_info({'EXIT', PortID, _Reason}, #ifstate{id = ID, port = PortID} = State) ->
+handle_info({'EXIT', PortID, _Reason}, #ifstate{id = ID, port = PortID, fsm_pid = FSM, mm = MM} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {exit, PortID}}}),
+  Self = self(),
+  gen_server:cast(FSM, {chan_error, Self, {MM#mm.iface, timeout}}),
   {ok, _} = timer:send_after(1000, timeout),
   {noreply, State#ifstate{port = nothing}};
 
@@ -315,7 +324,7 @@ to_term(Module, Tail, Chunk, Cfg) ->
                         [TermList, ErrorList, [MoreElem|MoreList], CfgAcc];
                       {error, _} ->
                         [TermList, [Elem|ErrorList], MoreList, CfgAcc];
-											{ctrl, Ctrl} ->
+                      {ctrl, Ctrl} ->
                         [TermList, ErrorList, MoreList, Module:ctrl(Ctrl, Cfg)];
                       _ ->
                         [[Elem | TermList], ErrorList, MoreList, CfgAcc]
