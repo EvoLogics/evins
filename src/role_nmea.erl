@@ -615,7 +615,7 @@ extract_vtg(Params) ->
     [BTMGT,<<"T">>,BTMGM,<<"M">>,BKnots,<<"N">>,BKPH,<<"K">>] = lists:sublist(re:split(Params, ","),8),
     %% optional FAA mode dropped
     %% KPH = Knots * 0.539956803456
-    [TMGT,TMGM,Knots,KPH] = [safe_binary_to_float(X) || X <- [BTMGT,BTMGM,BKnots,BKPH]],
+    [TMGT,TMGM,Knots,_KPH] = [safe_binary_to_float(X) || X <- [BTMGT,BTMGM,BKnots,BKPH]],
     {nmea, {vtg, TMGT,TMGM,Knots}}
   catch
     error:_ -> {error, {parseError, vtg, Params}}

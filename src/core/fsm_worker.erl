@@ -40,7 +40,7 @@
 
 -type tab() :: atom() | integer().
 
--callback start(ref(), list(ref()), any(), tuple(any(), any(), any())) -> {ok,pid()} | ignore | {error,any()}.
+-callback start(ref(), list(ref()), any(), {any(), any(), any()}) -> {ok,pid()} | ignore | {error,any()}.
 -callback register_fsms(ref(), list(ref()), tab(), list(any)) -> list(#sm{}).
 
 -record(modstate, {

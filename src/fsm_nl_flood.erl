@@ -290,7 +290,7 @@ handle_event(MM, SM, Term) ->
 
 %%------------------------------------------ init -----------------------------------------------------
 init_flood(SM) ->
-  {H, M, Ms} = erlang:now(),
+  {H, M, Ms} = erlang:timestamp(),
   random:seed({H * nl_mac_hf:readETS(SM, local_address), M * nl_mac_hf:readETS(SM, local_address), Ms}),
   nl_mac_hf:insertETS(SM, packet_id, 0),
   nl_mac_hf:insertETS(SM, path_exists, false),

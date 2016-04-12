@@ -225,7 +225,7 @@ handle_event(MM, SM, Term) ->
 init_mac(SM) ->
   nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0}),
   nl_mac_hf:insertETS(SM, cts_rts_time_total, {0, 0}),
-  random:seed(erlang:now()).
+  random:seed(erlang:timestamp()).
 
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
@@ -249,7 +249,7 @@ handle_wcts(_MM, SM, Term) ->
       Tmin = get_distance(SM, IDst) / nl_mac_hf:readETS(SM, sound_speed),
       SM2 = fsm:set_timeout(SM1, {s, Tmin}, tmo_defer_trans),
       RTT = get_current_rtt(SM2, IDst),
-      nl_mac_hf:insertETS(SM2, time_srts, erlang:now()),
+      nl_mac_hf:insertETS(SM2, time_srts, erlang:timestamp()),
       fsm:set_timeout(SM1#sm{event = eps}, {s, RTT}, wcts_end);
     {rcv_cts_fm, RTmo, Src} ->
       SM#sm{event = rcv_cts_fm, event_params = {rcv_cts_fm, RTmo, Src}};
