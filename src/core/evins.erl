@@ -66,7 +66,7 @@ add(Module_spec) -> gen_server:call(fsm_watch, {add, Module_spec}).
 delete(Module_id) -> gen_server:call(fsm_watch, {delete, Module_id}).   
 
 delete_all() ->
-  lists:map(fun(ID) -> delete(ID) end, configured_modules()).
+  lists:map(fun({_,ID}) -> delete(ID) end, configured_modules()).
 
 module_parameters(Module_ID) -> gen_server:call(fsm_watch, {module_parameters, Module_ID}).
 module_parameters(Module_ID, Opts) -> gen_server:call(fsm_watch, {module_parameters, Module_ID, Opts}).
@@ -228,6 +228,12 @@ cast({Name,Id}, Role, {Cmd, Message}) ->
   gen_server:cast(FSM_Id, {chan, #mm{role_id = evins}, {Cmd, Role, Message}}).
 
 stop(ID) ->
+  Sup_Mod_ID = list_to_atom("fsm_mod_supervisor_" ++ atom_to_list(ID)),
+  lists:map(fun({Mod_ID,_,_,[fsm_worker]}) ->
+                supervisor:terminate_child(Sup_Mod_ID, Mod_ID);
+               (_) ->
+                ok
+            end, supervisor:which_children(Sup_Mod_ID)),
   supervisor:terminate_child(fsm_supervisor, ID),
   supervisor:delete_child(fsm_supervisor, ID).
 
