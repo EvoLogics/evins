@@ -36,7 +36,7 @@ start_link(Args) ->
 
 init(Args) ->
   {ok,{{one_for_one, 3, 10},
-       %% {ok,{{one_for_one, 0, 1},
+  %% {ok,{{one_for_one, 0, 1},
        [{fsm_watch,
          {fsm_watch, start_link, [Args, ?MODULE]},
          permanent, 1000, supervisor, []}]}}.

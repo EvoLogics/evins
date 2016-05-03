@@ -90,7 +90,7 @@ handle_cast({Src_Role_PID, Src_Role_ID, ok} = Req, #modstate{mod_id = ID, role_i
                     end
                 end, {[], true}, Role_IDs),
   if Status ->
-      run_next_fsm(State#modstate{role_ids = New_Role_IDs});
+      run_fsms(State#modstate{role_ids = New_Role_IDs});
      true ->
       {noreply, State#modstate{role_ids = New_Role_IDs}}
   end;
@@ -102,7 +102,8 @@ handle_cast(restart, #modstate{mod_id = ID} = State) ->
 handle_cast({stop, SM, normal}, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {stop, SM, normal}}}),
   ets:delete(SM#sm.table),
-  {noreply, State};
+  %% {noreply, State};
+  {stop, normal, State};
 
 handle_cast({stop, SM, Reason}, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {stop, SM, Reason}}}),
@@ -113,22 +114,23 @@ handle_cast(Request, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, Request}}),
   {stop, Request, State}.
 
-handle_info({'EXIT',Pid,Reason}, #modstate{mod_id = ID} = State) ->
+handle_info({'EXIT',Pid,Reason} = Info, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {exit,Pid,Reason}}}),
-  run_next_fsm(State);
+  {stop, Info, State};
 
 handle_info(Info, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, Info}}),
-  {stop, Info, State}.       
+  {stop, Info, State}.
 
-terminate(Reason, #modstate{mod_id = ID, sup_id = Sup_ID, share = Share}) ->
+terminate(Reason, #modstate{mod_id = ID, sup_id = _Sup_ID, share = Share}) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {terminate, Reason}}}),
-  case supervisor:terminate_child(Sup_ID, {fsm, ID}) of
-    ok ->
-      nothing;
-    {error, not_found} ->
-      gen_event:notify(error_logger, {fsm_core, self(), {ID, {error, child_not_found}}})
-  end,
+  %% FIXME: should it be done? maybe to clean up the tree! no need for temporary
+  %% case supervisor:terminate_child(Sup_ID, {fsm, ID}) of
+  %%   ok ->
+  %%     nothing;
+  %%   {error, not_found} ->
+  %%     gen_event:notify(error_logger, {fsm_core, self(), {ID, {error, child_not_found}}})
+  %% end,
   ets:delete(Share),
   ok.
 
@@ -145,20 +147,22 @@ ets_insert_sm(Table, Trans) ->
                                   end, L2 ++ L4)
                 end, Trans).
 
-run_next_fsm(#modstate{fsms = []} = State) ->
-  {stop, normal, State};
-  %% {stop, empty_fsms, State};
-
-run_next_fsm(#modstate{fsms = FSMs, mod_id = Mod_ID, sup_id = Sup_ID, share = Share} = State) ->
+run_next_fsm(FSM, #modstate{mod_id = Mod_ID, sup_id = Sup_ID, share = Share}) ->
   Table = ets:new(table, [ordered_set, public]),
-  FSM = hd(FSMs),
   ets_insert_sm(Table, (FSM#sm.module):trans()),
-  FSM_worker = {{fsm,Mod_ID}, 
+  %% io:format("where is ~p: ~p~n", [FSM#sm.module, whereis(FSM#sm.module)]),
+  FSM_worker = {{FSM#sm.module, Mod_ID}, 
+  %% FSM_worker = {FSM#sm.module, 
                 {FSM#sm.module, start_link, [FSM#sm{share = Share, table = Table}]},
                 temporary, 10000, worker, [fsm]},
   {ok, Child_pid} = supervisor:start_child(Sup_ID, FSM_worker),
-  link(Child_pid),
-  {noreply, State#modstate{fsms = tl(FSMs)}}.
+  link(Child_pid).
+
+run_fsms(#modstate{fsms = FSMs} = State) ->
+  lists:map(fun(FSM) ->
+                run_next_fsm(FSM, State)
+            end, FSMs),
+  {noreply, State#modstate{fsms = []}}.
 
 %% public helper functions
 role_info(Role_IDs, Role) when is_atom(Role) ->

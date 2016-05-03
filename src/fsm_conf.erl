@@ -111,13 +111,13 @@
                  ]},
 
                 {final,
-                 []}
+                 [{internal, idle}]}
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       -> evar(SM, raw_buffer, <<"">>), SM.
 trans()        -> ?TRANS.
-final()        -> [final].
+final()        -> [].
 init_event()   -> eps.
 stop(_SM)      -> ok.
 
@@ -134,6 +134,8 @@ evar(SM, Name, Value) ->
 
 handle_event(MM, SM, Term) ->
   case Term of
+    {sync,_Req,_Answer} when SM#sm.state == final ->
+      SM;
     {sync,_Req,Answer} -> 
       case Answer of
         {error, _}        -> fsm:run_event(MM, SM#sm{event=error}, Term);
@@ -146,7 +148,13 @@ handle_event(MM, SM, Term) ->
     {error,Reason} ->
       ?WARNING(?ID, "error ~p~n", [Reason]),
       exit(Reason);
+    {disconnected, _} ->
+      fsm:cast(SM, at, {ctrl, {allow, self()}}),
+      fsm:cast(SM, at, {ctrl, {filter, at}}),
+      fsm:cast(SM, at, {ctrl, {mode, data}}),
+      fsm:cast(SM, at, {ctrl, {waitsync, no}});
     {connected} ->
+      fsm:cast(SM, at, {ctrl, {allow, self()}}),
       fsm:run_event(MM, SM#sm{event=internal}, {});
     {raw,Bin} when SM#sm.state == idle ->
       Raw_buffer = evar(SM,raw_buffer),
@@ -282,4 +290,5 @@ handle_handle_yar(_MM, SM, Term) ->
   end.
 
 handle_final(_MM, SM, _Term) ->
+  fsm:cast(SM, at, {ctrl, {allow, all}}),
   fsm:clear_timeouts(SM#sm{event = eps}).

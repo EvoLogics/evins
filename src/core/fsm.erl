@@ -50,8 +50,8 @@
 -callback final() -> list(atom()).
 -callback init_event() -> atom().
 
-start_link(#sm{id = Mod_ID} = SM) ->
-  FSM_ID = list_to_atom("fsm_" ++ atom_to_list(Mod_ID)),
+start_link(#sm{id = Mod_ID, module = Module} = SM) ->
+  FSM_ID = list_to_atom(atom_to_list(Module) ++ atom_to_list(Mod_ID)),
   gen_server:start_link({local, FSM_ID}, ?MODULE, SM, []).
 
 handle_event(Module, MM, SM, Term) ->
@@ -90,17 +90,19 @@ handle_cast(final, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, final}}),
   {stop, normal, SM};
 
-handle_cast({chan_closed, MM}, SM) ->
+handle_cast({chan_closed, MM}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_closed, MM}}}),
-  {noreply, SM};
+  handle_event(Module, MM, SM, {disconnected, MM});
+  %% {noreply, SM};
 
 handle_cast({chan_error, MM, Reason}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_error, MM, Reason}}}),
-  handle_event(Module, MM, SM, {connection_error, Reason});
+  handle_event(Module, MM, SM, {disconnected, {connection_error, Reason}});
 
-handle_cast({chan_closed_client, MM}, SM) ->
+handle_cast({chan_closed_client, MM}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_closed_client, MM}}}),
-  {noreply, SM};
+  handle_event(Module, MM, SM, {disconnected, MM});
+  %% {noreply, SM};
 
 handle_cast({chan_parseError, _, _} = Reason, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, Reason}}),
@@ -254,5 +256,5 @@ role_available(#sm{roles = Roles}, Target_role) ->
 
 cast_helper(Target, Message) ->
   gen_event:notify(error_logger, {fsm_cast, self(), {Target, Message}}),
-  gen_server:cast(Target, Message).    
+  gen_server:cast(Target, {self(), Message}).
 

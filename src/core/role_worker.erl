@@ -49,7 +49,7 @@
           port = nothing,       % Port reference
           id,                   % Role_ID
           module_id,            % FSM handling module name
-          fsm_pid = nothing,    % FSM controller module PID
+          fsm_pids = [],        % FSM controller module PID
           type = client,        % TCP client or server
           opt = [],             % TCP Socket options
           mm,                   % #mm - more info about this interface:
@@ -123,9 +123,11 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts
   gen_server:cast(Mod_ID, {Self, ID, ok}),
   connect(State#ifstate{type = Type, opt = SOpts}).
 
-cast_connected(#ifstate{fsm_pid = nothing} = State) ->
-  State;
-cast_connected(#ifstate{mm = MM, socket = Socket, port = Port, fsm_pid = FSM} = State) ->
+cast_connected(#ifstate{fsm_pids = FSMs} = State) ->
+  lists:map(fun(FSM) -> cast_connected(FSM, State) end, FSMs),
+  State.
+
+cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
   case MM#mm.iface of
     {socket,_,_,_} when Socket /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
@@ -169,47 +171,71 @@ connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = server, o
       {stop, Reason}
   end.
 
+broadcast(FSMs, Term) ->
+  lists:map(fun(FSM) -> gen_server:cast(FSM, Term) end, FSMs).
+
+%% allow = all | nobody | pid()
+conditional_cast(_, #{allow := nobody} = _Cfg, _) ->
+  nothing;
+conditional_cast(FSMs, #{allow := Allow} = _Cfg, Term) when is_pid(Allow) ->
+  lists:map(fun(FSM) when Allow == FSM ->
+                gen_server:cast(FSM, Term);
+               (_) ->
+                nothing
+            end, FSMs);
+conditional_cast(FSMs, _, Term) ->
+  broadcast(FSMs, Term).
+
 handle_call(Request, From, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
   {noreply, State}.
 
-handle_cast({fsm, Pid, ok}, #ifstate{id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {fsm, Pid, ok}}}),
-  {noreply, cast_connected(State#ifstate{fsm_pid = Pid})};
-
-handle_cast({ctrl, Term}, #ifstate{id = ID, behaviour = B, cfg = Cfg} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {ctrl, Term}}}),
-  NewCfg = B:ctrl(Term, Cfg),
-  {noreply, State#ifstate{cfg = NewCfg}};
-
-handle_cast({send, Term}, #ifstate{behaviour = B, cfg = Cfg, mm = #mm{iface = {cowboy,_,_}}} = State) ->
+handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, cfg = Cfg, mm = #mm{iface = {cowboy,_,_}}} = State) ->
   NewCfg = B:from_term(Term, Cfg),
   {noreply, State#ifstate{cfg = NewCfg}};
 
-handle_cast({send, Term}, #ifstate{mm = #mm{iface = {erlang,Target}}} = State) ->
+handle_cast_helper({_, {send, Term}}, #ifstate{mm = #mm{iface = {erlang,Target}}} = State) ->
   Target ! {bridge, Term},
   {noreply, State};
 
-handle_cast({send, Term}, #ifstate{behaviour = B, mm = MM, port = Port, socket = Socket, fsm_pid = FSM, cfg = Cfg} = State) ->
+handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Port, socket = Socket, fsm_pids = FSMs, cfg = Cfg} = State) ->
   Self = self(),
   case B:from_term(Term, Cfg) of
     [Bin, NewCfg] ->
       case MM#mm.iface of
         {socket,_,_,_} when Socket == nothing ->
-          gen_server:cast(FSM, {chan_error, Self, {MM#mm.iface, disconnected}});
+          broadcast(FSMs, {chan_error, Self, {MM#mm.iface, disconnected}});
         {socket,_,_,_} ->
           gen_tcp:send(Socket, Bin);
         {port,_,_} when Port == nothing -> 
-          gen_server:cast(FSM, {chan_error, Self, {MM#mm.iface, disconnected}});
+          broadcast(FSMs, {chan_error, Self, {MM#mm.iface, disconnected}});
         {port,_,_} ->
           Port ! {self(), {command, Bin}};
         {erlang,_,_,_} -> todo
       end,
       {noreply, State#ifstate{cfg = NewCfg}};
     {error, Reason} ->
-      gen_server:cast(FSM, {chan_error, Self, Reason}),
+      broadcast(FSMs, {chan_error, Self, Reason}),
       {noreply, State}
-  end;
+  end.
+
+handle_cast({_, {fsm, Pid, ok}}, #ifstate{id = ID} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {fsm, Pid, ok}}}),
+  {noreply, cast_connected(Pid, State#ifstate{fsm_pids = [Pid | State#ifstate.fsm_pids]})};
+
+handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, cfg = Cfg} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {ctrl, Term}}}),
+  NewCfg = B:ctrl(Term, Cfg),
+  {noreply, State#ifstate{cfg = NewCfg}};
+
+handle_cast({Pid, {send, _}} = Message, #ifstate{cfg = #{allow := Pid}} = State) ->
+  handle_cast_helper(Message, State);
+handle_cast({_, {send, _}} = Message, #ifstate{cfg = #{allow := all}} = State) ->
+  handle_cast_helper(Message, State);
+handle_cast({_, {send, _}} = Message, #ifstate{cfg = Cfg} = State) when is_map(Cfg) == false ->
+  handle_cast_helper(Message, State);
+handle_cast({_, {send, _}}, #ifstate{cfg = #{allow := nobody}} = State) ->
+  {noreply, State};
 
 handle_cast(close, #ifstate{id = ID, port = Port} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, close}}),
@@ -262,8 +288,8 @@ handle_info({PortID,eof}, #ifstate{port = PortID} = State) ->
   {ok, _} = timer:send_after(1000, timeout),
   {noreply, State#ifstate{port = nothing}};
 
-handle_info({bridge,Term}, #ifstate{fsm_pid = FSM, mm = MM} = State) ->
-  gen_server:cast(FSM, {chan, MM, Term}),
+handle_info({bridge,Term}, #ifstate{fsm_pids = FSMs, mm = MM, cfg = Cfg} = State) ->
+  conditional_cast(FSMs, Cfg, {chan, MM, Term}),
   {noreply, State};
 
 handle_info(timeout, #ifstate{id = ID, type = client} = State) ->
@@ -273,32 +299,32 @@ handle_info(timeout, #ifstate{id = ID, type = client} = State) ->
     {stop, Reason} -> {stop, Reason, State}
   end;
 
-handle_info({Port, closed}, #ifstate{id = ID, fsm_pid = FSM, port = Port, mm = MM} = State) ->
+handle_info({Port, closed}, #ifstate{id = ID, fsm_pids = FSMs, port = Port, mm = MM} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {closed, Port}}}),
-  gen_server:cast(FSM, {chan_closed, MM}),
+  broadcast(FSMs, {chan_closed, MM}),
   {ok, _} = timer:send_after(1000, timeout),
   {noreply, State#ifstate{port = nothing}};
 
-handle_info({tcp_closed, _}, #ifstate{id = ID, fsm_pid = FSM, type = client, mm = MM} = State) ->
+handle_info({tcp_closed, _}, #ifstate{id = ID, fsm_pids = FSMs, type = client, mm = MM} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, tcp_closed}}),
-  gen_server:cast(FSM, {chan_closed, MM}),
+  broadcast(FSMs, {chan_closed, MM}),
   {ok, _} = timer:send_after(1000, timeout),
   {noreply, State#ifstate{socket = nothing}};
 
-handle_info({tcp_closed, _}, #ifstate{id = ID, fsm_pid = FSM, type = server, mm = MM} = State) ->
+handle_info({tcp_closed, _}, #ifstate{id = ID, fsm_pids = FSMs, type = server, mm = MM} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, tcp_closed}}),
-  gen_server:cast(FSM, {chan_closed_client, MM}),
+  broadcast(FSMs, {chan_closed_client, MM}),
   {noreply, State#ifstate{socket = nothing}};
 
-handle_info({http, _Socket, Request}, #ifstate{id = ID, fsm_pid = FSM, type = server, mm = MM} = State) ->
+handle_info({http, _Socket, Request}, #ifstate{id = ID, fsm_pids = FSMs, cfg = Cfg, type = server, mm = MM} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {http_request, Request}}}),
-  gen_server:cast(FSM, {chan, MM, Request}),
+  conditional_cast(FSMs, Cfg, {chan, MM, Request}),
   {noreply, State};
 
-handle_info({'EXIT', PortID, _Reason}, #ifstate{id = ID, port = PortID, fsm_pid = FSM, mm = MM} = State) ->
+handle_info({'EXIT', PortID, _Reason}, #ifstate{id = ID, port = PortID, fsm_pids = FSMs, mm = MM} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {exit, PortID}}}),
   Self = self(),
-  gen_server:cast(FSM, {chan_error, Self, {MM#mm.iface, timeout}}),
+  broadcast(FSMs, {chan_error, Self, {MM#mm.iface, timeout}}),
   {ok, _} = timer:send_after(1000, timeout),
   {noreply, State#ifstate{port = nothing}};
 
@@ -355,10 +381,10 @@ set_sockopt(LSock, CliSocket) ->
       gen_tcp:close(CliSocket), Error
   end.
 
-process_bin(Bin, #ifstate{behaviour = B, fsm_pid = FSM, cfg = Cfg, tail = Tail, mm = MM} = State) ->
+process_bin(Bin, #ifstate{behaviour = B, fsm_pids = FSMs, cfg = Cfg, tail = Tail, mm = MM} = State) ->
   [TermList, ErrorList, Raw, More, NewCfg] = B:to_term(Tail, Bin, Cfg),
   Terms = if byte_size(Raw) > 0 -> TermList ++ ErrorList ++ [{raw, Raw}];
              true -> TermList ++ ErrorList
           end,
-  lists:foreach(fun(Term) -> gen_server:cast(FSM, {chan, MM, Term}) end, Terms),
+  lists:foreach(fun(Term) -> conditional_cast(FSMs, Cfg, {chan, MM, Term}) end, Terms),
   {noreply, State#ifstate{cfg = NewCfg, tail = More}}.

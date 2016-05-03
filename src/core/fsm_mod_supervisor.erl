@@ -97,3 +97,4 @@ init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
                Restart, 1000, worker, [fsm_worker]},
 
   {ok, {{one_for_all, 30, 10}, [SM_worker | Role_workers]}}.
+  %% {ok, {{one_for_all, 0, 1}, [SM_worker | Role_workers]}}.

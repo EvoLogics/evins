@@ -31,7 +31,7 @@
 
 -include("fsm.hrl").
 
--record(config, {filter,mode,waitsync,request,telegram,eol,ext_networking,pid}).
+%% -record(config, {filter,mode,waitsync,request,telegram,eol,ext_networking,pid}).
 
 stop(_) -> ok.
 
@@ -40,15 +40,18 @@ start(Role_ID, Mod_ID, MM) ->
           {eol,Other} -> Other;
           _ -> "\n"
         end,
-  Cfg = #config{filter=at,mode=data,waitsync=no,request="",telegram="",eol=EOL,ext_networking=no,pid=0},
+  Cfg = #{filter => at, mode => data, waitsync => no, request => "",
+          telegram => "", eol => EOL, ext_networking => no, pid => 0,
+          allow => nobody},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
-ctrl({filter, F}, Cfg)         -> Cfg#config{filter = F};
-ctrl({mode, M}, Cfg)           -> Cfg#config{mode = M};
-ctrl({waitsync, W}, Cfg)       -> Cfg#config{waitsync = W};
-ctrl({eol, E}, Cfg)            -> Cfg#config{eol = E};
-ctrl({ext_networking, N}, Cfg) -> Cfg#config{ext_networking = N};
-ctrl({pid, P}, Cfg)            -> Cfg#config{pid = P}.    
+ctrl({filter, F}, Cfg)         -> Cfg#{filter => F};
+ctrl({mode, M}, Cfg)           -> Cfg#{mode => M};
+ctrl({waitsync, W}, Cfg)       -> Cfg#{waitsync => W};
+ctrl({eol, E}, Cfg)            -> Cfg#{eol => E};
+ctrl({ext_networking, N}, Cfg) -> Cfg#{ext_networking => N};
+ctrl({pid, P}, Cfg)            -> Cfg#{pid => P};
+ctrl({allow, A}, Cfg)          -> Cfg#{allow => A}.
 
 %% Data stream from the modem may contain:
 %% - binary data in async: RECV*
@@ -82,9 +85,7 @@ ctrl({pid, P}, Cfg)            -> Cfg#config{pid = P}.
 %% Reason = {besParseError,<<B>>} | {parseError, Async, <<B>>} | {error, {binaryParseError, Recv, <<B>>}
 %%          | {unexpectedSync, <<B>>} | {besUnexpectedSync,RRecv,RSent,<<B>>} | {error, {wrongAsync, <<B>>}
 %%          | {wrongBinarySync, <<B>>}
-to_term(More, Chunk, Cfg) when Cfg#config.filter =:= at, Cfg#config.mode =:= data ->
-  Wait = Cfg#config.waitsync,
-  Request = Cfg#config.request,
+to_term(More, Chunk, #{filter := at, mode := data, waitsync := Wait, request := Request, pid := Pid} = Cfg) ->
   BESs = bes_split(binary_to_list(More) ++ Chunk),
   [TermList, ErrorList, BinList, MoreList, _] = 
     lists:foldl(fun(Elem, [TermList, ErrorList, BinList, MoreList, Wait1]) ->
@@ -103,7 +104,7 @@ to_term(More, Chunk, Cfg) when Cfg#config.filter =:= at, Cfg#config.mode =:= dat
                                         end,
                         case RunSplit of
                           true ->
-                            [H|_] = answer_split(FBody,W,Req,Cfg#config.pid),
+                            [H|_] = answer_split(FBody,W,Req,Pid),
                             case H of
                               {error,_} -> [TermList, [H|ErrorList], BinList, MoreList, Wait1];
                               {more,_} ->
@@ -123,8 +124,8 @@ to_term(More, Chunk, Cfg) when Cfg#config.filter =:= at, Cfg#config.mode =:= dat
   %% io:format("TermList: ~p~n",[TermList]),
   [lists:reverse(TermList), ErrorList, list_to_binary(lists:reverse(BinList)), list_to_binary(MoreList), NewCfg];
 
-to_term(More, Chunk, Cfg) ->
-  Answers = answer_split(list_to_binary([More,Chunk]),Cfg#config.waitsync,Cfg#config.request,Cfg#config.pid),
+to_term(More, Chunk, #{waitsync := Wait, request := Request, pid := Pid} = Cfg) ->
+  Answers = answer_split(list_to_binary([More,Chunk]),Wait,Request,Pid),
   [TermList, ErrorList, MoreList] = 
     lists:foldr(fun(Elem, [TermList, ErrorList, MoreList]) ->
                     case Elem of
@@ -148,17 +149,18 @@ to_term(More, Chunk, Cfg) ->
 update_cfg(Cfg, TermList) ->
   lists:foldl(fun(Term, LCfg) ->
                   WCfg = case Term of
-                           {sync, _, _} -> LCfg#config{waitsync = no};
+                           {sync, _, _} -> LCfg#{waitsync => no};
                            _ -> LCfg
                          end,
                   try
-                    case {Term, WCfg#config.telegram} of
-                      {{sync, "?ZF", "1"}, _} -> WCfg#config{ext_networking = yes};
-                      {{sync, "?ZF", "0"}, _} -> WCfg#config{ext_networking = no};
-                      {{sync, "@ZF", "OK"}, "AT@ZF1"} -> WCfg#config{ext_networking = yes};
-                      {{sync, "@ZF", "OK"}, "AT@ZF0"} -> WCfg#config{ext_networking = no};
-                      {{sync, "?PID", L}, _} -> WCfg#config{pid = list_to_integer(L)};
-                      {{sync, "!ZS", "OK"}, Telegram} -> WCfg#config{pid = list_to_integer(lists:nthtail(5, Telegram))};
+                    #{telegram := Telegram} = WCfg,
+                    case {Term, Telegram} of
+                      {{sync, "?ZF", "1"}, _} -> WCfg#{ext_networking => yes};
+                      {{sync, "?ZF", "0"}, _} -> WCfg#{ext_networking => no};
+                      {{sync, "@ZF", "OK"}, "AT@ZF1"} -> WCfg#{ext_networking => yes};
+                      {{sync, "@ZF", "OK"}, "AT@ZF0"} -> WCfg#{ext_networking => no};
+                      {{sync, "?PID", L}, _} -> WCfg#{pid => list_to_integer(L)};
+                      {{sync, "!ZS", "OK"}, Telegram} -> WCfg#{pid => list_to_integer(lists:nthtail(5, Telegram))};
                       _ -> WCfg
                     end
                   catch _E:_R -> erlang:display(erlang:get_stacktrace()),
@@ -482,11 +484,10 @@ parse_the_rest(Len, Rest) ->
     _ -> more
   end.
 
-from_term(Term, Cfg) ->
-  case Cfg#config.waitsync of
-    no -> from_term_priv(Term, Cfg);
-    _  -> {error, at_sequenceError}
-  end.
+from_term(Term, #{waitsync := no} = Cfg) ->
+  from_term_priv(Term, Cfg);
+from_term(_, _) ->
+  {error, at_sequenceError}.
 
 %% Term format:
 %% {raw,Data}
@@ -502,11 +503,11 @@ from_term(Term, Cfg) ->
 %% запятой от строки параметров отделаютсятя только send параметры
 from_term_priv({raw,Data}, Cfg) when is_binary(Data) -> 
   [Data, Cfg];
-from_term_priv(Term, Cfg) ->
+from_term_priv(Term, #{pid := Pid, filter := Filter, eol := EOL} = Cfg) ->
   %% io:format("Term = ~p~n",[Term]),
-  {Request, Wait, Telegram} = from_term_helper(Term, Cfg#config.pid, Cfg#config.filter),
-  [list_to_binary([prefix(Cfg), Telegram, Cfg#config.eol])
-  , Cfg#config{waitsync=Wait,request=Request,telegram=Telegram}].
+  {Request, Wait, Telegram} = from_term_helper(Term, Pid, Filter),
+  [list_to_binary([prefix(Cfg), Telegram, EOL])
+  , Cfg#{waitsync => Wait, request => Request, telegram => Telegram}].
 
 %% NOTE: disabled @ZF not supported!!!
 %% {at,{pid,Pid},"*SEND",Dst,Data}} or {at,"*SEND",Dst,Data}
@@ -555,6 +556,6 @@ from_term_helper({at,Req,Params}, _, F) when is_list(Req) and is_list(Params) ->
          end,
   {Req, Wait, ["AT",string:to_upper(Req),Params]}.
 
-prefix(Cfg) when Cfg#config.filter =:= at, Cfg#config.mode =:= data -> "+++";
+prefix(#{filter := at, mode := data}) -> "+++";
 prefix(_) -> "".
 
