@@ -53,7 +53,7 @@
           type = client,        % TCP client or server
           opt = [],             % TCP Socket options
           mm,                   % #mm - more info about this interface:
-                                                % {role,role_id,ip,port,type,status,params}).
+                                % {role,role_id,ip,port,type,status,params}).
           tail = <<>>,          % Not yet processed data tail
           cfg                   % Optional custom behaviour config parameters
          }).
@@ -123,17 +123,30 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts
   gen_server:cast(Mod_ID, {Self, ID, ok}),
   connect(State#ifstate{type = Type, opt = SOpts}).
 
+cast_connected(#ifstate{fsm_pid = nothing} = State) ->
+  State;
+cast_connected(#ifstate{mm = MM, socket = Socket, port = Port, fsm_pid = FSM} = State) ->
+  case MM#mm.iface of
+    {socket,_,_,_} when Socket /= nothing ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
+    {port,_,_} when Port /= nothing ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
+    _ ->
+      nothing
+  end,
+  State.
+
 connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) ->
   process_flag(trap_exit, true),
   PortID = open_port(Port,PortSettings),
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
-  {ok, State#ifstate{port = PortID}};
+  {ok, cast_connected(State#ifstate{port = PortID})};
 
 connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, opt = SOpts} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
   case gen_tcp:connect(IP, Port, SOpts, 1000) of
     {ok, Socket} ->
-      {ok, State#ifstate{socket = Socket}};
+      {ok, cast_connected(State#ifstate{socket = Socket})};
     {error, econnrefused} ->
       gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
       {ok, _} = timer:send_after(1000, timeout),
@@ -160,14 +173,9 @@ handle_call(Request, From, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
   {noreply, State}.
 
-handle_cast({fsm, Pid, ok}, #ifstate{id = ID, mm = MM, type = Type} = State) ->
+handle_cast({fsm, Pid, ok}, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {fsm, Pid, ok}}}),
-  case Type of
-    client ->
-      gen_server:cast(Pid, {chan, MM, {connected}});
-    _ -> ok
-  end,
-  {noreply, State#ifstate{fsm_pid = Pid}};
+  {noreply, cast_connected(State#ifstate{fsm_pid = Pid})};
 
 handle_cast({ctrl, Term}, #ifstate{id = ID, behaviour = B, cfg = Cfg} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {ctrl, Term}}}),
@@ -219,7 +227,7 @@ handle_cast(Request, #ifstate{id = ID} = State) ->
   {stop, Request, State}.
 
 handle_info({inet_async, LSock, Ref, {ok, NewCliSocket}},
-            #ifstate{id = ID, fsm_pid = FSM, listener = LSock, acceptor = Ref, socket = CliSocket, mm = MM} = State) ->
+            #ifstate{id = ID, listener = LSock, acceptor = Ref, socket = CliSocket} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {accepting, LSock, NewCliSocket}}}),
   case CliSocket of 
     nothing -> nothing;
@@ -230,11 +238,10 @@ handle_info({inet_async, LSock, Ref, {ok, NewCliSocket}},
       ok              -> ok;
       {error, Reason} -> exit({set_sockopt, Reason})
     end,
-    gen_server:cast(FSM, {chan, MM, {connected}}),
     %% Signal the network driver that we are ready to accept another connection
     {ok, NewRef} =  prim_inet:async_accept(LSock, -1),
     gen_event:notify(error_logger, {fsm_core, self(), {ID, {accepting, ok}}}),
-    {noreply, State#ifstate{acceptor=NewRef, socket = NewCliSocket}}
+    {noreply, cast_connected(State#ifstate{acceptor=NewRef, socket = NewCliSocket})}
   catch exit:Why ->
       error_logger:error_report([{file,?MODULE,?LINE},{id, ID},"Error in async accept",Why]),
       {stop, Why, State}
@@ -259,12 +266,10 @@ handle_info({bridge,Term}, #ifstate{fsm_pid = FSM, mm = MM} = State) ->
   gen_server:cast(FSM, {chan, MM, Term}),
   {noreply, State};
 
-handle_info(timeout, #ifstate{id = ID, type = client, fsm_pid = FSM, mm = MM} = State) ->
+handle_info(timeout, #ifstate{id = ID, type = client} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, timeout}}),
   case connect(State) of
-    {ok, NewState} ->
-      gen_server:cast(FSM, {chan, MM, {connected}}),
-      {noreply, NewState};
+    {ok, NewState} -> {noreply, NewState};
     {stop, Reason} -> {stop, Reason, State}
   end;
 

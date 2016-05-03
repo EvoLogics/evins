@@ -118,7 +118,7 @@ start_link(SM) -> fsm:start_link(SM).
 init(SM)       -> evar(SM, raw_buffer, <<"">>), SM.
 trans()        -> ?TRANS.
 final()        -> [final].
-init_event()   -> internal.
+init_event()   -> eps.
 stop(_SM)      -> ok.
 
 %% evar - external var (or persistent?)
@@ -147,7 +147,7 @@ handle_event(MM, SM, Term) ->
       ?WARNING(?ID, "error ~p~n", [Reason]),
       exit(Reason);
     {connected} ->
-      SM;
+      fsm:run_event(MM, SM#sm{event=internal}, {});
     {raw,Bin} when SM#sm.state == idle ->
       Raw_buffer = evar(SM,raw_buffer),
       Buffer = <<Raw_buffer/binary,Bin/binary>>,
