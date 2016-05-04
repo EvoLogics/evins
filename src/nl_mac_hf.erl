@@ -746,10 +746,12 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
       NewPayload = fill_msg(path_data, CheckedTuple),
       [SMN1, _]  = parse_path(SM, CheckedTuple, {ISrc, IDst}),
       [SMN1, {send, Params, {nl, send, IDst, NewPayload}}];
-    data ->
+    data when Protocol#pr_conf.pf ->
       CheckedTuple = parse_path_data(SM, Payload),
       [SMN, _] = parse_path(SM, CheckedTuple, {ISrc, IDst}),
       [SMN, Tuple];
+    data ->
+      [SM, Tuple];
     neighbours ->
       case LNeighbours = get_current_neighbours(SM) of
         no_neighbours ->
@@ -1346,22 +1348,22 @@ logs_additional(SM, Role) ->
 
   if(Role =:= source) ->
     if Protocol#pr_conf.pf  ->
+      process_command(SM, true, {statistics,"",data}),
+      process_command(SM, true, {statistics, "", paths}),
       process_command(SM, false, {statistics, "", data}),
       process_command(SM, false, {statistics, "", paths});
     true -> nothing end,
     process_command(SM, false, {protocol, "", neighbours}),
+    process_command(SM, true, {statistics, "", neighbours}),
+    process_command(SM, true, {protocol, "", neighbours}),
     if Protocol#pr_conf.pf;
        Protocol#pr_conf.stat->
+    process_command(SM, true, {protocol, "", routing}),
     process_command(SM, false, {protocol, "", routing});
     true -> nothing end;
   true ->
     nothing
-  end,
-  process_command(SM, true, {statistics,"",data}),
-  process_command(SM, true, {statistics, "", neighbours}),
-  process_command(SM, true, {statistics, "", paths}),
-  process_command(SM, true, {protocol, "", neighbours}),
-  process_command(SM, true, {protocol, "", routing}).
+  end.
 
 save_stat(SM, {ISrc, IDst}, Role)->
   case Role of
