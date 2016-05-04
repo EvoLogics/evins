@@ -228,14 +228,12 @@ handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, cfg = Cfg} = Sta
   NewCfg = B:ctrl(Term, Cfg),
   {noreply, State#ifstate{cfg = NewCfg}};
 
-handle_cast({Pid, {send, _}} = Message, #ifstate{cfg = #{allow := Pid}} = State) ->
-  handle_cast_helper(Message, State);
-handle_cast({_, {send, _}} = Message, #ifstate{cfg = #{allow := all}} = State) ->
-  handle_cast_helper(Message, State);
-handle_cast({_, {send, _}} = Message, #ifstate{cfg = Cfg} = State) when is_map(Cfg) == false ->
-  handle_cast_helper(Message, State);
 handle_cast({_, {send, _}}, #ifstate{cfg = #{allow := nobody}} = State) ->
   {noreply, State};
+handle_cast({SrcPid, {send, _}}, #ifstate{cfg = #{allow := Pid}} = State) when is_pid(Pid), Pid /= SrcPid ->
+  {noreply, State};
+handle_cast({_, {send, _}} = Message, State) ->
+  handle_cast_helper(Message, State);
 
 handle_cast(close, #ifstate{id = ID, port = Port} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, close}}),

@@ -35,14 +35,14 @@
 -export([start/4, register_fsms/4]).
 
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) -> 
-	fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+  fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
 register_fsms(_Mod_ID, Role_IDs, _Share, ArgS) ->
-	Target =
-		case [T || {target, T} <- ArgS] of
-			[T] -> T;
-			_ -> 1
-		end,
-	Roles = fsm_worker:role_info(Role_IDs, [at]),
-	[#sm{roles = [hd(Roles)], module = fsm_conf},
-	 #sm{roles = Roles, env = #{target => Target}, module = fsm_siusbl}].
+  Target =
+    case [T || {target, T} <- ArgS] of
+      [T] -> T;
+      _ -> 1
+    end,
+  Roles = fsm_worker:role_info(Role_IDs, [at]),
+  [#sm{roles = [hd(Roles)], module = fsm_conf},
+   #sm{roles = Roles, env = #{target => Target}, module = fsm_siusbl}].

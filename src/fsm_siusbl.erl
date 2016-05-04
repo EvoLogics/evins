@@ -42,7 +42,7 @@
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       ->
   Env = maps:merge(SM#sm.env, #{mode => ?MODE}),
-  fsm:set_timeout(SM#sm{env = Env}, {s, 1}, initial).
+  SM#sm{env = Env}.
 trans()        -> ?TRANS.
 final()        -> [alarm].
 init_event()   -> eps.
@@ -50,7 +50,11 @@ stop(_SM)      -> ok.
 
 handle_event(_MM, SM, Term) ->
   case Term of
-    {timeout, initial} ->
+    {connected} ->
+      fsm:send_at_command(SM, encode_sendim(SM));
+    {disconnected, _} ->
+      fsm:clear_timeouts(SM);
+    {timeout, answer_timeout} ->
       fsm:send_at_command(SM, encode_sendim(SM));
     {async, {Report, _}} when Report == deliveredim; Report == failedim ->
       fsm:send_at_command(SM, encode_sendim(SM));
@@ -58,6 +62,7 @@ handle_event(_MM, SM, Term) ->
       Env = maps:merge(SM#sm.env, #{position => {Src,X,Y,Z,E,N,U}}),
       SM#sm{env = Env};
     _UUg ->
+      ?TRACE(?ID, "Unhandled event: ~p~n", [_UUg]),
       SM
   end.
 
