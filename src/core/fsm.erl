@@ -92,16 +92,16 @@ handle_cast(final, SM) ->
 
 handle_cast({chan_closed, MM}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_closed, MM}}}),
-  handle_event(Module, MM, SM, {disconnected, MM});
+  handle_event(Module, MM, SM, {disconnected, closed});
   %% {noreply, SM};
 
 handle_cast({chan_error, MM, Reason}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_error, MM, Reason}}}),
-  handle_event(Module, MM, SM, {disconnected, {connection_error, Reason}});
+  handle_event(Module, MM, SM, {disconnected, {error, Reason}});
 
 handle_cast({chan_closed_client, MM}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_closed_client, MM}}}),
-  handle_event(Module, MM, SM, {disconnected, MM});
+  handle_event(Module, MM, SM, {disconnected, closed});
   %% {noreply, SM};
 
 handle_cast({chan_parseError, _, _} = Reason, SM) ->

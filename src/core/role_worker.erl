@@ -33,7 +33,7 @@
 
 -export([code_change/3, handle_call/3, handle_cast/2, handle_info/2, init/1, terminate/2]).
 
--export([start/4, start/5, to_term/4]).
+-export([start/4, start/5, to_term/4, bridge/2]).
 
 -callback start(ref(), ref(), #mm{}) -> {ok,pid()} | ignore | {error,any()}.
 -callback stop(any()) -> ok.
@@ -360,6 +360,11 @@ to_term(Module, Tail, Chunk, Cfg) ->
                     end
                 end, [[],[],[],Cfg], Answers),
   [TermList, ErrorList, [], list_to_binary(MoreList), NewCfg].
+
+bridge(Target, {ctrl, Term}) ->
+  gen_server:cast(Role_ID, {ctrl, Term});
+bridge(Target, {send, Term}) ->
+  Role_ID ! {bridge, Term}.
 
 %%%------------------------------------------------------------------------
 %%% Internal functions
