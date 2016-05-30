@@ -177,7 +177,7 @@ answer_split(L,Wait,Request,Pid) ->
         {match, [Recv,_,_,<<>>,<<>>,BLen,Tail]} ->
           recv_extract(L,Recv,binary_to_integer(BLen),Tail,Wait,Request,Pid);
         nomatch ->
-          case re:run(L,"^(RECVSTART|RECVEND,|RECVFAILED,|SEND[^,]*,|BITRATE,|SRCLEVEL,|PHYON|PHYOFF|USBL[^,]*,"
+          case re:run(L,"^(RECVSTART|RECVEND,|RECVFAILED,|SEND[^,]*,|BITRATE,|RADDR,|SRCLEVEL,|PHYON|PHYOFF|USBL[^,]*,"
                       "|DELIVERED|FAILED|EXPIRED|CANCELED)(.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
             {match, [<<"RECVSTART">>,<<>>,L1]} -> [{async, {recvstart}}  | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVEND,">>,P,L1]}     -> [recvend_extract(P)    | answer_split(L1,Wait,Request,Pid)];
@@ -191,6 +191,7 @@ answer_split(L,Wait,Request,Pid) ->
             {match, [<<"USBLPHYD,">>,P,L1]}    -> [usblphyd_extract(P)   | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"USBLPHYP,">>,P,L1]}    -> [usblphyp_extract(P)   | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"BITRATE,">>,P,L1]}     -> [bitrate_extract(P)    | answer_split(L1,Wait,Request,Pid)];
+            {match, [<<"RADDR,">>,P,L1]}       -> [raddr_extract(P)      | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"DELIVERED">>,P,L1]}    -> [delivered_extract(P)  | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"FAILED">>,P,L1]}       -> [failed_extract(P)     | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"CANCELED">>,P,L1]}     -> [canceled_extract(P)   | answer_split(L1,Wait,Request,Pid)];
@@ -341,6 +342,15 @@ bitrate_extract(P) ->
     {async,{bitrate,Dir,Val}}
   catch
     error:_ -> {error, {parseError, bitrate, binary_to_list(P)}}
+  end.
+
+%% RADDR,val
+raddr_extract(P) ->
+  try
+    Val = binary_to_integer(P),
+    {async,{raddr,Val}}
+  catch
+    error:_ -> {error, {parseError, raddr, binary_to_list(P)}}
   end.
 
 %% SRCLEVEL,val
