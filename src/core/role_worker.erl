@@ -362,7 +362,7 @@ to_term(Module, Tail, Chunk, Cfg) ->
   [TermList, ErrorList, [], list_to_binary(MoreList), NewCfg].
 
 bridge(Target, {ctrl, Term}) ->
-  gen_server:cast(Target, {ctrl, Term});
+  gen_server:cast(Target, {self(), {ctrl, Term}});
 bridge(Target, {send, Term}) ->
   Target ! {bridge, Term}.
 
