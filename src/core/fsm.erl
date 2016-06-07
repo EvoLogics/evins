@@ -113,9 +113,15 @@ handle_cast(Request, SM) ->
   {stop, Request, SM}.
 
 handle_info({timeout,E}, #sm{module = Module} = SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {timeout, E}}}),
-  TL = lists:filter(fun({Event,_}) -> Event =/= E end, SM#sm.timeouts),
-  handle_event(Module, nothing, SM#sm{timeouts = TL}, {timeout, E});
+  case lists:any(fun({Event,_}) -> Event == E end, SM#sm.timeouts) of
+    true ->
+      gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {timeout, E}}}),
+      TL = lists:filter(fun({Event,_}) -> Event =/= E end, SM#sm.timeouts),
+      handle_event(Module, nothing, SM#sm{timeouts = TL}, {timeout, E});
+    _ ->
+      gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {skipped_timeout, E}}}),
+      {noreply, SM}
+  end;
 
 handle_info(Info, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {unhandled_info, Info}}),
@@ -168,8 +174,8 @@ push(eps, Stack) -> Stack;
 push(Push, Stack) -> [Push|Stack].
 
 log_transition(SM, Stack, Handle) ->
-  Timeouts = lists:foldl(fun({Event,{T,_}},A) ->
-                             [{Event,T-mix:microseconds()} | A]
+  Timeouts = lists:foldl(fun({Event,TRef},A) ->
+                             [{Event,TRef} | A]
                          end, [], SM#sm.timeouts),
 
   Report = case {Handle, Timeouts, Stack} of
