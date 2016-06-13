@@ -200,6 +200,8 @@ answer_split(L,Wait,Request,Pid) ->
             {match, [H, P, L1]}                -> [{error, {wrongAsync, binary_to_list(list_to_binary([H, P]))}} | answer_split(L1,Wait,Request,Pid)];
             nomatch ->
               case re:run(L,"^(ERROR|BUSY) (.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
+                {match, [<<"ERROR">>,Reason,L1]} when Reason == <<"EFAULT">>; Reason == <<"OVERLOAD">> -> 
+                  [{async, {error, binary_to_list(Reason)}} | answer_split(L1,Wait,Request,Pid)];
                 {match, [<<"ERROR">>,Reason,L1]} -> 
                   [{sync, Request, {error, binary_to_list(Reason)}} | answer_split(L1,no,"",Pid)];
                 {match, [<<"BUSY">>,Reason,L1]} ->
