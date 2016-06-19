@@ -354,7 +354,7 @@ to_term(Module, Tail, Chunk, Cfg) ->
                       {error, _} ->
                         [TermList, [Elem|ErrorList], MoreList, CfgAcc];
                       {ctrl, Ctrl} ->
-                        [TermList, ErrorList, MoreList, Module:ctrl(Ctrl, Cfg)];
+                        [TermList, ErrorList, MoreList, Module:ctrl(Ctrl, CfgAcc)];
                       _ ->
                         [[Elem | TermList], ErrorList, MoreList, CfgAcc]
                     end
