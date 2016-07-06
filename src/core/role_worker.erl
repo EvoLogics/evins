@@ -199,23 +199,23 @@ handle_cast_helper({_, {send, Term}}, #ifstate{mm = #mm{iface = {erlang,Target}}
   {noreply, State};
 
 handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Port, socket = Socket, fsm_pids = FSMs, cfg = Cfg} = State) ->
-  Self = self(),
+  %% Self = self(),
   case B:from_term(Term, Cfg) of
     [Bin, NewCfg] ->
       case MM#mm.iface of
         {socket,_,_,_} when Socket == nothing ->
-          broadcast(FSMs, {chan_error, Self, {MM#mm.iface, disconnected}});
+          broadcast(FSMs, {chan_error, MM, disconnected});
         {socket,_,_,_} ->
           gen_tcp:send(Socket, Bin);
         {port,_,_} when Port == nothing -> 
-          broadcast(FSMs, {chan_error, Self, {MM#mm.iface, disconnected}});
+          broadcast(FSMs, {chan_error, MM, disconnected});
         {port,_,_} ->
           Port ! {self(), {command, Bin}};
         {erlang,_,_,_} -> todo
       end,
       {noreply, State#ifstate{cfg = NewCfg}};
     {error, Reason} ->
-      broadcast(FSMs, {chan_error, Self, Reason}),
+      broadcast(FSMs, {chan_error, MM, Reason}),
       {noreply, State}
   end.
 
@@ -321,8 +321,8 @@ handle_info({http, _Socket, Request}, #ifstate{id = ID, fsm_pids = FSMs, cfg = C
 
 handle_info({'EXIT', PortID, _Reason}, #ifstate{id = ID, port = PortID, fsm_pids = FSMs, mm = MM} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {exit, PortID}}}),
-  Self = self(),
-  broadcast(FSMs, {chan_error, Self, {MM#mm.iface, timeout}}),
+  %% Self = self(),
+  broadcast(FSMs, {chan_error, MM, timeout}),
   {ok, _} = timer:send_after(1000, timeout),
   {noreply, State#ifstate{port = nothing}};
 
