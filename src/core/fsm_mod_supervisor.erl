@@ -72,6 +72,8 @@ init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
                                    {socket, I, P, T} ->
                                      {ok, IP} = inet:parse_ipv4_address(I),
                                      {socket, IP, P, T};
+                                   {erlang, _, MID} when is_atom(MID) ->
+                                     {erlang, MID};
                                    {erlang, _, {M2, I2}} ->
                                      MID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[M2,I2]))),
                                      {erlang, MID};
