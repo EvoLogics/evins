@@ -33,6 +33,7 @@
 %% running modules
 -export([supervisors/0,stop/1,stop_all/0,restart/1,restart_all/0,add/1,delete/1,delete_all/0]).
 -export([loaded_modules/0,find_id/1,fabric_config/0,user_config/0,configured_modules/0,update_config/1,sign_config/1,cast/3]).
+-export([loaded_fsms/1]).
 
 -export([module_parameters/1,module_parameters/2,roles/1,roles/3,store_config/0,store_config/1,config/1,config/0]).
 -export([module_id/2,mfa/1,mfa/2]).
@@ -216,6 +217,24 @@ loaded_modules() ->
                 {Name, list_to_atom(lists:nthtail(length(atom_to_list(Name)) + 1, atom_to_list(Id))), P}
             end, Mod_pids).
 
+loaded_fsms(Id) when is_atom(Id) ->
+  Mods = loaded_modules(),
+  case [PID || {_,Id1,PID} <- Mods, Id1 == Id] of
+    [PID] -> loaded_fsms(PID);
+    [] -> {error, lists:flatten(io_lib:format("Module id ~p not found~n",[Id]))};
+    _  -> {error, lists:flatten(io_lib:format("Module id ~p not uniq~n",[Id]))}
+  end;
+loaded_fsms(PID) when is_pid(PID) ->  
+  LPID = proplists:get_value(links, process_info(PID)),
+  MName = atom_to_list(proplists:get_value(registered_name, process_info(PID))),
+  lists:filtermap(fun(FPID) ->
+                      F = proplists:get_value(registered_name, process_info(FPID)),
+                      case lists:suffix(MName, atom_to_list(F)) of
+                        true -> {true, F};
+                        _ -> false
+                      end
+                  end, LPID).
+
 cast(Id, Role, Message) when is_atom(Id) ->
   Mods = loaded_modules(),
   case [{Name,Id} || {Name,Id1,_} <- Mods, Id1 == Id] of
@@ -223,9 +242,11 @@ cast(Id, Role, Message) when is_atom(Id) ->
     [] -> {error, lists:flatten(io_lib:format("Module id ~p not found~n",[Id]))};
     _  -> {error, lists:flatten(io_lib:format("Module id ~p not uniq, use {Name,Id} pair to idenitfy module~n",[Id]))}
   end;
-cast({Name,Id}, Role, {Cmd, Message}) ->
-  FSM_Id = list_to_atom(lists:flatten(["fsm_",atom_to_list(Name), "_", atom_to_list(Id)])),
-  gen_server:cast(FSM_Id, {chan, #mm{role_id = evins}, {Cmd, Role, Message}}).
+cast({_Name,Id}, Role, {Cmd, Message}) ->
+  LFSM = loaded_fsms(Id),
+  lists:map(fun(FSM_Id) ->
+                gen_server:cast(FSM_Id, {chan, #mm{role_id = evins}, {Cmd, Role, Message}})
+            end, LFSM).
 
 stop(ID) ->
   Sup_Mod_ID = list_to_atom("fsm_mod_supervisor_" ++ atom_to_list(ID)),
