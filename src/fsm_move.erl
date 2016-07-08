@@ -67,7 +67,10 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event=Event}, {});
     {connected} ->
       SM;
+    {disconnected, _} ->
+      SM;
     _ ->
+      ?ERROR(?ID, "Unhandle event: ~p~n", [Term]),
       SM
   end.
 
@@ -76,18 +79,17 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
     initial -> 
       MS = [ets:lookup(SM#sm.share, T) || T <- [circle, brownian, tide, rocking]],
       ?TRACE(?ID, "MS: ~p~n", [MS]),
-      lists:foreach(fun(M) ->
-                        case M of
-                          [{tide, {tide, Tau, _Pr, _Amp, _Phy, _Period}}] -> timer:send_interval(Tau, {timeout, tide});
-                          [{circle, {circle, _C, _R, _V, Tau, _Phy}}] -> timer:send_interval(Tau, {timeout, circle});
-                          [{brownian, {brownian,Tau,_,_,_,_,_,_,_,_,_}}] -> timer:send_interval(Tau, {timeout, brownian});
-                          [{rocking, {rocking, Tau}}] -> timer:send_interval(Tau, {timeout, rocking});
-                          _ ->
-                            ?TRACE(?ID, "Hmmm: ~p~n", [M]),
-                            nothing
-                        end
-                    end, lists:filter(fun(M) -> M /= [] end, MS)),
-      fsm:set_event(SM, internal);
+      lists:foldl(fun(M,SM_acc) ->
+                      case M of
+                        [{tide, {tide, Tau, _Pr, _Amp, _Phy, _Period}}] -> fsm:set_interval(SM_acc, {ms, Tau}, tide);
+                        [{circle, {circle, _C, _R, _V, Tau, _Phy}}] -> fsm:set_interval(SM_acc, {ms, Tau}, circle);
+                        [{brownian, {brownian,Tau,_,_,_,_,_,_,_,_,_}}] -> fsm:set_interval(SM_acc, {ms, Tau}, brownian);
+                        [{rocking, {rocking, Tau}}] -> fsm:set_interval(SM_acc, {ms, Tau}, rocking);
+                        _ ->
+                          ?TRACE(?ID, "Hmmm: ~p~n", [M]),
+                          SM_acc
+                      end
+                  end, fsm:set_event(SM,internal), lists:filter(fun(M) -> M /= [] end, MS));
     _ ->
       fsm:set_event(SM#sm{state = alarm}, internal)
   end.
