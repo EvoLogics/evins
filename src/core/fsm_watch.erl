@@ -232,9 +232,10 @@ handle_call({store, Filename}, _From, #watchstate{configuration = ModuleList} = 
       {reply, Errors, State}
   end;
 
-handle_call({add, Module_spec}, _From, #watchstate{configuration = ModuleList} = State) ->
-  case fsm_supervisor:check_terms([Module_spec | ModuleList]) of
-    []     -> {reply, ok, configure_modules(State, [Module_spec | ModuleList])};
+handle_call({add, {module, Module_ID, _} = Module_spec}, _From, #watchstate{configuration = ModuleList} = State) ->
+  ModuleList_filtered = [Spec || {module, MID, _} = Spec <- ModuleList, MID /= Module_ID],
+  case fsm_supervisor:check_terms([Module_spec | ModuleList_filtered]) of
+    []     -> {reply, ok, configure_modules(State, [Module_spec | ModuleList_filtered])};
     Errors -> {reply, {error, Errors}, State}
   end;
 
