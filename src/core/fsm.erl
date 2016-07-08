@@ -37,7 +37,7 @@
 -export([clear_timeout/2, clear_timeouts/2, clear_timeouts/1]).
 -export([run_event/3, send_at_command/2, broadcast/3, cast/2, cast/3, cast/5]).
 -export([role_available/2]).
--export([set_event/2, set_timeout/3, check_timeout/2]).
+-export([set_event/2, set_timeout/3, set_interval/3, check_timeout/2]).
 
 %% gen_server callbacks
 -export([code_change/3, handle_call/3, handle_cast/2, handle_info/2, init/1, terminate/2]).
@@ -116,7 +116,9 @@ handle_info({timeout,E}, #sm{module = Module} = SM) ->
   case lists:any(fun({Event,_}) -> Event == E end, SM#sm.timeouts) of
     true ->
       gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {timeout, E}}}),
-      TL = lists:filter(fun({Event,_}) -> Event =/= E end, SM#sm.timeouts),
+      TL = lists:filter(fun({_,{interval,_}}) -> true;
+                           ({Event,_}) -> Event =/= E
+                        end, SM#sm.timeouts),
       handle_event(Module, nothing, SM#sm{timeouts = TL}, {timeout, E});
     _ ->
       gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {skipped_timeout, E}}}),
@@ -220,6 +222,16 @@ set_timeout(SM, Time, Event) ->
          {us, V} -> (V + 999) div 1000
        end,
   {ok, TRef} = timer:send_after(round(MS), {timeout, Event}),
+  SM#sm{timeouts = [{Event,TRef} | Timeouts]}.
+
+set_interval(SM, Time, Event) ->
+  #sm{timeouts = Timeouts} = clear_timeout(SM, Event),
+  MS = case Time of
+         {s, V} -> V * 1000;
+         {ms, V} -> V;
+         {us, V} -> (V + 999) div 1000
+       end,
+  {ok, TRef} = timer:send_interval(round(MS), {timeout, Event}),
   SM#sm{timeouts = [{Event,TRef} | Timeouts]}.
 
 set_event(SM, Event) ->
