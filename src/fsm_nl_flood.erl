@@ -291,7 +291,7 @@ handle_event(MM, SM, Term) ->
 %%------------------------------------------ init -----------------------------------------------------
 init_flood(SM) ->
   {H, M, Ms} = erlang:timestamp(),
-  random:seed({H * nl_mac_hf:readETS(SM, local_address), M * nl_mac_hf:readETS(SM, local_address), Ms}),
+  rand:seed({H * nl_mac_hf:readETS(SM, local_address), M * nl_mac_hf:readETS(SM, local_address), Ms}),
   nl_mac_hf:insertETS(SM, packet_id, 0),
   nl_mac_hf:insertETS(SM, path_exists, false),
   nl_mac_hf:insertETS(SM, list_current_wvp, []),
@@ -734,7 +734,7 @@ check_probability(SM) ->
   end,
 
   %random number between 0 and 1
-  RN = random:uniform(),
+  RN = rand:uniform(),
   ?TRACE(?ID, "Snbr ~p P ~p PNew ~p > RN ~p :  ~n", [Snbr, P, PNew, RN]),
   PNew > RN.
 

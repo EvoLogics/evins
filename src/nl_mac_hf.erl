@@ -154,7 +154,7 @@ clear_spec_timeout(SM, Spec) ->
 %%--------------------------------------------------- Math functions -----------------------------------------------
 rand_float(SM, Random_interval) ->
   {Start, End} = readETS(SM, Random_interval),
-  (Start + random:uniform() * (End - Start)) * 1000.
+  (Start + rand:uniform() * (End - Start)) * 1000.
 
 lerp(A, B, F) -> A + F * (B - A).
 
