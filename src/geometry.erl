@@ -51,8 +51,8 @@ norm(V1,V2) -> norm(vdiff(V1,V2)).
 normilize(V) -> N = norm(V), map(fun(I) -> I/N end, V).
 
 random_normal(Mean, StdDev) ->
-  U = random:uniform(),
-  V = random:uniform(),
+  U = rand:uniform(),
+  V = rand:uniform(),
   Mean + StdDev * ( math:sqrt(-2 * math:log(U)) * math:cos(2 * math:pi() * V) ).
 
 brownian_walk(Min, Max, Prev) when Max >= Min, Prev >= Min, Prev =< Max ->

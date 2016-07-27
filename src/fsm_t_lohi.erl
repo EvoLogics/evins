@@ -207,7 +207,7 @@ handle_event(MM, SM, Term) ->
   end.
 
 init_mac(SM) ->
-  random:seed(erlang:timestamp()),
+  rand:seed(erlang:timestamp()),
   %nl_mac_hf:insertETS(SM, retransmit_count, 0),
   init_ct(SM).
 
@@ -266,7 +266,7 @@ handle_transmit_data(_MM, SM, Term) ->
       ?TRACE(?ID, "MAC_AT_SEND ~p~n", [SendT]),
       nl_mac_hf:send_mac(SM, at, data, SendT),
       CR_Time = nl_mac_hf:readETS(SM, cr_time),
-      R = CR_Time * random:uniform(),
+      R = CR_Time * rand:uniform(),
       SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, dp_ends),
       nl_mac_hf:process_send_payload(SM1, SendT);
     _ -> SM#sm{event = eps}
@@ -294,7 +294,7 @@ process_cr(SM, Msg) ->
   if Ct =:= 0 ->
     SM#sm{event = no_ct};
   true ->
-    R = CR_Time * random:uniform(),
+    R = CR_Time * rand:uniform(),
     %SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, 2 * R}, {backoff_timeout, Msg}),
     SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, R}, {backoff_timeout, Msg}),
     SM1#sm{event = ct_exist}
@@ -349,7 +349,7 @@ process_rcv_flag(SM, Flag) ->
       end,
       SM1#sm{event = rcv_ct};
     data when State =:= blocking_state ->
-      R = CR_Time * random:uniform(),
+      R = CR_Time * rand:uniform(),
       fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, end_of_frame);
     data ->
       SM#sm{event = rcv_data}

@@ -37,7 +37,7 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   {A1,A2,A3} = os:timestamp(),
-  _Old = random:seed(A1, A2, A3),
+  _Old = rand:seed(A1, A2, A3),
 
   %% {movement,[{circle,...},{tide,...},{rocking,...},{brownian,...},{jitter,...}]}
 
@@ -93,9 +93,9 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
                         [{geodetic, Lat, Lon, Alt}] = [R || {reference,R} <- ArgS],
                         Sea_level = Alt - Z_lever_arm + Depth,
                         ets:insert(Share, {sea_level, Sea_level}),
-                        Xs = (random:uniform() * (XMax - XMin)) + XMin,
-                        Ys = (random:uniform() * (YMax - YMin)) + YMin,
-                        Zs = (random:uniform() * (ZMax - ZMin)) + ZMin,
+                        Xs = (rand:uniform() * (XMax - XMin)) + XMin,
+                        Ys = (rand:uniform() * (YMax - YMin)) + YMin,
+                        Zs = (rand:uniform() * (ZMax - ZMin)) + ZMin,
                         ets:insert(Share, {geodetic, [Lat, Lon, Alt]}),
                         ets:insert(Share, {brownian, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xs, Ys, Zs}}),
                         fsm_worker:role_info(Role_IDs, [scli]) ++ Acc;

@@ -194,9 +194,9 @@ broadcast_nmea(SM, [X, Y, Z]) ->
 
 apply_jitter(SM, [X, Y, Z]) ->
   [{_, {jitter, Jx, Jy, Jz}}] = ets:lookup(SM#sm.share, jitter),
-  [X + (2*Jx*random:uniform() - Jx),
-   Y + (2*Jy*random:uniform() - Jy),
-   Z + (2*Jz*random:uniform() - Jz)].
+  [X + (2*Jx*rand:uniform() - Jx),
+   Y + (2*Jy*rand:uniform() - Jy),
+   Z + (2*Jz*rand:uniform() - Jz)].
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->

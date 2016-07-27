@@ -225,7 +225,7 @@ handle_event(MM, SM, Term) ->
 init_mac(SM) ->
   nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0}),
   nl_mac_hf:insertETS(SM, cts_rts_time_total, {0, 0}),
-  random:seed(erlang:timestamp()).
+  rand:seed(erlang:timestamp()).
 
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
