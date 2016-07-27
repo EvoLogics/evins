@@ -74,7 +74,7 @@ safe_binary_to_float(B) ->
   case (catch binary_to_float(B)) of
     V when is_number(V) -> V;
     _ ->
-      try float(binary_to_float(B))
+      try float(binary_to_integer(B))
       catch _:_ -> nothing end
   end.
 
@@ -118,6 +118,7 @@ split(L, Cfg) ->
                 <<"EVORCM">> -> [extract_evorcm(Params) | split(Rest, Cfg)];
                 <<"EVOSEQ">> -> [extract_evoseq(Params) | split(Rest, Cfg)];
                 <<"EVOSSB">> -> [extract_evossb(Params) | split(Rest, Cfg)];
+                <<"EVOSSA">> -> [extract_evossa(Params) | split(Rest, Cfg)];
                 _ ->      [{error, {notsupported, Cmd}} | split(Rest, Cfg)]
               end;
              true -> [{error, {checksum, CS, XOR, Raw}} | split(Rest, Cfg)]
@@ -549,6 +550,43 @@ extract_evossb(Params) ->
     error:_ -> {error, {parseError, evossb, Params}}
   end.
 
+%% $PEVOSSA,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel
+%% UTC hhmmss.ss
+%% TID transponder ID
+%% S status OK/NOK
+%% Err error code cc_
+%% CS coordinate system: Local frame (LF)/ ENU / GEOD
+%% FS filter status: M measured, F filtered
+%% B,E bearing and elevation angles
+%% Acc accuracy in meters
+%% Pr pressure in dBar (blank, if not available)
+%% Vel velocity in m/s
+extract_evossa(Params) ->
+  try
+    [BUTC,BTID,BS,BErr,BCS,BFS,BB,BE,BAcc,BPr,BVel] = 
+      lists:sublist(re:split(Params, ","),11),
+    UTC = extract_utc(BUTC),
+    TID = safe_binary_to_integer(BTID),
+    [B,E,Acc,Pr,Vel] = [safe_binary_to_float(V) || V <- [BB,BE,BAcc,BPr,BVel]],
+    S = case BS of
+          <<"OK">> -> ok;
+          <<"NOK">> -> nok
+        end,
+    CS = case BCS of
+           <<"LF">> -> lf;
+           <<"ENU">> -> enu;
+           <<"GEOD">> -> geod
+         end,
+    FS = case BFS of
+           <<"M">> -> measured;
+           <<"F">> -> filtered
+         end,
+    Err = binary_to_list(BErr),
+    {nmea, {evossa, UTC, TID, S, Err, CS, FS, B, E, Acc, Pr, Vel}}
+  catch
+    error:_ -> {error, {parseError, evossb, Params}}
+  end.
+
 %% $--HDG,Heading,Devitaion,D_sign,Variation,V_sign
 %% Heading        x.x magnetic sensor heading in degrees
 %% Deviation      x.x deviation, degrees
@@ -911,6 +949,27 @@ build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
                     [TID, SS, Err, SCS, SFS, X, Y, Z, Acc, Pr, Vel], ",")
           ]).
 
+%% $PEVOSSA,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel
+build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
+  SUTC = utc_format(UTC),
+  SS = case S of
+         ok -> "OK";
+         nok -> "NOK"
+       end,
+  {SCS,Fmt} = case CS of
+                lf -> {<<"LF">>,"~.2.0f"};
+                enu -> {<<"ENU">>,"~.2.0f"};
+                geod -> {<<"GEOD">>,"~.6.0f"}
+        end,
+  SFS = case FS of
+          measured -> <<"M">>;
+          filtered -> <<"F">>
+        end,
+  flatten(["PEVOSSA",SUTC,
+           safe_fmt(["~B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
+                    [TID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
+          ]).
+
 build_hdg(Heading,Dev,Var) ->
   F = fun(V) -> case V < 0 of true -> {"W",-V}; _ -> {"E",V} end end,
   {DevS,DevA} = F(Dev),
@@ -984,6 +1043,8 @@ from_term_helper(Sentense) ->
       build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS);
     {evossb,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel} ->
       build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
+    {evossa,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
+      build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
     {evoseq,Sid,Total,MAddr,Range,Seq} ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
     {hdg,Heading,Dev,Var} ->
