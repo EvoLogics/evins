@@ -32,7 +32,7 @@
 
 %% running modules
 -export([supervisors/0,stop/1,stop_all/0,restart/1,restart_all/0,add/1,delete/1,delete_all/0]).
--export([loaded_modules/0,find_id/1,fabric_config/0,user_config/0,configured_modules/0,update_config/1,sign_config/1,cast/3]).
+-export([loaded_modules/0,find_id/1,fabric_config/0,user_config/0,configured_modules/0,update_config/1,sign_config/1,cast/2,cast/3]).
 -export([loaded_fsms/1]).
 
 -export([module_parameters/1,module_parameters/2,roles/1,roles/3,store_config/0,store_config/1,config/1,config/0]).
@@ -234,6 +234,9 @@ loaded_fsms(PID) when is_pid(PID) ->
                         _ -> false
                       end
                   end, LPID).
+
+cast(Id, {Cmd, Role, Message}) ->
+  cast(Id, Role, {Cmd, Message}).
 
 cast(Id, Role, Message) when is_atom(Id) ->
   Mods = loaded_modules(),
