@@ -119,6 +119,7 @@ split(L, Cfg) ->
                 <<"EVOSEQ">> -> [extract_evoseq(Params) | split(Rest, Cfg)];
                 <<"EVOSSB">> -> [extract_evossb(Params) | split(Rest, Cfg)];
                 <<"EVOSSA">> -> [extract_evossa(Params) | split(Rest, Cfg)];
+                <<"EVOCTL">> -> [extract_evoctl(Params) | split(Rest, Cfg)];
                 _ ->      [{error, {notsupported, Cmd}} | split(Rest, Cfg)]
               end;
              true -> [{error, {checksum, CS, XOR, Raw}} | split(Rest, Cfg)]
@@ -129,6 +130,8 @@ split(L, Cfg) ->
       [{more, L}]
   end.
 
+extract_utc(nothing) ->
+  nothing;
 extract_utc(BUTC) ->
   <<BHH:2/binary,BMM:2/binary,BSS/binary>> = BUTC,
   SS = case re:split(BSS,"\\\.") of
@@ -587,6 +590,34 @@ extract_evossa(Params) ->
     error:_ -> {error, {parseError, evossb, Params}}
   end.
 
+%% $PEVOCTL,BUSBL,...
+%% ID - configuration id (BUSBL/...)
+%% $PEVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
+%% Lat/Lon/Alt x.x reference coordinates
+%% Mode        a   interrogation mode (S = silent / T  = transponder / <I1>:...:<In> = interrogation sequence)
+%% IT          x   interrogation timeout in us
+%% MP          x   max pressure id dBar (must be equal on all the modems)
+%% AD          x   answer delays in us
+extract_evoctl(<<"BUSBL,",Params/binary>>) ->
+  try
+    [BLat,BN,BLon,BE,BAlt,BMode,BIT,BMP,BAD] = 
+      lists:sublist(re:split(Params, ","),9),
+    [_, Lat, Lon] = extract_geodata(nothing, BLat, BN, BLon, BE),
+    Alt = safe_binary_to_float(BAlt),
+    Mode = case BMode of
+             <<>> -> nothing;
+             <<"S">> -> silent;
+             <<"T">> -> transponder;
+             _ -> [binary_to_integer(BI) || BI <- re:split(BMode, ":")]
+           end,
+    [IT, MP, AD] = [safe_binary_to_integer(X) || X <- [BIT, BMP, BAD]],
+    {nmea, {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}
+  end;
+extract_evoctl(Params) ->
+  {error, {parseError, evoctl, Params}}.
+
 %% $--HDG,Heading,Devitaion,D_sign,Variation,V_sign
 %% Heading        x.x magnetic sensor heading in degrees
 %% Deviation      x.x deviation, degrees
@@ -865,6 +896,21 @@ build_evoseq(Sid,Total,MAddr,Range,Seq) ->
   flatten(["PEVOSEQ",safe_fmt(["~B","~B","~B","~B","~s"],
                               [Sid,Total,MAddr,Range,SFun(Seq)],",")]).
 
+%% $-EVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
+build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}) ->
+  SLat = lat_format(Lat),
+  SLon = lon_format(Lon),
+  SMode = case Mode of
+            silent -> "S";
+            transponder -> "T";
+            Seq when is_list(Seq) ->
+              foldl(fun(Id,Acc) ->
+                        Acc ++ ":" ++ integer_to_list(Id)
+                    end, integer_to_list(hd(Seq)), tl(Seq))
+          end,
+  flatten(["PEVOCTL,BUSBL",safe_fmt(["~s","~s","~.1.0f","~s","~B","~B","~B"],
+                                    [SLat,SLon,Alt,SMode,IT,MP,AD],",")]).
+
 %% $-EVORCT,TX,TX_phy,Lat,LatS,Lon,LonS,Alt,S_gps,Pressure,S_pressure,Yaw,Pitch,Roll,S_ahrs,LAx,LAy,LAz,HL
 build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,Ly,Lz},HL) ->
   SStatus = fun(undefined)    -> "";
@@ -1047,6 +1093,8 @@ from_term_helper(Sentense) ->
       build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
     {evoseq,Sid,Total,MAddr,Range,Seq} ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
+    {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}} ->
+      build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD});
     {hdg,Heading,Dev,Var} ->
       build_hdg(Heading,Dev,Var);
     {hdt,Heading} ->
