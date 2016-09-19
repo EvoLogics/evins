@@ -115,7 +115,6 @@ nl_send_extract(P, Cfg) ->
 nl_recv_extract(P, _Cfg) ->
   try
     {match, [ProtocolID, BSrc, BDst, Payload]} = re:run(P,"([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
-    PLLen = byte_size(Payload),
     IDst = binary_to_integer(BDst),
     ISrc = binary_to_integer(BSrc),
     AProtocolID = binary_to_atom(ProtocolID, utf8),

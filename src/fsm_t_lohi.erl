@@ -207,7 +207,7 @@ handle_event(MM, SM, Term) ->
   end.
 
 init_mac(SM) ->
-  random:seed(erlang:now()),
+  random:seed(os:timestamp()),
   %nl_mac_hf:insertETS(SM, retransmit_count, 0),
   init_ct(SM).
 
