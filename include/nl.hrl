@@ -158,7 +158,8 @@
 			      {7, 7},
 			      {8, 8},
 			      {9, 9},
-			      {255, 255}
+			      {255, ?BITS_ADDRESS_MAX},
+			      {?BITS_ADDRESS_MAX, 255}
 			     ]).
 
 -define(FLAG2NUM(F),

@@ -222,7 +222,7 @@ handle_event(MM, SM, Term) ->
       case nl_mac_hf:readETS(SM, pid) =:= PID of
         true ->
           [SMN, NT] = parse_ll_msg(SM, T),
-          nl_mac_hf:logs_additional(SM, NT),
+          %nl_mac_hf:logs_additional(SM, NT),
           case NT of
             nothing ->
               SMN;
@@ -482,7 +482,7 @@ handle_wpath(_MM, SM, Term) ->
       [_, BPath] = nl_mac_hf:parse_path(SM, NPathTuple, {Real_src, Real_dst}),
       SM1 = fsm:clear_timeout(SM, {wpath_timeout, {Packet_id, Real_dst, Real_src}}),
       case nl_mac_hf:get_routing_addr(SM, path, Real_dst) of
-        255 when not Protocol#pr_conf.brp ->
+        ?BITS_ADDRESS_MAX when not Protocol#pr_conf.brp ->
           SM1#sm{event=error, event_params={error, {Real_dst, Real_src}}};
         _ ->
           nl_mac_hf:analyse(SM1, paths, BPath, {Real_src, Real_dst}),
@@ -502,7 +502,7 @@ handle_wpath(_MM, SM, Term) ->
         [SM1, SDParams, SDTuple]  ->
           SM2 = fsm:clear_timeout(SM1, {wpath_timeout, {Packet_id, Real_src, Real_dst}}),
           case nl_mac_hf:get_routing_addr(SM2, path, Real_dst) of
-            255 when not Protocol#pr_conf.brp ->
+            ?BITS_ADDRESS_MAX when not Protocol#pr_conf.brp ->
               %% path can not have broadcast addrs, because these addrs have bidirectional links
               SM2#sm{event=error, event_params={error, {Real_dst, Real_src}}};
             _ ->
@@ -549,7 +549,7 @@ proccess_send(SM, Tuple) ->
          {send, {data, [PkgID, Local_address, []]}, Tuple};
        false when Protocol#pr_conf.pf ->
          Path_exists = nl_mac_hf:get_routing_addr(SM, data, Dst),
-         if (Path_exists =/= 255) ->
+         if (Path_exists =/= ?BITS_ADDRESS_MAX) ->
               nl_mac_hf:insertETS(SM, path_exists, true),
               {send, {data, [PkgID, Local_address, []]}, Tuple};
             true ->
@@ -643,6 +643,7 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
 
   Flag = nl_mac_hf:num2flag(BFlag, nl),
   RemotePkgID = Pkg_id,
+
   RecvNLSrc = nl_mac_hf:addr_mac2nl(SM, Real_src),
   RecvNLDst = nl_mac_hf:addr_mac2nl(SM, Real_dst),
 
@@ -675,7 +676,7 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
       [SMN, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
     not_proccessed ->
       if  (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= Local_address);
-          (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= 255) ->
+          (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= ?BITS_ADDRESS_MAX) ->
             %% check probability, for probabilistic protocols
             if Protocol#pr_conf.prob ->
              case check_probability(SMN) of

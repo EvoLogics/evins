@@ -100,6 +100,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     [_, _, SMN] = Module,
     [{local_address, La}] = ets:lookup(Share, local_address),
     DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
+    %Roles = fsm_worker:role_info(Role_IDs, [alh, nl, nmea]),
     Roles = fsm_worker:role_info(Role_IDs, [alh, nl]),
     {ok, Ref} = dets:open_file(DetsName,[]),
     [#sm{roles = Roles, dets_share = Ref, module = SMN}]
@@ -131,7 +132,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
 
   Blacklist                       = set_blacklist(Bll_addrs, []),
-  Routing_table                   = set_routing(Routing_addrs, NL_Protocol, 255),
+  Routing_table                   = set_routing(Routing_addrs, NL_Protocol, ?BITS_ADDRESS_MAX),
   Probability                     = set_params(Prob_set, {0.4, 0.9}),
 
   Max_hops        = set_params(Max_hops_Set, 8),
@@ -159,7 +160,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ets:insert(Share, [{min_rtt, RTT}]),
   ets:insert(Share, [{path_life, Path_life}]),
   ets:insert(Share, [{neighbour_life, Neighbour_life}]),
-  ets:insert(Share, [{max_pkg_id, 255}]),
+  ets:insert(Share, [{max_pkg_id, ?BITS_ADDRESS_MAX}]),
   ets:insert(Share, [{rtt, RTT + RTT/2}]),
   ets:insert(Share, [{send_wv_dbl_tmo, Tmo_dbl_wv}]),
   ets:insert(Share, [{probability, Probability}]),
@@ -252,6 +253,6 @@ set_routing(Routing_addrs, NL_Protocol, Default) ->
       io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a default value will be set 255 broadcast ~n",[]),
       Default;
     _ when (Routing_addrs =/= []) ->
-      [TupleRouting] = Routing_addrs, [{255,255} | tuple_to_list(TupleRouting)];
+      [TupleRouting] = Routing_addrs, [{?BITS_ADDRESS_MAX, ?BITS_ADDRESS_MAX} | tuple_to_list(TupleRouting)];
     _ -> Default
   end.

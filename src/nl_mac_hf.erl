@@ -237,9 +237,10 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
         ?ERROR(?ID, "~s: Wrong Rout_addr:~p, check config file ~n", [?MODULE, Rout_addr]);
         true -> nothing
        end,
+
        ?TRACE(?ID, "Rout_addr ~p, MAC_addrm ~p, MAC_real_src ~p, MAC_real_dst ~p~n", [Rout_addr, MAC_addr, MAC_real_src, MAC_real_dst]),
        if ((MAC_addr =:= error) or (MAC_real_src =:= error) or (MAC_real_dst =:= error)
-           or ((MAC_real_dst =:= 255) and Protocol#pr_conf.br_na)) ->
+           or ((MAC_real_dst =:= ?BITS_ADDRESS_MAX) and Protocol#pr_conf.br_na)) ->
             error;
           true ->
             NLarp = set_dst_addr(NL, MAC_addr),
@@ -632,10 +633,10 @@ get_routing_addr(SM, Flag, AddrSrc) ->
                     or (Protocol#pr_conf.pf and ((Flag =:= data) or (Flag =:= ack)))
                     or ( (Protocol#pr_conf.lo or Protocol#pr_conf.dbl) and (Flag =:= path)) ) ->
       find_in_routing_table(Routing_table, AddrSrc);
-    _ ->  255
+    _ ->  ?BITS_ADDRESS_MAX
   end.
 
-find_in_routing_table(255, _) -> 255;
+find_in_routing_table(?BITS_ADDRESS_MAX, _) -> ?BITS_ADDRESS_MAX;
 find_in_routing_table([], _) -> no_routing_table;
 find_in_routing_table(Routing_table, AddrSrc) ->
   lists:foldr(
@@ -683,7 +684,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src
   NPath = [MAC_addr | BPath],
 
   case get_routing_addr(SM, path, Real_dst) of
-    255 -> nothing;
+    ?BITS_ADDRESS_MAX -> nothing;
     _ -> analyse(SM1, paths, NPath, {Real_src, Real_dst})
   end,
 
@@ -863,7 +864,7 @@ proccess_rout_table_helper(SM, FromAddr, NListPath) ->
       end
   end.
 proccess_rout_table(SM, [],_, Routing_table) ->
-  [SM, lists:reverse([255 | Routing_table]) ];
+  [SM, lists:reverse([?BITS_ADDRESS_MAX | Routing_table]) ];
 proccess_rout_table(SM, [H | T], NLFrom, Routing_table) ->
   SM1 = fsm:set_timeout(SM, {s, readETS(SM, path_life)}, {path_life, {H, NLFrom}}),
   proccess_rout_table(SM1, T, NLFrom, [ {H, NLFrom} | Routing_table]).
@@ -895,7 +896,7 @@ save_path(SM, {Flag,_} = Params, Tuple) ->
 
 update_rout_table(SM, NRouting_table) ->
   ORouting_table = readETS(SM, routing_table),
-  LRouting_table = if ORouting_table =:= 255 -> [255]; true -> ORouting_table end,
+  LRouting_table = if ORouting_table =:= ?BITS_ADDRESS_MAX -> [?BITS_ADDRESS_MAX]; true -> ORouting_table end,
   SMN1 =
   lists:foldr(
      fun(X, SMTmp) ->
@@ -1111,8 +1112,8 @@ routing_to_bin(SM) ->
   Routing_table = readETS(SM, routing_table),
   Local_address = readETS(SM, local_address),
   case Routing_table of
-    255 ->
-      list_to_binary(["default->",integer_to_binary(255)]);
+    ?BITS_ADDRESS_MAX ->
+      list_to_binary(["default->",integer_to_binary(?BITS_ADDRESS_MAX)]);
     _ ->
       lists:foldr(
         fun(X,A) ->
@@ -1448,8 +1449,8 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
       CTDiff = convert_t(TDiff, {us, s}),
       Tuple = {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops},
       add_item_to_queue_nd(SM, QName, Tuple, 300)
-  end,
-  logs_additional(SM, Role).
+  end.
+  %logs_additional(SM, Role).
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
   Q = readETS(SM, Qname),
