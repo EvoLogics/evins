@@ -52,6 +52,7 @@
 -define(BITS_LEN_PATH, 63).
 -define(BITS_LEN_NEIGBOURS, 63).
 -define(BITS_LEN_ADD, 3).
+-define(BITS_ADD, 255).
 
 -define(LIST_ALL_PROTOCOLS, [staticr,
 			     staticrack,
@@ -93,7 +94,7 @@
 			{sncfloodrack, 	[3, {ry_only, br_na, ack},  	fsm_nl_flood]},	% Sequence number controlled flooding with acknowledgement
 			{dpfloodr,		[4, {ry_only, prob},    fsm_nl_flood]},	% Dynamic Probabilistic Flooding
 			{dpfloodrack,	[5, {ry_only, prob, br_na, ack},fsm_nl_flood]},	% Dynamic Probabilistic Flooding with acknowledgement
-			{icrpr,		[6, {ry_only, pf, br_na, ack},  fsm_nl_flood]},	% Information Carrying Routing Protocol
+			{icrpr,		[5, {ry_only, pf, br_na, ack},  fsm_nl_flood]},	% Information Carrying Routing Protocol
 			{sncfloodpfr,	[7, {pf, brp, br_na},           fsm_nl_flood]},	% Pathfind and relay, based on sequence number controlled flooding
 			{sncfloodpfrack,[7, {pf, brp, br_na, ack},      fsm_nl_flood]},	% Pathfind and relay, based on sequence number controlled flooding with acknowledgement
 			{dblfloodpfr,	[7, {pf, dbl, br_na},       	fsm_nl_flood]},	% Double flooding path finder
@@ -203,7 +204,8 @@
 	    0 			 -> neighbours; % n:(.*)
 	    1 			 -> path_data;  % p:(.*),d:(.*)
 	    2 			 -> neighbours_path; % n:(.*),p:(.*)
-	    3 			 -> path_addit % p:(.*),a:(.*)
+	    3 			 -> path_addit; % p:(.*),a:(.*)
+	    4 			 -> data
 	end).
 
 -define(TYPEMSG2NUM(N),
@@ -212,5 +214,6 @@
 	    neighbours 	-> 0;
 	    path_data 	-> 1;
 	    neighbours_path -> 2;
-	    path_addit -> 3
+	    path_addit -> 3;
+	    data -> 4
 	end).

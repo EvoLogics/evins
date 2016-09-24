@@ -44,7 +44,7 @@
 -export([init_nl_addrs/1, add_to_table/3, get_dst_addr/1, set_dst_addr/2]).
 -export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1]).
 %% NL header functions
--export([fill_bin_addrs/1, parse_path_data/2]).
+-export([parse_path_data/2]).
 %% Extract functions
 -export([extract_payload_mac_flag/1, extract_payload_nl_flag/1, create_ack/1, extract_ack/2]).
 %% Extract/create header functions
@@ -257,6 +257,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
                  %fsm:cast(SM, nl, {send, AT}),
+                 %io:format("AT ~p ~n ~p~n ", [AT, erlang:process_info(self(), current_stacktrace)]),
                  fill_dets(SM),
                  fsm:set_event(SM1, eps)
             end
@@ -373,28 +374,27 @@ create_path_data(Type, Path, Data) ->
 
   BType = <<TypeNum:CBitsTypeMsg>>,
   BLenPath = <<LenPath:CBitsLenPath>>,
-  BPath = fill_bin_addrs(Path),
+  BPath = code_header(path, Path),
 
-  TmpData = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring, Data/binary>>,
-  Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
-  if Data_bin =:= false ->
-     Add = 8 - bit_size(TmpData) rem 8,
-     <<BType/bitstring, BLenPath/bitstring, BPath/bitstring, 0:Add, Data/binary>>;
-   true ->
-     TmpData
-   end.
+  BHeader = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring>>,
+  Add = 8 - (bit_size(BHeader)) rem 8,
+  <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 extract_path_data(SM, Payl) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
 
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
-  <<BType:CBitsTypeMsg, BLenPath:CBitsLenPath, PTail/bitstring>> = Payl,
+  <<BType:CBitsTypeMsg, PathRest/bitstring>> = Payl,
 
-  [Path, Rest] = bin_addrs_to_list(PTail, BLenPath),
-  path_data = ?NUM2TYPEMSG(BType),
-  true = BLenPath > 0,
-  ?TRACE(?ID, "extract path data BType ~p BLenPath ~p~n", [BType, BLenPath]),
+  {Path, Rest} =
+  case ?NUM2TYPEMSG(BType) of
+    path_data ->
+      extract_header(path, CBitsLenPath, CBitsLenPath, PathRest);
+    data ->
+      {nothing, PathRest}
+  end,
+  ?TRACE(?ID, "extract path data BType ~p ~n", [BType]),
   if Data_bin =:= false ->
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
@@ -403,32 +403,51 @@ extract_path_data(SM, Payl) ->
     [Path, Rest]
   end.
 
-bin_addrs_to_list(BPath, Len) ->
-  bin_addrs_to_list_helper(BPath, Len, [], <<>>).
+decode_header(neighbours, Neighbours) ->
+  W = count_flag_bits(?BITS_LEN_NEIGBOURS),
+  [N || <<N:W>> <= Neighbours];
 
-bin_addrs_to_list_helper(_, 0, Path, Data) ->
-  [Path, Data];
-bin_addrs_to_list_helper(BPath, Len, Path, _Data) ->
-  CBitsAddr = count_flag_bits(?BITS_ADDRESS_MAX),
-  <<BHop:CBitsAddr, Rest/bitstring>> = BPath,
-  bin_addrs_to_list_helper(Rest, Len - 1, [BHop | Path], Rest).
+decode_header(path, Paths) ->
+  W = count_flag_bits(?BITS_LEN_PATH),
+  [P || <<P:W>> <= Paths];
 
-fill_bin_addrs(Addrs) ->
-  LenPath = length(Addrs),
-  fill_bin_addrs_helper(Addrs, LenPath, <<>>).
+decode_header(add, AddInfos) ->
+  W = count_flag_bits(?BITS_ADD),
+  [N || <<N:W>> <= AddInfos].
 
-fill_bin_addrs_helper(_, 0, BAddrs) -> BAddrs;
-fill_bin_addrs_helper([HPath | TPath], LenPath, BAddrs) ->
-  CBitsAddr = count_flag_bits(?BITS_ADDRESS_MAX),
-  fill_bin_addrs_helper(TPath, LenPath - 1, <<HPath:CBitsAddr, BAddrs/bitstring>>).
+extract_header(Id, LenWidth, FieldWidth, Input) ->
+  <<Len:LenWidth, _/bitstring>> = Input,
+  Width = Len * FieldWidth,
+  <<_:LenWidth, BField:Width/bitstring, Rest/bitstring>> = Input,
+  {decode_header(Id, BField), Rest}.
+
+code_header(neighbours, Neighbours) ->
+  W = count_flag_bits(?BITS_LEN_NEIGBOURS),
+  << <<N:W>> || N <- Neighbours>>;
+
+code_header(path, Paths) ->
+  W = count_flag_bits(?BITS_LEN_PATH),
+  << <<N:W>> || N <- Paths>>;
+
+code_header(add, AddInfos) ->
+  W = count_flag_bits(?BITS_ADD),
+  Saturated_integrities = lists:map(fun(S) when S > 255 -> 255; (S) -> S end, AddInfos),
+  << <<N:W>> || N <- Saturated_integrities>>.
+
 
 parse_path_data(SM, Payl) ->
   try
     MAC_addr = convert_la(SM, integer, mac),
     [Path, BData] = extract_path_data(SM, Payl),
-    CheckedDblPath = check_dubl_in_path(Path, MAC_addr),
-    ?TRACE(?ID, "recv parse path data ~p Data ~p~n", [CheckedDblPath, BData]),
-    {BData, CheckedDblPath}
+
+    case extract_path_data(SM, Payl) of
+      [nothing, BData] ->
+        {BData, nothing};
+      [Path, BData] ->
+        CheckedDblPath = check_dubl_in_path(Path, MAC_addr),
+        ?TRACE(?ID, "recv parse path data ~p Data ~p~n", [CheckedDblPath, BData]),
+        {BData, CheckedDblPath}
+    end
   catch error: _Reason ->
     {Payl, nothing}
   end.
@@ -463,7 +482,7 @@ create_neighbours(Type, Neighbours) ->
 
   BType = <<TypeNum:CBitsTypeMsg>>,
   BLenNeigbours = <<LenNeighbours:CBitsLenNeigbours>>,
-  BNeighbours = fill_bin_addrs(Neighbours),
+  BNeighbours = code_header(neighbours, Neighbours),
 
   TmpData = <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
@@ -485,10 +504,10 @@ create_neighbours_path(Type, Neighbours, Path) ->
   BType = <<TypeNum:CBitsTypeMsg>>,
 
   BLenNeigbours = <<LenNeighbours:CBitsLenNeigbours>>,
-  BNeighbours = fill_bin_addrs(Neighbours),
+  BNeighbours = code_header(neighbours, Neighbours),
 
   BLenPath = <<LenPath:CBitsLenPath>>,
-  BPath = fill_bin_addrs(Path),
+  BPath = code_header(path, Path),
 
   TmpData = <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring,
               BLenPath/bitstring, BPath/bitstring>>,
@@ -507,17 +526,15 @@ extract_neighbours_path(SM, Payl) ->
     CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
     CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
 
-    <<BType:CBitsTypeMsg, BLenNeighbours:CBitsLenNeigbours, PTailNeighbours/bitstring>> = Payl,
+    <<BType:CBitsTypeMsg, NeighboursRest/bitstring>> = Payl,
 
     neighbours_path = ?NUM2TYPEMSG(BType),
 
-    [Neighbours, PTailPath] = bin_addrs_to_list(PTailNeighbours, BLenNeighbours),
-    <<BLenPath:CBitsLenPath, Rest/bitstring>> = PTailPath,
+    {Neighbours, PathRest} = extract_header(neighbours, CBitsLenNeigbours, CBitsLenNeigbours, NeighboursRest),
+    {Path, _} = extract_header(path, CBitsLenPath, CBitsLenPath, PathRest),
 
-    [Path, _] = bin_addrs_to_list(Rest, BLenPath),
-
-    ?TRACE(?ID, "Extract neighbours path BType ~p BLenPath ~p Neighbours ~p Path ~p~n",
-          [BType, BLenPath, Neighbours, Path]),
+    ?TRACE(?ID, "Extract neighbours path BType ~pNeighbours ~p Path ~p~n",
+          [BType, Neighbours, Path]),
 
     [Neighbours, Path]
    catch error: _Reason ->
@@ -539,11 +556,10 @@ create_path_addit(Type, Path, Additional) ->
   BType = <<TypeNum:CBitsTypeMsg>>,
 
   BLenPath = <<LenPath:CBitsLenPath>>,
-  BPath = fill_bin_addrs(Path),
+  BPath = code_header(path, Path),
 
   BLenAdd = <<LenAdd:CBitsLenAdd>>,
-  BAdd = fill_bin_addrs(Additional),
-
+  BAdd = code_header(add, Additional),
   TmpData = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
             BLenAdd/bitstring, BAdd/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
@@ -559,18 +575,18 @@ extract_path_addit(SM, Payl) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
   CBitsLenAdd = count_flag_bits(?BITS_LEN_ADD),
+  CBitsAdd = count_flag_bits(?BITS_ADD),
 
-  <<BType:CBitsTypeMsg, BLenPath:CBitsLenPath, PTailPath/bitstring>> = Payl,
-  [Path, PTailAdd] = bin_addrs_to_list(PTailPath, BLenPath),
-  <<BLenAdd:CBitsLenAdd, Rest/bitstring>> = PTailAdd,
+  <<BType:CBitsTypeMsg, PathRest/bitstring>> = Payl,
+  {Path, AddRest} = extract_header(path, CBitsLenPath, CBitsLenPath, PathRest),
+  {Additional, _} = extract_header(add, CBitsLenAdd, CBitsAdd, AddRest),
 
-  [Additonal, _] = bin_addrs_to_list(Rest, BLenAdd),
   path_addit = ?NUM2TYPEMSG(BType),
 
-  ?TRACE(?ID, "extract path addit BType ~p BLenPath ~p Path ~p Additonal ~p~n",
-        [BType, BLenPath, Path, Additonal]),
+  ?TRACE(?ID, "extract path addit BType ~p  Path ~p Additonal ~p~n",
+        [BType, Path, Additional]),
 
-  [Path, Additonal].
+  [Path, Additional].
 
 %%-------------------------Addressing functions --------------------------------
 flag2num(Flag) when is_atom(Flag)->
@@ -741,6 +757,7 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
   {Flag, [_, ISrc, PAdditional]} = Params,
   MAC_addr = convert_la(SM, integer, mac),
   Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
+
   case Flag of
     data when (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) ->
       CheckedTuple = parse_path_data(SM, Payload),

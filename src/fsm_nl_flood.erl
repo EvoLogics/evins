@@ -246,8 +246,11 @@ handle_event(MM, SM, Term) ->
               SMN1 = nl_mac_hf:save_path(SMN, Params, DTuple),
               fsm:run_event(MM, SMN1#sm{event=rcv_wv}, {dst_reached, Params, DTuple});
             {dst_and_relay, DstTuple, RyTuple} ->
+              ProtocolName = nl_mac_hf:readETS(SM, np),
               {dst_reached, {Flag,_}, Send_tuple} = DstTuple,
-              if Flag =:= data -> fsm:cast(SMN, nl, {send, Send_tuple}); true -> nothing end,
+              {async, {nl,recv, ISrc, IDst, BData}} = Send_tuple,
+              BroadcastTuple = {async, {nl, recv, ProtocolName, ISrc, IDst, BData}},
+              if Flag =:= data -> fsm:cast(SMN, nl, {send, BroadcastTuple}); true -> nothing end,
               case RyTuple of
                 {rcv_processed,_,_} ->
                   SMN;
@@ -362,6 +365,7 @@ handle_rwv(_MM, SM, Term) ->
     {relay_wv, Params, Tuple} ->
       SM#sm{event = relay_wv, event_params = {relay_wv, {send, Params, Tuple}} };
     {dst_reached, Params={Flag, _}, Tuple={async, {nl, recv, ISrc, IDst, Payload}}} ->
+
       if Flag =:= data ->
           {NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
           Protocol = nl_mac_hf:readETS(SM, np),
@@ -551,7 +555,8 @@ proccess_send(SM, Tuple) ->
          Path_exists = nl_mac_hf:get_routing_addr(SM, data, Dst),
          if (Path_exists =/= ?BITS_ADDRESS_MAX) ->
               nl_mac_hf:insertETS(SM, path_exists, true),
-              {send, {data, [PkgID, Local_address, []]}, Tuple};
+              NTuple = {nl, send, Dst, <<4:3, 0:5, Data/binary>>},
+              {send, {data, [PkgID, Local_address, []]}, NTuple};
             true ->
               [Flag, PAdditional, NTuple] =
               case Protocol#pr_conf.lo of
