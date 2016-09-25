@@ -550,7 +550,8 @@ proccess_send(SM, Tuple) ->
          NTuple = {nl, send, Dst, nl_mac_hf:fill_msg(path_data, {Data, [MAC_addr]})},
          {send, {data, [PkgID, Local_address, []]}, NTuple};
        false when Protocol#pr_conf.ry_only ->
-         {send, {data, [PkgID, Local_address, []]}, Tuple};
+         NTuple = {nl, send, Dst, <<4:3, 0:5, Data/binary>>},
+         {send, {data, [PkgID, Local_address, []]}, NTuple};
        false when Protocol#pr_conf.pf ->
          Path_exists = nl_mac_hf:get_routing_addr(SM, data, Dst),
          if (Path_exists =/= ?BITS_ADDRESS_MAX) ->
