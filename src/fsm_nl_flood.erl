@@ -611,7 +611,10 @@ process_async(SM, Msg) ->
       [SM, nothing]
   end.
 
+
+
 process_recv(SM, L) ->
+  Local_address = nl_mac_hf:readETS(SM, local_address),
   ?TRACE(?ID, "Recv AT command ~p~n", [L]),
   [ISrc, IDst, IRssi, IIntegrity, PayloadTail] = L,
   Blacklist = nl_mac_hf:readETS(SM, blacklist),
@@ -626,9 +629,18 @@ process_recv(SM, L) ->
          false ->
            %!!!!!!
            %fsm:cast(SM, nl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
-           Params = [NLSrcAT, NLDstAT, IRssi, IIntegrity],
-           [SMN, RTuple] = parse_rcv(SM, Params, PayloadTail),
-           form_rcv_tuple(SMN, RTuple);
+           case IDst of
+              255 ->
+                Params = [NLSrcAT, NLDstAT, IRssi, IIntegrity],
+                [SMN, RTuple] = parse_rcv(SM, Params, PayloadTail),
+                form_rcv_tuple(SMN, RTuple);
+              IDst when IDst =:= Local_address ->
+                Params = [NLSrcAT, NLDstAT, IRssi, IIntegrity],
+                [SMN, RTuple] = parse_rcv(SM, Params, PayloadTail),
+                form_rcv_tuple(SMN, RTuple);
+              _ ->
+                [SM, nothing]
+           end;
          true ->
            ?INFO(?ID, "Source is in the blacklist : ~w ~n", [Blacklist]), [SM, nothing]
        end

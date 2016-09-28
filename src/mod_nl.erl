@@ -100,9 +100,9 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     [_, _, SMN] = Module,
     [{local_address, La}] = ets:lookup(Share, local_address),
     DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
-    %Roles = fsm_worker:role_info(Role_IDs, [alh, nl, nmea]),
-    Roles = fsm_worker:role_info(Role_IDs, [alh, nl, nmea]),
-    {ok, Ref} = dets:open_file(DetsName,[]),
+    Filename = "/tmp/" ++ "share_file_" ++ integer_to_list(La),
+    Roles = fsm_worker:role_info(Role_IDs, [alh, nl]),
+    {ok, Ref} = dets:open_file(DetsName,[{file, Filename}]),
     [#sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
 %%-------------------------------------- Parse config file ---------------------------------
