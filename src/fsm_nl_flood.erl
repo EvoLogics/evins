@@ -249,7 +249,8 @@ handle_event(MM, SM, Term) ->
               ProtocolName = nl_mac_hf:readETS(SM, np),
               {dst_reached, {Flag,_}, Send_tuple} = DstTuple,
               {async, {nl,recv, ISrc, IDst, BData}} = Send_tuple,
-              BroadcastTuple = {async, {nl, recv, ProtocolName, ISrc, IDst, BData}},
+              {NData, _} = nl_mac_hf:parse_path_data(SM, BData),
+              BroadcastTuple = {async, {nl, recv, ProtocolName, ISrc, IDst, NData}},
               if Flag =:= data -> fsm:cast(SMN, nl, {send, BroadcastTuple}); true -> nothing end,
               case RyTuple of
                 {rcv_processed,_,_} ->
