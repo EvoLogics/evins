@@ -80,8 +80,9 @@ try_recv(L, Cfg) ->
 try_send(L, Cfg) ->
   case re:run(L, "\n") of
     {match, [{_, _}]} ->
-      case re:run(L, "^(NL,send,)(.*)", [dotall, {capture, [1, 2], binary}]) of
+      case re:run(L, "^(NL,send,|NL,set,protocol,)(.*)", [dotall, {capture, [1, 2], binary}]) of
         {match, [<<"NL,send,">>, P]}  -> nl_send_extract(P, Cfg);
+        {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
         nomatch ->
           case re:run(L,"^(NL,get,)(.*?)[\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
             {match, [<<"NL,get,">>, P, L1]} -> [ param_extract(P) | split(L1, Cfg)];
@@ -90,6 +91,18 @@ try_send(L, Cfg) ->
       end;
     nomatch ->
       [{more, L}]
+  end.
+
+nl_set_protocol(P, _Cfg) ->
+try
+    {match, [ProtocolID]} = re:run(P,"([^,]*)\n", [dotall, {capture, [1], binary}]),
+    AProtocolID = binary_to_atom(ProtocolID, utf8),
+    case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
+      true ->
+        [{rcv_ul, {set, protocol, AProtocolID} }];
+      false -> [{nl, error}]
+    end
+  catch error: _Reason -> [{nl, error}]
   end.
 
 nl_send_extract(P, Cfg) ->
@@ -106,7 +119,7 @@ nl_send_extract(P, Cfg) ->
         OPLLen = PLLen - 1,
         {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
         Tuple = {nl, send, IDst, Payload},
-        [{rcv_ul, AProtocolID, Tuple} | split(Tail1,Cfg)];
+        [{rcv_ul, Tuple} | split(Tail1,Cfg)];
       false -> [{nl, error}]
     end
   catch error: _Reason -> [{nl, error}]
@@ -132,8 +145,9 @@ param_extract(P) ->
     protocols ->
       {rcv_ul, get, protocols};
     _ ->
-    case re:run(P,"(protocol,|fsm,|stats,)(.*)", [dotall, {capture, [1, 2], binary}]) of
+    case re:run(P,"(protocol,|protocol|fsm,|stats,)(.*)", [dotall, {capture, [1, 2], binary}]) of
       {match, [<<"protocol,">>, Name]} -> protocol_extract(Name);
+      {match, [<<"protocol">>, _Name]} -> {rcv_ul, {get, protocol}};
       {match, [<<"fsm,">>, Name]} -> state_extract(Name);
       {match, [<<"stats,">>, Name]} -> stat_extract(Name);
       nomatch -> {nl, error}

@@ -269,11 +269,27 @@ handle_event(MM, SM, Term) ->
     {nl,error} ->
       fsm:cast(SM, nl, {send, {nl, error}}),
       SM;
+    {rcv_ul, {get, protocol}} ->
+      AProtocolID =
+      case P = nl_mac_hf:readETS(SM, set_protocol) of
+        not_inside -> "not_set";
+        _ -> P
+      end,
+      fsm:cast(SM, nl, {send, {sync, {nl, protocol, AProtocolID} } }),
+      SM;
+    {rcv_ul, {set, protocol, AProtocolID} } ->
+      nl_mac_hf:insertETS(SM, set_protocol, AProtocolID),
+      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+      SM;
     {rcv_ul, get, Command} ->
       nl_mac_hf:process_command(SM, false, Command),
       SM;
-    {rcv_ul, PID, Tuple} ->
+    {rcv_ul, Tuple} ->
+      PID = nl_mac_hf:readETS(SM, set_protocol),
       case nl_mac_hf:readETS(SM, np) =:= PID of
+        _ when PID =:= not_inside ->
+          fsm:cast(SM, nl, {send, {sync, {nl, protocol, "not_set"} } }),
+          SM;
         true ->
           if SM#sm.state =:= idle ->
                case proccess_send(SM, Tuple) of
