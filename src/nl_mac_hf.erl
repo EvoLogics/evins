@@ -62,7 +62,7 @@
 %% Only MAC functions
 -export([process_rcv_payload/3, process_send_payload/2, process_retransmit/3]).
 %% Other functions
--export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4, logs_additional/2]).
+-export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
 count_flag_bits (F) ->
   count_flag_bits_helper(F, 0).
@@ -362,30 +362,49 @@ check_dubl_in_path(Path, MAC_addr) ->
 remove_dubl_in_path([])    -> [];
 remove_dubl_in_path([H|T]) -> [H | [X || X <- remove_dubl_in_path(T), X /= H]].
 
+
+%-------> data
+% 3b        6b
+%   TYPEMSG   MAX_DATA_LEN
+create_data(Type, TransmitLen, Data) ->
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
+  CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
+  TypeNum = ?TYPEMSG2NUM(Type),
+
+  BType = <<TypeNum:CBitsTypeMsg>>,
+  BLenData = <<TransmitLen:CBitsMaxLenData>>,
+
+  BHeader = <<BType/bitstring, BLenData/bitstring>>,
+  Add = 8 - (bit_size(BHeader)) rem 8,
+  <<BHeader/bitstring, 0:Add, Data/binary>>.
+
 %%----------------NL functions create/extract protocol header-------------------
-%%--------------- path_data -------------------
-%   3b        6b        LenPath * 6b   REST till / 8
-%   TYPEMSG   LenPath   Path           ADD
-create_path_data(Type, Path, Data) ->
+%-------> path_data
+%   3b        6b            6b        LenPath * 6b   REST till / 8
+%   TYPEMSG   MAX_DATA_LEN  LenPath   Path           ADD
+create_path_data(Type, Path, TransmitLen, Data) ->
   LenPath = length(Path),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
   TypeNum = ?TYPEMSG2NUM(Type),
 
+  BLenData = <<TransmitLen:CBitsMaxLenData>>,
   BType = <<TypeNum:CBitsTypeMsg>>,
   BLenPath = <<LenPath:CBitsLenPath>>,
   BPath = code_header(path, Path),
 
-  BHeader = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring>>,
+  BHeader = <<BType/bitstring, BLenData/bitstring, BLenPath/bitstring, BPath/bitstring>>,
   Add = 8 - (bit_size(BHeader)) rem 8,
   <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 extract_path_data(SM, Payl) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
 
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
-  <<BType:CBitsTypeMsg, PathRest/bitstring>> = Payl,
+  <<BType:CBitsTypeMsg, BLenData:CBitsMaxLenData, PathRest/bitstring>> = Payl,
 
   {Path, Rest} =
   case ?NUM2TYPEMSG(BType) of
@@ -394,13 +413,14 @@ extract_path_data(SM, Payl) ->
     data ->
       {nothing, PathRest}
   end,
+
   ?TRACE(?ID, "extract path data BType ~p ~n", [BType]),
   if Data_bin =:= false ->
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
-    [Path, Data];
+    [Path, BLenData, Data];
   true ->
-    [Path, Rest]
+    [Path, BLenData, Rest]
   end.
 
 decode_header(neighbours, Neighbours) ->
@@ -438,15 +458,14 @@ code_header(add, AddInfos) ->
 parse_path_data(SM, Payl) ->
   try
     MAC_addr = convert_la(SM, integer, mac),
-    [Path, BData] = extract_path_data(SM, Payl),
-
+    %[Path, LenData, BData] = extract_path_data(SM, Payl),
     case extract_path_data(SM, Payl) of
-      [nothing, BData] ->
-        {BData, nothing};
-      [Path, BData] ->
+      [nothing, LenData, BData] ->
+        {LenData, BData, nothing};
+      [Path, LenData, BData] ->
         CheckedDblPath = check_dubl_in_path(Path, MAC_addr),
         ?TRACE(?ID, "recv parse path data ~p Data ~p~n", [CheckedDblPath, BData]),
-        {BData, CheckedDblPath}
+        {LenData, BData, CheckedDblPath}
     end
   catch error: _Reason ->
     {Payl, nothing}
@@ -677,14 +696,17 @@ convert_la(SM, Type, Format) ->
 %%----------------------------Parse NL functions -------------------------------
 fill_msg(Format, Tuple) ->
   case Format of
+    data ->
+      {TransmitLen, Data} = Tuple,
+      create_data(Format, TransmitLen, Data);
     neighbours ->
       create_neighbours(Format, Tuple);
     neighbours_path ->
       {Neighbours, Path} = Tuple,
       create_neighbours_path(Format, Neighbours, Path);
     path_data ->
-      {Data, Path} = Tuple,
-      create_path_data(Format, Path, Data);
+      {TransmitLen, Data, Path} = Tuple,
+      create_path_data(Format, Path, TransmitLen, Data);
     path_addit ->
       {Path, Additional} = Tuple,
       create_path_addit(Format, Path, Additional)
@@ -692,7 +714,7 @@ fill_msg(Format, Tuple) ->
 
 prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src, Payload}}) ->
   MAC_addr = convert_la(SM, integer, mac),
-  {nl,send, IDst, Data} = readETS(SM, current_pkg),
+  {nl,send, _, IDst, Data} = readETS(SM, current_pkg),
 
   [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
   NPathTuple = {ListNeighbours, ListPath},
@@ -761,12 +783,14 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
   case Flag of
     data when (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) ->
       CheckedTuple = parse_path_data(SM, Payload),
+      {_, Add, Path} = CheckedTuple,
       NewPayload = fill_msg(path_data, CheckedTuple),
-      [SMN1, _]  = parse_path(SM, CheckedTuple, {ISrc, IDst}),
+      [SMN1, _]  = parse_path(SM, {Add, Path}, {ISrc, IDst}),
       [SMN1, {send, Params, {nl, send, IDst, NewPayload}}];
     data when Protocol#pr_conf.pf ->
       CheckedTuple = parse_path_data(SM, Payload),
-      [SMN, _] = parse_path(SM, CheckedTuple, {ISrc, IDst}),
+      {_, Add, Path} = CheckedTuple,
+      [SMN, _] = parse_path(SM, {Add, Path}, {ISrc, IDst}),
       [SMN, Tuple];
     data ->
       [SM, Tuple];
@@ -901,7 +925,7 @@ save_path(SM, {Flag,_} = Params, Tuple) ->
   case Flag of
     data when Protocol#pr_conf.ry_only and Protocol#pr_conf.pf ->
       {async,{nl,recv, Real_src, Real_dst, Payload}} = Tuple,
-      {_, Path} = parse_path_data(SM, Payload),
+      {_, _, Path} = parse_path_data(SM, Payload),
       analyse(SM, paths, Path, {Real_src, Real_dst});
     path_addit when Protocol#pr_conf.evo ->
       {async,{nl,recv, _, _, Payload}} = Tuple,
@@ -1243,32 +1267,29 @@ process_command(SM, Debug, Command) ->
   Protocol   = readETS(SM, {protocol_config, readETS(SM, np)}),
   [Req, Asw] =
   case Command of
-    {fsm, state} ->
-      [fsm_state, state];
-    {fsm, states} ->
-      Last_states = readETS(SM, last_states),
-      [queue:to_list(Last_states), states];
     protocols ->
       [?PROTOCOL_DESCR, protocols];
-    {statistics,_,paths} when Protocol#pr_conf.pf ->
-      [readETS(SM, paths), paths];
-    {statistics,_,neighbours} ->
-      [readETS(SM, st_neighbours), neighbours];
-    {statistics,_,data} when Protocol#pr_conf.ack ->
-      [readETS(SM, st_data), data];
-    {protocol, _,info} ->
+    {protocol, _} ->
       [readETS(SM, np), protocol_info];
-    {protocol, _,state} ->
-      [readETS(SM, pr_state), protocol_state];
-    {protocol, _,states} ->
-      Pr_states = readETS(SM, pr_states),
-      [queue:to_list(Pr_states), protocols_state];
-    {protocol, _,neighbours} ->
+    {statistics, paths} when Protocol#pr_conf.pf ->
+      [readETS(SM, paths), paths];
+    {statistics, neighbours} ->
+      [readETS(SM, st_neighbours), neighbours];
+    {statistics, data} when Protocol#pr_conf.ack ->
+      [readETS(SM, st_data), data];
+    states ->
+      Last_states = readETS(SM, last_states),
+      [queue:to_list(Last_states), states];
+    state ->
+      States = list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")"]),
+      [States, state];
+    neighbours ->
       [readETS(SM, current_neighbours), neighbours];
-    {protocol, _,routing} ->
+    routing ->
       [readETS(SM, routing_table), routing];
     _ -> [error, nothing]
   end,
+
   Answer =
   case Req of
     error ->
@@ -1277,33 +1298,25 @@ process_command(SM, Debug, Command) ->
       {nl, Asw, empty};
     _ ->
       case Command of
-        {fsm,_} ->
-          if Asw =:= state ->
-               L = list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")"]),
-               {nl, fsm, Asw, L};
-             true ->
-               {nl, fsm, Asw, list_to_binary(Req)}
-          end;
-        {statistics,_,paths} when Protocol#pr_conf.pf ->
+        {statistics, paths} when Protocol#pr_conf.pf ->
           {nl, statistics, paths, get_stat(SM, paths) };
-        {statistics, _,neighbours} ->
+        {statistics, neighbours} ->
           {nl, statistics, neighbours, get_stat(SM, st_neighbours) };
-        {statistics, _,data} when Protocol#pr_conf.ack ->
+        {statistics, data} when Protocol#pr_conf.ack ->
           {nl, statistics, data, get_stat_data(SM, st_data) };
         protocols ->
           {nl, Command, Req};
-        {protocol, Name, info} ->
+        {protocol, Name} ->
           {nl, protocol, Asw, get_protocol_info(SM, Name)};
-        {protocol, _, neighbours} ->
-          {nl, protocol, Asw, neighbours_to_bin(SM, nl)};
-        {protocol, _, routing} ->
-          {nl, protocol, Asw, routing_to_bin(SM)};
-        {protocol, Name, state} ->
-          L = list_to_binary([atom_to_binary(Name,utf8), ",", Req]),
-          {nl, protocol, state, L};
-        {protocol, Name, states} ->
-          L = list_to_binary([atom_to_binary(Name,utf8), "\n", Req]),
-          {nl, protocol, states, L};
+        neighbours ->
+          {nl, neighbours, Asw, neighbours_to_bin(SM, nl)};
+        routing ->
+          {nl, routing, Asw, routing_to_bin(SM)};
+        state ->
+          {nl, state, Req};
+        states ->
+          L = list_to_binary(Req),
+          {nl, states, L};
         _ ->
           {nl, error}
       end
@@ -1360,28 +1373,6 @@ get_stat(SM, Qname) ->
            " Total:", integer_to_binary(TS)]) | A]
       end
     end, [], queue:to_list(PT)).
-
-logs_additional(SM, Role) ->
-  Protocol   = readETS(SM, {protocol_config, readETS(SM, np)}),
-
-  if(Role =:= source) ->
-    if Protocol#pr_conf.pf  ->
-      process_command(SM, true, {statistics,"",data}),
-      process_command(SM, true, {statistics, "", paths}),
-      process_command(SM, false, {statistics, "", data}),
-      process_command(SM, false, {statistics, "", paths});
-    true -> nothing end,
-    process_command(SM, false, {protocol, "", neighbours}),
-    process_command(SM, true, {statistics, "", neighbours}),
-    process_command(SM, true, {protocol, "", neighbours}),
-    if Protocol#pr_conf.pf;
-       Protocol#pr_conf.stat->
-    process_command(SM, true, {protocol, "", routing}),
-    process_command(SM, false, {protocol, "", routing});
-    true -> nothing end;
-  true ->
-    nothing
-  end.
 
 save_stat(SM, {ISrc, IDst}, Role)->
   case Role of
@@ -1467,7 +1458,6 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
       Tuple = {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops},
       add_item_to_queue_nd(SM, QName, Tuple, 300)
   end.
-  %logs_additional(SM, Role).
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
   Q = readETS(SM, Qname),

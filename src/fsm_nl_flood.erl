@@ -164,7 +164,7 @@ handle_event(MM, SM, Term) ->
           fsm:run_event(MM, SM#sm{event=send_path,  state=rwv}, {send_path, PkgID, Tuple});
         {wack_timeout, {_Packet_id, Real_src, Real_dst}} ->
           case nl_mac_hf:readETS(SM, current_pkg) of
-            {nl, send,_, Payload} ->
+            {nl, send, _, _, Payload} ->
               nl_mac_hf:analyse(SM, st_data, {Payload, Real_dst, 0, "Failed"}, {Real_src, Real_dst});
             _ ->
               nothing
@@ -178,7 +178,7 @@ handle_event(MM, SM, Term) ->
           fsm:run_event(MM, SM#sm{event=timeout_ack,  state=wack}, {});
         {wpath_timeout, {_Packet_id, Real_src, Real_dst}} ->
           case nl_mac_hf:readETS(SM, current_pkg) of
-            {nl, send,_, Payload} ->
+            {nl, send, _, _, Payload} ->
               nl_mac_hf:analyse(SM, st_data, {Payload, Real_dst, 0, "Failed"}, {Real_src, Real_dst});
             _ ->
               nothing
@@ -222,7 +222,6 @@ handle_event(MM, SM, Term) ->
       case nl_mac_hf:readETS(SM, pid) =:= PID of
         true ->
           [SMN, NT] = parse_ll_msg(SM, T),
-          %nl_mac_hf:logs_additional(SM, NT),
           case NT of
             nothing ->
               SMN;
@@ -239,18 +238,16 @@ handle_event(MM, SM, Term) ->
               fsm:run_event(MM, SMN#sm{event=rcv_wv}, {relay_wv, Params, NTuple});
             {rcv_processed, {data, _}, DTuple} ->
               {async,{nl,recv,ISrc,IDst,Payload}} = DTuple,
-              {NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
-              NP = nl_mac_hf:readETS(SM, np),
-              fsm:cast(SM, nl, {send, {async, {nl, recv, NP, ISrc, IDst, NData}}});
+              {LenData, NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
+              fsm:cast(SM, nl, {send, {async, {nl, recv, LenData, ISrc, IDst, NData}}});
             {dst_reached, Params, DTuple} ->
               SMN1 = nl_mac_hf:save_path(SMN, Params, DTuple),
               fsm:run_event(MM, SMN1#sm{event=rcv_wv}, {dst_reached, Params, DTuple});
             {dst_and_relay, DstTuple, RyTuple} ->
-              ProtocolName = nl_mac_hf:readETS(SM, np),
               {dst_reached, {Flag,_}, Send_tuple} = DstTuple,
               {async, {nl,recv, ISrc, IDst, BData}} = Send_tuple,
-              {NData, _} = nl_mac_hf:parse_path_data(SM, BData),
-              BroadcastTuple = {async, {nl, recv, ProtocolName, ISrc, IDst, NData}},
+              {LenData, NData, _} = nl_mac_hf:parse_path_data(SM, BData),
+              BroadcastTuple = {async, {nl, recv, LenData, ISrc, IDst, NData}},
               if Flag =:= data -> fsm:cast(SMN, nl, {send, BroadcastTuple}); true -> nothing end,
               case RyTuple of
                 {rcv_processed,_,_} ->
@@ -271,36 +268,32 @@ handle_event(MM, SM, Term) ->
       SM;
     {rcv_ul, {get, protocol}} ->
       AProtocolID =
-      case P = nl_mac_hf:readETS(SM, set_protocol) of
-        not_inside -> "not_set";
+      case P = nl_mac_hf:readETS(SM, np) of
+        not_inside -> "nothing";
         _ -> P
       end,
       fsm:cast(SM, nl, {send, {sync, {nl, protocol, AProtocolID} } }),
       SM;
-    {rcv_ul, {set, protocol, AProtocolID} } ->
-      nl_mac_hf:insertETS(SM, set_protocol, AProtocolID),
-      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+
+    {rcv_ul, {get, help}} ->
+      fsm:cast(SM, nl, {send, {sync, {nl, help, ?HELP}}  }),
       SM;
-    {rcv_ul, get, Command} ->
+    {rcv_ul, {get, Command}} ->
       nl_mac_hf:process_command(SM, false, Command),
       SM;
+    {rcv_ul, {set, protocol, AProtocolID} } ->
+      nl_mac_hf:insertETS(SM, np, AProtocolID),
+      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+      SM;
     {rcv_ul, Tuple} ->
-      PID = nl_mac_hf:readETS(SM, set_protocol),
-      case nl_mac_hf:readETS(SM, np) =:= PID of
-        _ when PID =:= not_inside ->
-          fsm:cast(SM, nl, {send, {sync, {nl, protocol, "not_set"} } }),
-          SM;
-        true ->
-          if SM#sm.state =:= idle ->
-               case proccess_send(SM, Tuple) of
-                 error  -> fsm:cast(SM, nl, {send, {nl, error}});
-                 Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
-               end;
-             true ->
-               fsm:cast(SM, nl, {send, {sync, {nl, busy} } }),
-               SM end;
-        false ->
-          ?TRACE(?ID, "Message is not applicable with current protocol ~p~n", [Tuple]), SM
+      if SM#sm.state =:= idle ->
+        case proccess_send(SM, Tuple) of
+          error  -> fsm:cast(SM, nl, {send, {nl, error}});
+          Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
+        end;
+      true ->
+        fsm:cast(SM, nl, {send, {sync, {nl, busy} } }),
+        SM
       end;
     {ignore,_} -> SM;
     UUg ->
@@ -342,7 +335,7 @@ handle_idle(_MM, SMP, Term) ->
       case Param_Term of
         {error, {Real_src, Real_dst}} when (Real_dst =:= Local_address) ->
           case nl_mac_hf:readETS(SM, current_pkg) of
-            {nl, send,_, Payload} ->
+            {nl, send, _, _, Payload} ->
               nl_mac_hf:analyse(SM, st_data, {Payload, Real_dst, 0, "Failed"}, {Real_src, Real_dst});
             _ ->
               nothing
@@ -384,9 +377,8 @@ handle_rwv(_MM, SM, Term) ->
     {dst_reached, Params={Flag, _}, Tuple={async, {nl, recv, ISrc, IDst, Payload}}} ->
 
       if Flag =:= data ->
-          {NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
-          Protocol = nl_mac_hf:readETS(SM, np),
-          fsm:cast(SM, nl, {send, {async, {nl, recv, Protocol, ISrc, IDst, NData}}});
+          {LenData, NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
+          fsm:cast(SM, nl, {send, {async, {nl, recv, LenData, ISrc, IDst, NData}}});
          true ->
            nothing
       end,
@@ -401,11 +393,11 @@ handle_sack(_MM, SM, Term) ->
     {send_ack, _, {async, {nl, recv, ISrc, IDst, Payload}}} ->
       [SM1,_] =
       if (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) ->
-           CheckedTuple = nl_mac_hf:parse_path_data(SM, Payload),
-           nl_mac_hf:parse_path(SM, CheckedTuple, {ISrc, IDst});
+           {_, Add, Path} = nl_mac_hf:parse_path_data(SM, Payload),
+           nl_mac_hf:parse_path(SM, {Add, Path}, {ISrc, IDst});
          true ->
-           CheckedTuple = nl_mac_hf:parse_path_data(SM, Payload),
-           nl_mac_hf:parse_path(SM, CheckedTuple, {ISrc, IDst})
+           {_, Add, Path} = nl_mac_hf:parse_path_data(SM, Payload),
+           nl_mac_hf:parse_path(SM, {Add, Path}, {ISrc, IDst})
       end,
       SM2 = nl_mac_hf:send_ack(SM1, Term, 0),
       if SM2 =:= error ->
@@ -469,7 +461,7 @@ handle_wack(_MM, SM, Term) ->
       SM1#sm{event = relay_wv, event_params = {relay_wv, {send, Params, Tuple}}};
     {dst_reached,{ack, [Packet_id,_, PAdditional]} ,{async,{nl, recv, Real_dst, Real_src, Payl}}} ->
       case nl_mac_hf:readETS(SM, current_pkg) of
-        {nl, send, TIDst, Payload} ->
+        {nl, send, _, TIDst, Payload} ->
           Count_hops = nl_mac_hf:extract_ack(SM, Payl),
           nl_mac_hf:analyse(SM, st_data, {Payload, TIDst, Count_hops + 1, "Delivered"}, {Real_src, Real_dst});
         _ ->
@@ -555,7 +547,8 @@ proccess_send(SM, Tuple) ->
   Protocol    = nl_mac_hf:readETS(SM, {protocol_config, NP}),
   Local_address = nl_mac_hf:readETS(SM, local_address),
   PkgID = nl_mac_hf:increase_pkgid(SM),
-  {nl, send, Dst, Data} = Tuple,
+  {nl, send, TransmitLen, Dst, Data} = Tuple,
+
   if Dst =:= Local_address ->
     error;
    true ->
@@ -564,16 +557,18 @@ proccess_send(SM, Tuple) ->
      nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
      case (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) of
        true ->
-         NTuple = {nl, send, Dst, nl_mac_hf:fill_msg(path_data, {Data, [MAC_addr]})},
+         NTuple = {nl, send, Dst, nl_mac_hf:fill_msg(path_data, {TransmitLen, Data, [MAC_addr]})},
          {send, {data, [PkgID, Local_address, []]}, NTuple};
        false when Protocol#pr_conf.ry_only ->
-         NTuple = {nl, send, Dst, <<4:3, 0:5, Data/binary>>},
+         Payl = nl_mac_hf:fill_msg(data, {TransmitLen, Data}),
+         NTuple = {nl, send, Dst, Payl},
          {send, {data, [PkgID, Local_address, []]}, NTuple};
        false when Protocol#pr_conf.pf ->
          Path_exists = nl_mac_hf:get_routing_addr(SM, data, Dst),
          if (Path_exists =/= ?BITS_ADDRESS_MAX) ->
               nl_mac_hf:insertETS(SM, path_exists, true),
-              NTuple = {nl, send, Dst, <<4:3, 0:5, Data/binary>>},
+              Payl = nl_mac_hf:fill_msg(data, {TransmitLen, Data}),
+              NTuple = {nl, send, Dst, Payl},
               {send, {data, [PkgID, Local_address, []]}, NTuple};
             true ->
               [Flag, PAdditional, NTuple] =
@@ -685,7 +680,7 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
   PTail =
   case Flag of
     data when Protocol#pr_conf.lo; Protocol#pr_conf.pf ->
-      {Data, _P} = nl_mac_hf:parse_path_data(SM, Tail),
+      {_, Data, _P} = nl_mac_hf:parse_path_data(SM, Tail),
       Data;
     data -> Tail;
     _ -> <<"">>
