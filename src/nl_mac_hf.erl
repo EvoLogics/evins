@@ -54,7 +54,7 @@
 %% Parse NL functions
 -export([prepare_send_path/3, parse_path/3, save_path/3]).
 %% Process NL functions
--export([add_neighbours/4, process_pkg_id/3, proccess_relay/2, process_path_life/2, neighbours_to_list/2, routing_to_bin/1, check_dubl_in_path/2]).
+-export([add_neighbours/5, process_pkg_id/3, proccess_relay/2, process_path_life/2, neighbours_to_list/2, routing_to_bin/1, check_dubl_in_path/2]).
 %% RTT functions
 -export([getRTT/2, smooth_RTT/3]).
 %% command functions
@@ -754,7 +754,7 @@ parse_path(SM, {_, ListPath}, {ISrc, IDst}) ->
      end
   end.
 
-add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}) ->
+add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {_IRssi, _IIntegrity}) ->
   ?INFO(?ID, "+++ Flag ~p, NLSrcAT ~p, RealSrc ~p~n", [Flag, NLSrcAT, RealSrc]),
   Current_neighbours = readETS(SM, current_neighbours),
   SM1 = fsm:set_timeout(SM, {s, readETS(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),

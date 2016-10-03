@@ -697,7 +697,7 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
   RRelayTuple = {relay, RParams, RSendTuple},
   RDstTuple   = {dst_reached, RParams, RAsyncTuple},
 
-  SMN     = nl_mac_hf:add_neighbours(SM, Flag, NLSrcAT, {RecvNLSrc, RecvNLDst}),
+  SMN     = nl_mac_hf:add_neighbours(SM, Flag, NLSrcAT, {RecvNLSrc, RecvNLDst}, {IRssi, IIntegrity}),
   case PPkg_id of
     _ when Flag =:= dst_reached ->
       [SMN, nothing];
