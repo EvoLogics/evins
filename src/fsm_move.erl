@@ -146,7 +146,7 @@ broadcast_position(SM, [Xn,Yn,Zn]) ->
   [{_,Sea_level}] = ets:lookup(SM#sm.share, sea_level),
   Str = lists:flatten(io_lib:format("~p ~p ~p ~p ~p ~p", [Xn+Xl,Yn+Yl,Alt-Sea_level,Phi,Theta,Psi])),
   fsm:cast(SM, scli, {send, {string, Str}}),
-  [Yaw, Pitch, Roll] = [V*180/math:pi() || V <- [Psi, Theta, Phi]],
+  [Yaw, Pitch, Roll] = [V*180/math:pi() || V <- flip_rot([Psi, Theta, Phi])],
   ets:insert(SM#sm.share, {ahrs, [Yaw,Pitch,Roll]}),
   broadcast_nmea(SM, apply_jitter(SM, [Xn, Yn, Zn])).
 
@@ -160,6 +160,9 @@ smod(X, M) -> X - round(X/M)*M.
 wrap_pi(A) -> smod(A, 2*math:pi()).
 wrap_2pi(A) -> smod(A - math:pi(), 2*math:pi()) + math:pi().
 lp_wrap(New, Old, K) -> Old + K*(wrap_pi(New - Old)).
+
+flip_rot([ Heading, Pitch, Roll]) ->
+    [ wrap_2pi(math:pi()/2 - Heading), wrap_pi(-Pitch), wrap_pi(Roll) ].
 
 %% turning left - roll positive, otherwise negative
 %% values in radians
