@@ -180,13 +180,13 @@ rock(SM, [E2,N2,_]=P2) ->
 
 broadcast_nmea(SM, [X, Y, Z]) ->
   try  {MS,S,US} = os:timestamp(),
-       {_,{HH,MM,SS}} = calendar:now_to_universal_time({MS,S,US}),
+       {{Year,Month,Day},{HH,MM,SS}} = calendar:now_to_universal_time({MS,S,US}),
        Timestamp = 60*(60*HH + MM) + SS + US / 1000000,
        [{_, Ref}] = ets:lookup(SM#sm.share, geodetic),
        [Lat,Lon,Alt] = ecef2geodetic(ned2ecef([X,Y,Z], Ref)),
 
        GGA = {gga, Timestamp, Lat, Lon, 4,nothing,nothing,Alt,nothing,nothing,nothing},
-       ZDA = {zda, Timestamp, 28, 11, 2013, 0, 0},
+       ZDA = {zda, Timestamp, Day, Month, Year, 0, 0},
        fsm:broadcast(SM, nmea, {send, {nmea, GGA}}),
        fsm:broadcast(SM, nmea, {send, {nmea, ZDA}})
   catch T:E -> ?ERROR(?ID, "~p:~p~n", [T,E])
