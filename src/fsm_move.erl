@@ -35,7 +35,7 @@
 
 -export([handle_idle/3, handle_moving/3, handle_alarm/3]).
 
--import(geometry, [ecef2geodetic/1, ned2ecef/2]).
+-import(geometry, [ecef2geodetic/1, ned2ecef/2, enu2ecef/2]).
 
 -define(TRANS, [
                 {idle,
@@ -53,7 +53,7 @@
 
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       ->
-  P = [0,0,0], ets:insert(SM#sm.share, {tail, [P,P,P], 0.0,0.0,0.0}),
+  P = [0,0,0], ets:insert(SM#sm.share, {tail, [P,P,P], 0.0,math:pi()/2,0.0}),
   ets:insert(SM#sm.share, {ahrs, [0,0,0]}),
   SM.
 trans()        -> ?TRANS.
@@ -110,8 +110,8 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
     circle ->
       [{circle, {circle, C, R, V, Tau, Phy}}] = ets:lookup(SM#sm.share, circle),
       {XO, YO, ZO} = C,
-      Phy1 = Phy + V*(Tau/1000)/R, 
-      %% X,Y,Z in NED reference frame
+      Phy1 = Phy + V*(Tau/1000)/R,
+      %% X,Y,Z in ENU reference frame
       Xn = XO + R * math:cos(Phy1),
       Yn = YO + R * math:sin(Phy1),
       Zn = ZO,
@@ -142,9 +142,9 @@ broadcast_position(SM, [Xn,Yn,Zn]) ->
   [Xl,Yl,Zl] = geometry:rotate({sensor, Lever_arm}, [Psi, Theta, Phi]),
   %% lever_arm to transducer is taken into account by transducer movement in the emulator
   [{_, Ref}] = ets:lookup(SM#sm.share, geodetic),
-  [_,_,Alt] = ecef2geodetic(ned2ecef([0,0,Zn+Zl], Ref)),
+  [_,_,Alt] = ecef2geodetic(enu2ecef([0,0,Zn+Zl], Ref)),
   [{_,Sea_level}] = ets:lookup(SM#sm.share, sea_level),
-  Str = lists:flatten(io_lib:format("~p ~p ~p", [Xn+Xl,Yn+Yl,Alt-Sea_level])),
+  Str = lists:flatten(io_lib:format("~p ~p ~p ~p ~p ~p", [Xn+Xl,Yn+Yl,Alt-Sea_level,Phi,Theta,Psi])),
   fsm:cast(SM, scli, {send, {string, Str}}),
   [Yaw, Pitch, Roll] = [V*180/math:pi() || V <- [Psi, Theta, Phi]],
   ets:insert(SM#sm.share, {ahrs, [Yaw,Pitch,Roll]}),
@@ -165,16 +165,15 @@ rock(SM, [E2,N2,_]=P2) ->
   Pitch = 5 * math:sin(Pitch_phase1) * math:pi() / 180,
   [E0,N0,_] = P0,
   [E1,N1,_] = P1,
-  [W0,W1,W2] = [-E0,-E1,-E2],
-  Heading = K * math:atan2(W2-W1,N2-N1) + (1-K) * Heading_prev,
+  Heading = K * math:atan2(N2-N1,E2-E1) + (1-K) * Heading_prev,
   A = hypot(E1-E0,N1-N0),
   B = hypot(E2-E1,N2-N1),
   C = hypot(E2-E0,N2-N0),
   Alpha = try math:acos((C*C-A*A-B*B)/(2*A*B)) catch _:_ -> 0 end,
-  AlphaA = math:atan2(W1-W0,N1-N0),
+  AlphaA = math:atan2(N1-N0,E1-E0),
   AlphaB = Heading,
-  Sign = sign(AlphaB - AlphaA),
-  Roll = K * (Sign * Alpha / 10) + (1-K) * Roll_prev,
+  Sign = -sign(AlphaB - AlphaA),
+  Roll = K * (Sign * Alpha / 2) + (1-K) * Roll_prev,
   ets:insert(SM#sm.share, {tail, [P2,P1,P0], Pitch_phase1, Heading, Roll}),
   [Heading, Pitch, Roll].
 
@@ -183,7 +182,7 @@ broadcast_nmea(SM, [X, Y, Z]) ->
        {{Year,Month,Day},{HH,MM,SS}} = calendar:now_to_universal_time({MS,S,US}),
        Timestamp = 60*(60*HH + MM) + SS + US / 1000000,
        [{_, Ref}] = ets:lookup(SM#sm.share, geodetic),
-       [Lat,Lon,Alt] = ecef2geodetic(ned2ecef([X,Y,Z], Ref)),
+       [Lat,Lon,Alt] = ecef2geodetic(enu2ecef([X,Y,Z], Ref)),
 
        GGA = {gga, Timestamp, Lat, Lon, 4,nothing,nothing,Alt,nothing,nothing,nothing},
        ZDA = {zda, Timestamp, Day, Month, Year, 0, 0},
