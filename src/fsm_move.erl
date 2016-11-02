@@ -156,6 +156,11 @@ hypot(X,Y) ->
 sign(A) when A < 0 -> -1;
 sign(_) -> 1.
 
+smod(X, M) -> X - round(X/M)*M.
+wrap_pi(A) -> smod(A, 2*math:pi()).
+wrap_2pi(A) -> smod(A - math:pi(), 2*math:pi()) + math:pi().
+lp_wrap(New, Old, K) -> Old + K*(wrap_pi(New - Old)).
+
 %% turning left - roll positive, otherwise negative
 %% values in radians
 rock(SM, [E2,N2,_]=P2) ->
@@ -165,7 +170,7 @@ rock(SM, [E2,N2,_]=P2) ->
   Pitch = 5 * math:sin(Pitch_phase1) * math:pi() / 180,
   [E0,N0,_] = P0,
   [E1,N1,_] = P1,
-  Heading = K * math:atan2(N2-N1,E2-E1) + (1-K) * Heading_prev,
+  Heading = wrap_2pi(lp_wrap(math:atan2(N2-N1,E2-E1), Heading_prev, K)),
   A = hypot(E1-E0,N1-N0),
   B = hypot(E2-E1,N2-N1),
   C = hypot(E2-E0,N2-N0),
@@ -173,7 +178,7 @@ rock(SM, [E2,N2,_]=P2) ->
   AlphaA = math:atan2(N1-N0,E1-E0),
   AlphaB = Heading,
   Sign = -sign(AlphaB - AlphaA),
-  Roll = K * (Sign * Alpha / 2) + (1-K) * Roll_prev,
+  Roll = wrap_pi(lp_wrap((Sign * Alpha / 2), Roll_prev, K)),
   ets:insert(SM#sm.share, {tail, [P2,P1,P0], Pitch_phase1, Heading, Roll}),
   [Heading, Pitch, Roll].
 
