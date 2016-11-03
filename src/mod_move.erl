@@ -37,7 +37,7 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   {A1,A2,A3} = os:timestamp(),
-  _Old = random:seed(A1, A2, A3),
+  _Old = rand:seed(exsplus, { A1, A2, A3 }),
 
   %% {movement,[{circle,...},{tide,...},{rocking,...},{brownian,...},{jitter,...}]}
 
