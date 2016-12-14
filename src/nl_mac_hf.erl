@@ -44,7 +44,7 @@
 -export([init_nl_addrs/1, add_to_table/3, get_dst_addr/1, set_dst_addr/2]).
 -export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1]).
 %% NL header functions
--export([fill_bin_addrs/1, parse_path_data/2]).
+-export([parse_path_data/2]).
 %% Extract functions
 -export([extract_payload_mac_flag/1, extract_payload_nl_flag/1, create_ack/1, extract_ack/2]).
 %% Extract/create header functions
@@ -54,7 +54,7 @@
 %% Parse NL functions
 -export([prepare_send_path/3, parse_path/3, save_path/3]).
 %% Process NL functions
--export([add_neighbours/4, process_pkg_id/3, proccess_relay/2, process_path_life/2, neighbours_to_list/2, routing_to_bin/1, check_dubl_in_path/2]).
+-export([add_neighbours/5, process_pkg_id/3, proccess_relay/2, process_path_life/2, neighbours_to_list/2, routing_to_bin/1, check_dubl_in_path/2]).
 %% RTT functions
 -export([getRTT/2, smooth_RTT/3]).
 %% command functions
@@ -62,7 +62,7 @@
 %% Only MAC functions
 -export([process_rcv_payload/3, process_send_payload/2, process_retransmit/3]).
 %% Other functions
--export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4, logs_additional/2]).
+-export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
 count_flag_bits (F) ->
   count_flag_bits_helper(F, 0).
@@ -237,9 +237,10 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
         ?ERROR(?ID, "~s: Wrong Rout_addr:~p, check config file ~n", [?MODULE, Rout_addr]);
         true -> nothing
        end,
+
        ?TRACE(?ID, "Rout_addr ~p, MAC_addrm ~p, MAC_real_src ~p, MAC_real_dst ~p~n", [Rout_addr, MAC_addr, MAC_real_src, MAC_real_dst]),
        if ((MAC_addr =:= error) or (MAC_real_src =:= error) or (MAC_real_dst =:= error)
-           or ((MAC_real_dst =:= 255) and Protocol#pr_conf.br_na)) ->
+           or ((MAC_real_dst =:= ?BITS_ADDRESS_MAX) and Protocol#pr_conf.br_na)) ->
             error;
           true ->
             NLarp = set_dst_addr(NL, MAC_addr),
@@ -256,6 +257,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
                  %fsm:cast(SM, nl, {send, AT}),
+                 %io:format("AT ~p ~n ~p~n ", [AT, erlang:process_info(self(), current_stacktrace)]),
                  fill_dets(SM),
                  fsm:set_event(SM1, eps)
             end
@@ -360,74 +362,111 @@ check_dubl_in_path(Path, MAC_addr) ->
 remove_dubl_in_path([])    -> [];
 remove_dubl_in_path([H|T]) -> [H | [X || X <- remove_dubl_in_path(T), X /= H]].
 
+
+%-------> data
+% 3b        6b
+%   TYPEMSG   MAX_DATA_LEN
+create_data(Type, TransmitLen, Data) ->
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
+  CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
+  TypeNum = ?TYPEMSG2NUM(Type),
+
+  BType = <<TypeNum:CBitsTypeMsg>>,
+  BLenData = <<TransmitLen:CBitsMaxLenData>>,
+
+  BHeader = <<BType/bitstring, BLenData/bitstring>>,
+  Add = 8 - (bit_size(BHeader)) rem 8,
+  <<BHeader/bitstring, 0:Add, Data/binary>>.
+
 %%----------------NL functions create/extract protocol header-------------------
-%%--------------- path_data -------------------
-%   3b        6b        LenPath * 6b   REST till / 8
-%   TYPEMSG   LenPath   Path           ADD
-create_path_data(Type, Path, Data) ->
+%-------> path_data
+%   3b        6b            6b        LenPath * 6b   REST till / 8
+%   TYPEMSG   MAX_DATA_LEN  LenPath   Path           ADD
+create_path_data(Type, Path, TransmitLen, Data) ->
   LenPath = length(Path),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
   TypeNum = ?TYPEMSG2NUM(Type),
 
+  BLenData = <<TransmitLen:CBitsMaxLenData>>,
   BType = <<TypeNum:CBitsTypeMsg>>,
   BLenPath = <<LenPath:CBitsLenPath>>,
-  BPath = fill_bin_addrs(Path),
+  BPath = code_header(path, Path),
 
-  TmpData = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring, Data/binary>>,
-  Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
-  if Data_bin =:= false ->
-     Add = 8 - bit_size(TmpData) rem 8,
-     <<BType/bitstring, BLenPath/bitstring, BPath/bitstring, 0:Add, Data/binary>>;
-   true ->
-     TmpData
-   end.
+  BHeader = <<BType/bitstring, BLenData/bitstring, BLenPath/bitstring, BPath/bitstring>>,
+  Add = 8 - (bit_size(BHeader)) rem 8,
+  <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 extract_path_data(SM, Payl) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
 
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
-  <<BType:CBitsTypeMsg, BLenPath:CBitsLenPath, PTail/bitstring>> = Payl,
+  <<BType:CBitsTypeMsg, BLenData:CBitsMaxLenData, PathRest/bitstring>> = Payl,
 
-  [Path, Rest] = bin_addrs_to_list(PTail, BLenPath),
-  path_data = ?NUM2TYPEMSG(BType),
-  true = BLenPath > 0,
-  ?TRACE(?ID, "extract path data BType ~p BLenPath ~p~n", [BType, BLenPath]),
+  {Path, Rest} =
+  case ?NUM2TYPEMSG(BType) of
+    path_data ->
+      extract_header(path, CBitsLenPath, CBitsLenPath, PathRest);
+    data ->
+      {nothing, PathRest}
+  end,
+
+  ?TRACE(?ID, "extract path data BType ~p ~n", [BType]),
   if Data_bin =:= false ->
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
-    [Path, Data];
+    [Path, BLenData, Data];
   true ->
-    [Path, Rest]
+    [Path, BLenData, Rest]
   end.
 
-bin_addrs_to_list(BPath, Len) ->
-  bin_addrs_to_list_helper(BPath, Len, [], <<>>).
+decode_header(neighbours, Neighbours) ->
+  W = count_flag_bits(?BITS_LEN_NEIGBOURS),
+  [N || <<N:W>> <= Neighbours];
 
-bin_addrs_to_list_helper(_, 0, Path, Data) ->
-  [Path, Data];
-bin_addrs_to_list_helper(BPath, Len, Path, _Data) ->
-  CBitsAddr = count_flag_bits(?BITS_ADDRESS_MAX),
-  <<BHop:CBitsAddr, Rest/bitstring>> = BPath,
-  bin_addrs_to_list_helper(Rest, Len - 1, [BHop | Path], Rest).
+decode_header(path, Paths) ->
+  W = count_flag_bits(?BITS_LEN_PATH),
+  [P || <<P:W>> <= Paths];
 
-fill_bin_addrs(Addrs) ->
-  LenPath = length(Addrs),
-  fill_bin_addrs_helper(Addrs, LenPath, <<>>).
+decode_header(add, AddInfos) ->
+  W = count_flag_bits(?BITS_ADD),
+  [N || <<N:W>> <= AddInfos].
 
-fill_bin_addrs_helper(_, 0, BAddrs) -> BAddrs;
-fill_bin_addrs_helper([HPath | TPath], LenPath, BAddrs) ->
-  CBitsAddr = count_flag_bits(?BITS_ADDRESS_MAX),
-  fill_bin_addrs_helper(TPath, LenPath - 1, <<HPath:CBitsAddr, BAddrs/bitstring>>).
+extract_header(Id, LenWidth, FieldWidth, Input) ->
+  <<Len:LenWidth, _/bitstring>> = Input,
+  Width = Len * FieldWidth,
+  <<_:LenWidth, BField:Width/bitstring, Rest/bitstring>> = Input,
+  {decode_header(Id, BField), Rest}.
+
+code_header(neighbours, Neighbours) ->
+  W = count_flag_bits(?BITS_LEN_NEIGBOURS),
+  << <<N:W>> || N <- Neighbours>>;
+
+code_header(path, Paths) ->
+  W = count_flag_bits(?BITS_LEN_PATH),
+  << <<N:W>> || N <- Paths>>;
+
+code_header(add, AddInfos) ->
+  W = count_flag_bits(?BITS_ADD),
+  Saturated_integrities = lists:map(fun(S) when S > 255 -> 255; (S) -> S end, AddInfos),
+  << <<N:W>> || N <- Saturated_integrities>>.
+
 
 parse_path_data(SM, Payl) ->
   try
     MAC_addr = convert_la(SM, integer, mac),
-    [Path, BData] = extract_path_data(SM, Payl),
-    CheckedDblPath = check_dubl_in_path(Path, MAC_addr),
-    ?TRACE(?ID, "recv parse path data ~p Data ~p~n", [CheckedDblPath, BData]),
-    {BData, CheckedDblPath}
+    %[Path, LenData, BData] = extract_path_data(SM, Payl),
+    case extract_path_data(SM, Payl) of
+      [nothing, LenData, BData] ->
+        {LenData, BData, nothing};
+      [Path, LenData, BData] ->
+        CheckedDblPath = check_dubl_in_path(Path, MAC_addr),
+        ?TRACE(?ID, "recv parse path data ~p Data ~p~n", [CheckedDblPath, BData]),
+        {LenData, BData, CheckedDblPath}
+    end
   catch error: _Reason ->
     {Payl, nothing}
   end.
@@ -462,7 +501,7 @@ create_neighbours(Type, Neighbours) ->
 
   BType = <<TypeNum:CBitsTypeMsg>>,
   BLenNeigbours = <<LenNeighbours:CBitsLenNeigbours>>,
-  BNeighbours = fill_bin_addrs(Neighbours),
+  BNeighbours = code_header(neighbours, Neighbours),
 
   TmpData = <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
@@ -484,10 +523,10 @@ create_neighbours_path(Type, Neighbours, Path) ->
   BType = <<TypeNum:CBitsTypeMsg>>,
 
   BLenNeigbours = <<LenNeighbours:CBitsLenNeigbours>>,
-  BNeighbours = fill_bin_addrs(Neighbours),
+  BNeighbours = code_header(neighbours, Neighbours),
 
   BLenPath = <<LenPath:CBitsLenPath>>,
-  BPath = fill_bin_addrs(Path),
+  BPath = code_header(path, Path),
 
   TmpData = <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring,
               BLenPath/bitstring, BPath/bitstring>>,
@@ -506,17 +545,15 @@ extract_neighbours_path(SM, Payl) ->
     CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
     CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
 
-    <<BType:CBitsTypeMsg, BLenNeighbours:CBitsLenNeigbours, PTailNeighbours/bitstring>> = Payl,
+    <<BType:CBitsTypeMsg, NeighboursRest/bitstring>> = Payl,
 
     neighbours_path = ?NUM2TYPEMSG(BType),
 
-    [Neighbours, PTailPath] = bin_addrs_to_list(PTailNeighbours, BLenNeighbours),
-    <<BLenPath:CBitsLenPath, Rest/bitstring>> = PTailPath,
+    {Neighbours, PathRest} = extract_header(neighbours, CBitsLenNeigbours, CBitsLenNeigbours, NeighboursRest),
+    {Path, _} = extract_header(path, CBitsLenPath, CBitsLenPath, PathRest),
 
-    [Path, _] = bin_addrs_to_list(Rest, BLenPath),
-
-    ?TRACE(?ID, "Extract neighbours path BType ~p BLenPath ~p Neighbours ~p Path ~p~n",
-          [BType, BLenPath, Neighbours, Path]),
+    ?TRACE(?ID, "Extract neighbours path BType ~pNeighbours ~p Path ~p~n",
+          [BType, Neighbours, Path]),
 
     [Neighbours, Path]
    catch error: _Reason ->
@@ -538,11 +575,10 @@ create_path_addit(Type, Path, Additional) ->
   BType = <<TypeNum:CBitsTypeMsg>>,
 
   BLenPath = <<LenPath:CBitsLenPath>>,
-  BPath = fill_bin_addrs(Path),
+  BPath = code_header(path, Path),
 
   BLenAdd = <<LenAdd:CBitsLenAdd>>,
-  BAdd = fill_bin_addrs(Additional),
-
+  BAdd = code_header(add, Additional),
   TmpData = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
             BLenAdd/bitstring, BAdd/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
@@ -558,18 +594,18 @@ extract_path_addit(SM, Payl) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
   CBitsLenAdd = count_flag_bits(?BITS_LEN_ADD),
+  CBitsAdd = count_flag_bits(?BITS_ADD),
 
-  <<BType:CBitsTypeMsg, BLenPath:CBitsLenPath, PTailPath/bitstring>> = Payl,
-  [Path, PTailAdd] = bin_addrs_to_list(PTailPath, BLenPath),
-  <<BLenAdd:CBitsLenAdd, Rest/bitstring>> = PTailAdd,
+  <<BType:CBitsTypeMsg, PathRest/bitstring>> = Payl,
+  {Path, AddRest} = extract_header(path, CBitsLenPath, CBitsLenPath, PathRest),
+  {Additional, _} = extract_header(add, CBitsLenAdd, CBitsAdd, AddRest),
 
-  [Additonal, _] = bin_addrs_to_list(Rest, BLenAdd),
   path_addit = ?NUM2TYPEMSG(BType),
 
-  ?TRACE(?ID, "extract path addit BType ~p BLenPath ~p Path ~p Additonal ~p~n",
-        [BType, BLenPath, Path, Additonal]),
+  ?TRACE(?ID, "extract path addit BType ~p  Path ~p Additonal ~p~n",
+        [BType, Path, Additional]),
 
-  [Path, Additonal].
+  [Path, Additional].
 
 %%-------------------------Addressing functions --------------------------------
 flag2num(Flag) when is_atom(Flag)->
@@ -632,10 +668,10 @@ get_routing_addr(SM, Flag, AddrSrc) ->
                     or (Protocol#pr_conf.pf and ((Flag =:= data) or (Flag =:= ack)))
                     or ( (Protocol#pr_conf.lo or Protocol#pr_conf.dbl) and (Flag =:= path)) ) ->
       find_in_routing_table(Routing_table, AddrSrc);
-    _ ->  255
+    _ ->  ?BITS_ADDRESS_MAX
   end.
 
-find_in_routing_table(255, _) -> 255;
+find_in_routing_table(?BITS_ADDRESS_MAX, _) -> ?BITS_ADDRESS_MAX;
 find_in_routing_table([], _) -> no_routing_table;
 find_in_routing_table(Routing_table, AddrSrc) ->
   lists:foldr(
@@ -660,14 +696,17 @@ convert_la(SM, Type, Format) ->
 %%----------------------------Parse NL functions -------------------------------
 fill_msg(Format, Tuple) ->
   case Format of
+    data ->
+      {TransmitLen, Data} = Tuple,
+      create_data(Format, TransmitLen, Data);
     neighbours ->
       create_neighbours(Format, Tuple);
     neighbours_path ->
       {Neighbours, Path} = Tuple,
       create_neighbours_path(Format, Neighbours, Path);
     path_data ->
-      {Data, Path} = Tuple,
-      create_path_data(Format, Path, Data);
+      {TransmitLen, Data, Path} = Tuple,
+      create_path_data(Format, Path, TransmitLen, Data);
     path_addit ->
       {Path, Additional} = Tuple,
       create_path_addit(Format, Path, Additional)
@@ -675,7 +714,7 @@ fill_msg(Format, Tuple) ->
 
 prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src, Payload}}) ->
   MAC_addr = convert_la(SM, integer, mac),
-  {nl,send, IDst, Data} = readETS(SM, current_pkg),
+  {nl,send, _, IDst, Data} = readETS(SM, current_pkg),
 
   [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
   NPathTuple = {ListNeighbours, ListPath},
@@ -683,7 +722,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src
   NPath = [MAC_addr | BPath],
 
   case get_routing_addr(SM, path, Real_dst) of
-    255 -> nothing;
+    ?BITS_ADDRESS_MAX -> nothing;
     _ -> analyse(SM1, paths, NPath, {Real_src, Real_dst})
   end,
 
@@ -715,7 +754,7 @@ parse_path(SM, {_, ListPath}, {ISrc, IDst}) ->
      end
   end.
 
-add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}) ->
+add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {_IRssi, _IIntegrity}) ->
   ?INFO(?ID, "+++ Flag ~p, NLSrcAT ~p, RealSrc ~p~n", [Flag, NLSrcAT, RealSrc]),
   Current_neighbours = readETS(SM, current_neighbours),
   SM1 = fsm:set_timeout(SM, {s, readETS(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
@@ -740,16 +779,21 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
   {Flag, [_, ISrc, PAdditional]} = Params,
   MAC_addr = convert_la(SM, integer, mac),
   Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
+
   case Flag of
     data when (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) ->
       CheckedTuple = parse_path_data(SM, Payload),
+      {_, Add, Path} = CheckedTuple,
       NewPayload = fill_msg(path_data, CheckedTuple),
-      [SMN1, _]  = parse_path(SM, CheckedTuple, {ISrc, IDst}),
+      [SMN1, _]  = parse_path(SM, {Add, Path}, {ISrc, IDst}),
       [SMN1, {send, Params, {nl, send, IDst, NewPayload}}];
-    data ->
+    data when Protocol#pr_conf.pf ->
       CheckedTuple = parse_path_data(SM, Payload),
-      [SMN, _] = parse_path(SM, CheckedTuple, {ISrc, IDst}),
+      {_, Add, Path} = CheckedTuple,
+      [SMN, _] = parse_path(SM, {Add, Path}, {ISrc, IDst}),
       [SMN, Tuple];
+    data ->
+      [SM, Tuple];
     neighbours ->
       case LNeighbours = get_current_neighbours(SM) of
         no_neighbours ->
@@ -861,7 +905,7 @@ proccess_rout_table_helper(SM, FromAddr, NListPath) ->
       end
   end.
 proccess_rout_table(SM, [],_, Routing_table) ->
-  [SM, lists:reverse([255 | Routing_table]) ];
+  [SM, lists:reverse([?BITS_ADDRESS_MAX | Routing_table]) ];
 proccess_rout_table(SM, [H | T], NLFrom, Routing_table) ->
   SM1 = fsm:set_timeout(SM, {s, readETS(SM, path_life)}, {path_life, {H, NLFrom}}),
   proccess_rout_table(SM1, T, NLFrom, [ {H, NLFrom} | Routing_table]).
@@ -881,7 +925,7 @@ save_path(SM, {Flag,_} = Params, Tuple) ->
   case Flag of
     data when Protocol#pr_conf.ry_only and Protocol#pr_conf.pf ->
       {async,{nl,recv, Real_src, Real_dst, Payload}} = Tuple,
-      {_, Path} = parse_path_data(SM, Payload),
+      {_, _, Path} = parse_path_data(SM, Payload),
       analyse(SM, paths, Path, {Real_src, Real_dst});
     path_addit when Protocol#pr_conf.evo ->
       {async,{nl,recv, _, _, Payload}} = Tuple,
@@ -893,7 +937,7 @@ save_path(SM, {Flag,_} = Params, Tuple) ->
 
 update_rout_table(SM, NRouting_table) ->
   ORouting_table = readETS(SM, routing_table),
-  LRouting_table = if ORouting_table =:= 255 -> [255]; true -> ORouting_table end,
+  LRouting_table = if ORouting_table =:= ?BITS_ADDRESS_MAX -> [?BITS_ADDRESS_MAX]; true -> ORouting_table end,
   SMN1 =
   lists:foldr(
      fun(X, SMTmp) ->
@@ -1109,8 +1153,8 @@ routing_to_bin(SM) ->
   Routing_table = readETS(SM, routing_table),
   Local_address = readETS(SM, local_address),
   case Routing_table of
-    255 ->
-      list_to_binary(["default->",integer_to_binary(255)]);
+    ?BITS_ADDRESS_MAX ->
+      list_to_binary(["default->",integer_to_binary(?BITS_ADDRESS_MAX)]);
     _ ->
       lists:foldr(
         fun(X,A) ->
@@ -1223,32 +1267,29 @@ process_command(SM, Debug, Command) ->
   Protocol   = readETS(SM, {protocol_config, readETS(SM, np)}),
   [Req, Asw] =
   case Command of
-    {fsm, state} ->
-      [fsm_state, state];
-    {fsm, states} ->
-      Last_states = readETS(SM, last_states),
-      [queue:to_list(Last_states), states];
     protocols ->
       [?PROTOCOL_DESCR, protocols];
-    {statistics,_,paths} when Protocol#pr_conf.pf ->
-      [readETS(SM, paths), paths];
-    {statistics,_,neighbours} ->
-      [readETS(SM, st_neighbours), neighbours];
-    {statistics,_,data} when Protocol#pr_conf.ack ->
-      [readETS(SM, st_data), data];
-    {protocol, _,info} ->
+    {protocol, _} ->
       [readETS(SM, np), protocol_info];
-    {protocol, _,state} ->
-      [readETS(SM, pr_state), protocol_state];
-    {protocol, _,states} ->
-      Pr_states = readETS(SM, pr_states),
-      [queue:to_list(Pr_states), protocols_state];
-    {protocol, _,neighbours} ->
+    {statistics, paths} when Protocol#pr_conf.pf ->
+      [readETS(SM, paths), paths];
+    {statistics, neighbours} ->
+      [readETS(SM, st_neighbours), neighbours];
+    {statistics, data} when Protocol#pr_conf.ack ->
+      [readETS(SM, st_data), data];
+    states ->
+      Last_states = readETS(SM, last_states),
+      [queue:to_list(Last_states), states];
+    state ->
+      States = list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")"]),
+      [States, state];
+    neighbours ->
       [readETS(SM, current_neighbours), neighbours];
-    {protocol, _,routing} ->
+    routing ->
       [readETS(SM, routing_table), routing];
     _ -> [error, nothing]
   end,
+
   Answer =
   case Req of
     error ->
@@ -1257,33 +1298,25 @@ process_command(SM, Debug, Command) ->
       {nl, Asw, empty};
     _ ->
       case Command of
-        {fsm,_} ->
-          if Asw =:= state ->
-               L = list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")"]),
-               {nl, fsm, Asw, L};
-             true ->
-               {nl, fsm, Asw, list_to_binary(Req)}
-          end;
-        {statistics,_,paths} when Protocol#pr_conf.pf ->
+        {statistics, paths} when Protocol#pr_conf.pf ->
           {nl, statistics, paths, get_stat(SM, paths) };
-        {statistics, _,neighbours} ->
+        {statistics, neighbours} ->
           {nl, statistics, neighbours, get_stat(SM, st_neighbours) };
-        {statistics, _,data} when Protocol#pr_conf.ack ->
+        {statistics, data} when Protocol#pr_conf.ack ->
           {nl, statistics, data, get_stat_data(SM, st_data) };
         protocols ->
           {nl, Command, Req};
-        {protocol, Name, info} ->
+        {protocol, Name} ->
           {nl, protocol, Asw, get_protocol_info(SM, Name)};
-        {protocol, _, neighbours} ->
-          {nl, protocol, Asw, neighbours_to_bin(SM, nl)};
-        {protocol, _, routing} ->
-          {nl, protocol, Asw, routing_to_bin(SM)};
-        {protocol, Name, state} ->
-          L = list_to_binary([atom_to_binary(Name,utf8), ",", Req]),
-          {nl, protocol, state, L};
-        {protocol, Name, states} ->
-          L = list_to_binary([atom_to_binary(Name,utf8), "\n", Req]),
-          {nl, protocol, states, L};
+        neighbours ->
+          {nl, neighbours, Asw, neighbours_to_bin(SM, nl)};
+        routing ->
+          {nl, routing, Asw, routing_to_bin(SM)};
+        state ->
+          {nl, state, Req};
+        states ->
+          L = list_to_binary(Req),
+          {nl, states, L};
         _ ->
           {nl, error}
       end
@@ -1340,28 +1373,6 @@ get_stat(SM, Qname) ->
            " Total:", integer_to_binary(TS)]) | A]
       end
     end, [], queue:to_list(PT)).
-
-logs_additional(SM, Role) ->
-  Protocol   = readETS(SM, {protocol_config, readETS(SM, np)}),
-
-  if(Role =:= source) ->
-    if Protocol#pr_conf.pf  ->
-      process_command(SM, false, {statistics, "", data}),
-      process_command(SM, false, {statistics, "", paths});
-    true -> nothing end,
-    process_command(SM, false, {protocol, "", neighbours}),
-    if Protocol#pr_conf.pf;
-       Protocol#pr_conf.stat->
-    process_command(SM, false, {protocol, "", routing});
-    true -> nothing end;
-  true ->
-    nothing
-  end,
-  process_command(SM, true, {statistics,"",data}),
-  process_command(SM, true, {statistics, "", neighbours}),
-  process_command(SM, true, {statistics, "", paths}),
-  process_command(SM, true, {protocol, "", neighbours}),
-  process_command(SM, true, {protocol, "", routing}).
 
 save_stat(SM, {ISrc, IDst}, Role)->
   case Role of
@@ -1446,8 +1457,7 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
       CTDiff = convert_t(TDiff, {us, s}),
       Tuple = {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops},
       add_item_to_queue_nd(SM, QName, Tuple, 300)
-  end,
-  logs_additional(SM, Role).
+  end.
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
   Q = readETS(SM, Qname),

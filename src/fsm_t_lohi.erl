@@ -55,7 +55,7 @@
 %%  ct  - contention tone
 %%  ctd - contention detect
 %%  ctc - contention counting
-%%  Pmax 	  – the worst case one way propagation-time
+%%  Pmax    – the worst case one way propagation-time
 %%  Tdetect – tone detection time
 
 -define(TRANS, [
@@ -85,11 +85,11 @@
                 {cr,
                  [{error, idle},
                   {rcv_data, idle},
-                  {send_tone,	cr},
+                  {send_tone, cr},
                   {rcv_ct, cr},
                   {end_of_frame, cr},
                   {dp_ends, cr},
-                  {no_ct,	transmit_data},
+                  {no_ct, transmit_data},
                   {ct_exist, backoff_state}
                  ]},
 

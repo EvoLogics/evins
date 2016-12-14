@@ -2,11 +2,12 @@ PROJECT = evins
 core = $(subst src/,,$(wildcard src/core/*.erl))
 COMPILE_FIRST = $(core:.erl=)
 
-DEPS = cowboy jsx
+DEPS = cowboy jsx parse_trans
 dep_jsx = pkg://jsx 2.8.0
 dep_cowboy = pkg://cowboy 1.0.4
 dep_cowlib = pkg://cowlib 1.3.0
 dep_ranch = pkg://ranch 1.2.1
+dep_parse_trans = pkg://parse_trans master
 
 rel: 
 

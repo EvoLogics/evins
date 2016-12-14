@@ -32,12 +32,15 @@
 %		Flag 		PKGID 	SRC 		DST 		ADD
 %---------------------------------------------
 %--------------- PROTOCOL HEADER -----------------
+%-------> data
+%	3b				6b
+%		TYPEMSG 	MAX_DATA_LEN
 %-------> neighbours
 % 	3b				6b 								LenNeighbours * 6b		REST till / 8
 %		TYPEMSG 	LenNeighbours 		Neighbours 						ADD
 %-------> path_data
-% 	3b				6b				LenPath * 6b   REST till / 8
-%		TYPEMSG 	LenPath 	Path 					 ADD
+% 	3b				6b				6b			LenPath * 6b   REST till / 8
+%		TYPEMSG 	MAX_DATA_LEN	LenPath 	Path 					 ADD
 %-------> neighbour_path
 % 	3b				6b 								LenNeighbours * 6b		6b				LenPath * 6b 			REST till / 8
 %		TYPEMSG 	LenNeighbours 		Neighbours 						LenPath 	Path 							ADD
@@ -52,6 +55,8 @@
 -define(BITS_LEN_PATH, 63).
 -define(BITS_LEN_NEIGBOURS, 63).
 -define(BITS_LEN_ADD, 3).
+-define(BITS_ADD, 255).
+-define(MAX_DATA_LEN, 64).
 
 -define(LIST_ALL_PROTOCOLS, [staticr,
 			     staticrack,
@@ -93,7 +98,7 @@
 			{sncfloodrack, 	[3, {ry_only, br_na, ack},  	fsm_nl_flood]},	% Sequence number controlled flooding with acknowledgement
 			{dpfloodr,		[4, {ry_only, prob},    fsm_nl_flood]},	% Dynamic Probabilistic Flooding
 			{dpfloodrack,	[5, {ry_only, prob, br_na, ack},fsm_nl_flood]},	% Dynamic Probabilistic Flooding with acknowledgement
-			{icrpr,		[6, {ry_only, pf, br_na, ack},  fsm_nl_flood]},	% Information Carrying Routing Protocol
+			{icrpr,		[5, {ry_only, pf, br_na, ack},  fsm_nl_flood]},	% Information Carrying Routing Protocol
 			{sncfloodpfr,	[7, {pf, brp, br_na},           fsm_nl_flood]},	% Pathfind and relay, based on sequence number controlled flooding
 			{sncfloodpfrack,[7, {pf, brp, br_na, ack},      fsm_nl_flood]},	% Pathfind and relay, based on sequence number controlled flooding with acknowledgement
 			{dblfloodpfr,	[7, {pf, dbl, br_na},       	fsm_nl_flood]},	% Double flooding path finder
@@ -120,6 +125,52 @@
 			 "icrpr          - information carrying routing protocol\n"
 			 "loarp          - low overhead routing protocol\n"
 			 "loarpack       - low overhead routing protocol with acknowledgement\n"
+			]).
+
+
+-define(HELP, ["\n",
+			 "=========================================== HELP ===========================================\n",
+			 "?\t\t\t\t\t\t- List of all commands\n",
+			 "\n\n\n",
+			 "===================================== Send and receive ======================================\n",
+			 "NL,send,[<Datalen>],<Dst>,<Data>\t\t- send data, <Datalen> - optional\n",
+			 "NL,recv,<Datalen>,<Src>,<Dst>,<Data>\t\t- recv data\n",
+			 "\n\n\n",
+			 "===================================== Immediate response =====================================\n",
+			 "NL,ok\t\t\t\t\t\t- message was accepted and will be transmitted\n",
+			 "NL,error\t\t\t\t\t- message was not accepted and will be dropped\n",
+			 "NL,busy\t\t\t\t\t\t- NL is busy, message will be dropped\n",
+			 "\n\n\n",
+			 "==================================== Data delivery reports ====================================\n",
+			 "NL,failed,<Src>,<Dst>\t\t\t\t- Message was not delivered to destination node\n",
+			 "NL,delivered,<Src>,<Dst>\t\t\t- Message was successfully delivered to destination node\n",
+			 "\n\n\n",
+			 "==================================== Set commands =====================================\n",
+ 			 "NL,set,protocol,<Protocol_Name>\t\t\t- set current routing protocol\n",
+			 "\n\n\n",
+			 "==================================== Information commands =====================================\n",
+			 "NL,get,protocols\t\t\t\t- Get description of all protocols\n",
+			 "NL,get,protocol\t\t\t\t- Get current routing protocol\n",
+			 "NL,get,protocol,<Protocol_name>\t\t\t- Get description of specific protocol\n",
+			 "NL,get,neighbours\t\t\t\t- Get current  neighbours\n",
+			 "NL,get,routing\t\t\t\t\t- Get current routing table\n",
+			 "NL,get,state\t\t\t\t\t- Get current  state of protocol (sm)\n",
+			 "NL,get,states\t\t\t\t\t- Get last 50  states of protocol (sm)\n",
+			 "\n\n\n",
+			 "======================== Statistics commands for protocols of all types ========================\n",
+			 "NL,get,stats,neighbours\t\t\t\t- Get statistics of all neighbours from start of program till the current time\n
+			 \t\t\tAnswer:
+			 \t\t\t<Role : relay or source><Neighbours><Duration find path><Count found this path><Total count try findpath>\n"
+			 "\n",
+			 "================== Statistics commands only for protocols of path finding type ==================\n",
+			 "NL,get,stats,paths\t\t\t\t- Get statistics of all paths from start of program till the current time\n
+			 \t\t\tAnswer:
+			 \t\t\t<Role : relay or source><Path><Duration find path><Count found this path><Total count try findpath>\n"
+			 "\n",
+			 "========================= Statistics commands only for protocols with ack ========================\n",
+			 "NL,get,stats,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time\n
+			 \t\t\tAnswer:
+			 \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
 			]).
 
 -define(STATE_DESCR,
@@ -158,7 +209,8 @@
 			      {7, 7},
 			      {8, 8},
 			      {9, 9},
-			      {255, 255}
+			      {255, ?BITS_ADDRESS_MAX},
+			      {?BITS_ADDRESS_MAX, 255}
 			     ]).
 
 -define(FLAG2NUM(F),
@@ -202,7 +254,8 @@
 	    0 			 -> neighbours; % n:(.*)
 	    1 			 -> path_data;  % p:(.*),d:(.*)
 	    2 			 -> neighbours_path; % n:(.*),p:(.*)
-	    3 			 -> path_addit % p:(.*),a:(.*)
+	    3 			 -> path_addit; % p:(.*),a:(.*)
+	    4 			 -> data
 	end).
 
 -define(TYPEMSG2NUM(N),
@@ -211,5 +264,6 @@
 	    neighbours 	-> 0;
 	    path_data 	-> 1;
 	    neighbours_path -> 2;
-	    path_addit -> 3
+	    path_addit -> 3;
+	    data -> 4
 	end).
