@@ -305,7 +305,7 @@ handle_event(MM, SM, Term) ->
 init_flood(SM) ->
   {H, M, Ms} = erlang:timestamp(),
   LA = share:get(SM, local_address),
-  rand:seed({H * LA, M * LA, Ms}),
+  rand:seed(exsplus, {H * LA, M * LA, Ms}),
   share:put(SM, [{packet_id, 0},
                  {packet_id, 0},
                  {path_exists, false},
@@ -316,7 +316,7 @@ init_flood(SM) ->
                  {last_states, queue:new()},
                  {pr_states, queue:new()},
                  {paths, queue:new()},
-                 {st_neighbours, queuee:new()},
+                 {st_neighbours, queue:new()},
                  {st_data, queue:new()}]),
   SM1 = nl_mac_hf:init_dets(SM),
   nl_mac_hf:init_nl_addrs(SM1).

@@ -232,7 +232,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  Local_address = share:get(SM, local_address),
                  CurrentRTT = {rtt, Local_address, Real_dst},
                  ?TRACE(?ID, "CurrentRTT sending AT command ~p~n", [CurrentRTT]),
-                 share:put(SM, [{{last_nl_sent_time, CurrentRTT}, erlang:timestamp()},
+                 share:put(SM, [{{last_nl_sent_time, CurrentRTT}, erlang:monotonic_time(micro_seconds)},
                                 {last_nl_sent, {Flag, Real_src, NLarp}},
                                 {ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}}]),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
@@ -972,7 +972,7 @@ smooth_RTT(SM, Flag, RTTTuple={_,_,Dst}) ->
   case Time_send_msg of
     nothing -> nothing;
     _ ->
-       EndValMicro = timer:now_diff(erlang:timestamp(), Time_send_msg),
+       EndValMicro = erlang:monotonic_time(micro_seconds) - Time_send_msg,
        CurrentRTT = getRTT(SM, RTTTuple),
        Smooth_RTT =
        if Flag =:= direct ->
@@ -1291,11 +1291,11 @@ save_stat(SM, {ISrc, IDst}, Role)->
   case Role of
     source ->
       S_total_sent = share:get(SM, s_total_sent),
-      share:put(SM, s_send_time, {{ISrc, IDst}, erlang:timestamp()}),
+      share:put(SM, s_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)}),
       share:put(SM, s_total_sent, S_total_sent + 1);
     relay ->
       R_total_sent = share:get(SM, r_total_sent),
-      share:put(SM, r_send_time, {{ISrc, IDst}, erlang:timestamp()}),
+      share:put(SM, r_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)}),
       share:put(SM, r_total_sent, R_total_sent + 1);
     _ ->
       nothing
@@ -1356,7 +1356,7 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
       Tuple = {Role, BPath, 0.0, 1, TSC},
       add_item_to_queue_nd(SM, QName, Tuple, 300);
     _ when QName =/= st_data ->
-      TDiff = timer:now_diff(erlang:timestamp(), Time),
+      TDiff = erlang:monotonic_time(micro_seconds) - Time,
       CTDiff = convert_t(TDiff, {us, s}),
       Tuple = {Role, BPath, CTDiff, 1, TSC},
       add_item_to_queue_nd(SM, QName, Tuple, 300);
@@ -1366,7 +1366,7 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
       add_item_to_queue_nd(SM, QName, Tuple, 300);
     _ when QName =:= st_data ->
       {P, Dst, Count_hops, St} = BPath,
-      TDiff = timer:now_diff(erlang:timestamp(), Time),
+      TDiff = erlang:monotonic_time(micro_seconds) - Time,
       CTDiff = convert_t(TDiff, {us, s}),
       Tuple = {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops},
       add_item_to_queue_nd(SM, QName, Tuple, 300)

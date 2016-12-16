@@ -207,7 +207,7 @@ handle_event(MM, SM, Term) ->
   end.
 
 init_mac(SM) ->
-  rand:seed(erlang:timestamp()),
+  rand:seed(exsplus, erlang:timestamp()),
   %share:put(SM, retransmit_count, 0),
   init_ct(SM).
 

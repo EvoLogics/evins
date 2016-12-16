@@ -249,7 +249,7 @@ handle_final(_MM, SM, Term) ->
 
 %%--------------------------------------Helper functions------------------------
 init_backoff(SM)->
-  share:get(SM, current_step, 0). % 2 ^ 0
+  share:put(SM, current_step, 0). % 2 ^ 0
 
 check_limit(SM, Current_Backoff, Current_Step) ->
   case Current_Backoff of
