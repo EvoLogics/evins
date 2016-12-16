@@ -33,7 +33,7 @@
 -include("nl.hrl").
 
 %% Convert types functions
--export([convert_to_binary/1, covert_type_to_bin/1, convert_t/2, convert_la/3, count_flag_bits/1]).
+-export([convert_to_binary/1, convert_type_to_bin/1, convert_t/2, convert_la/3, count_flag_bits/1]).
 %% DETS functions
 -export([init_dets/1, fill_dets/1]).
 %% handle events
@@ -89,15 +89,9 @@ convert_to_binary([H|T])  ->
     busy  -> list_to_binary(["BUSY "]);
     _     -> list_to_binary([string:to_upper(atom_to_list(H)), ","])
   end,
-  Last_el = hd(lists:reverse(T)),
-  list_to_binary([Header,
-                  lists:foldr(fun(X, A) ->
-                                  Bin = covert_type_to_bin(X),
-                                  Sign = if X =:= Last_el -> ""; true -> "," end,
-                                  [list_to_binary([Bin, Sign]) | A]
-                              end, [], T)]).
+  list_to_binary([Header | lists:join(",", [convert_type_to_bin(X) || X <- T])]).
 
-covert_type_to_bin(X) ->
+convert_type_to_bin(X) ->
   case X of
     X when is_integer(X)   -> integer_to_binary(X);
     X when is_float(X)     -> list_to_binary(lists:flatten(io_lib:format("~.1f",[X])));
@@ -162,7 +156,7 @@ send_helpers(SM, Interface, MACP, Flag) ->
 
 send_cts(SM, Interface, MACP, Timestamp, USEC, Dur) ->
   {at, PID, _, IDst, _, _} = MACP,
-  Tuple = {at, PID,"*SENDIMS", IDst, Timestamp + USEC, covert_type_to_bin(Dur + USEC)},
+  Tuple = {at, PID,"*SENDIMS", IDst, Timestamp + USEC, convert_type_to_bin(Dur + USEC)},
   send_mac(SM, Interface, cts, Tuple).
 
 send_mac(SM, _Interface, Flag, MACP) ->
@@ -1065,7 +1059,7 @@ neighbours_to_bin(SM, Type) ->
   F = fun(X) when Type =:= mac -> integer_to_binary(addr_nl2mac(SM, X));
          (X) when Type =:= nl  -> integer_to_binary(X)
       end,
-  binary:list_to_bin(lists:join(",", [F(X) || X <- share:get(SM, current_neighbours)])).
+  list_to_binary(lists:join(",", [F(X) || X <- share:get(SM, current_neighbours)])).
 
 routing_to_bin(SM) ->
   Routing_table = share:get(SM, routing_table),
@@ -1079,7 +1073,7 @@ routing_to_bin(SM) ->
                                 ({_,_}) -> false;
                                 (X) -> {true, ["default->",integer_to_binary(X)]}
                              end, Routing_table),
-      binary:list_to_bin(lists:join(",", Path))
+      list_to_binary(lists:join(",", Path))
   end.
 
 add_item_to_queue(SM, Qname, Item, Max) ->
@@ -1254,38 +1248,28 @@ get_protocol_info(SM, Name) ->
   list_to_binary(["\nName\t\t: ", BName,"\n", ?PROTOCOL_SPEC(Conf)]).
 
 get_stat_data(SM, Qname) ->
-  PT = share:get(SM, Qname),
-  lists:foldr(
-    fun(X,A) ->
-      {Role, Payload, Time, Length, State, TS, Dst, Count_hops} = X,
-      TRole = if Role =:= source -> "Source"; true -> "Relay" end,
-      BTime = list_to_binary(lists:flatten(io_lib:format("~.1f",[Time]))),
-      [list_to_binary(
-        ["\n ", TRole, " Data:",Payload, " Len:", covert_type_to_bin(Length),
-         " Duration:", BTime, " State:", State, " Total:", integer_to_binary(TS),
-         " Dst:", integer_to_binary(Dst), " Hops:", integer_to_binary(Count_hops)]) | A]
-    end,[],queue:to_list(PT)).
+  lists:map(fun({Role, Payload, Time, Length, State, TS, Dst, Count_hops}) ->
+                TRole = if Role =:= source -> "Source"; true -> "Relay" end,
+                BTime = convert_type_to_bin(Time),
+                list_to_binary(
+                  ["\n ", TRole, " Data:",Payload, " Len:", convert_type_to_bin(Length),
+                   " Duration:", BTime, " State:", State, " Total:", integer_to_binary(TS),
+                   " Dst:", integer_to_binary(Dst), " Hops:", integer_to_binary(Count_hops)])
+            end, queue:to_list(share:get(SM, Qname))).
 
 get_stat(SM, Qname) ->
-  PT = share:get(SM, Qname),
-  lists:foldr(
-    fun(X,A) ->
-      {Role, Val, Time, Count, TS} = X,
-      TRole = if Role =:= source -> "Source"; true -> "Relay" end,
-      BTime = list_to_binary(lists:flatten(io_lib:format("~.1f", [Time]))),
-      case Qname of
-        paths ->
-          [list_to_binary(
-          ["\n ", TRole, " ", "Path:", covert_type_to_bin(Val),
-           " Time:", BTime, " Count:", integer_to_binary(Count),
-           " Total:", integer_to_binary(TS)]) | A];
-        st_neighbours ->
-          [list_to_binary(
-          ["\n ", TRole, " ", "Neighbour:", covert_type_to_bin(Val),
-           " Count:", integer_to_binary(Count),
-           " Total:", integer_to_binary(TS)]) | A]
-      end
-    end, [], queue:to_list(PT)).
+  lists:map(fun({Role, Val, Time, Count, TS}) ->
+                TRole = if Role =:= source -> "Source"; true -> "Relay" end,
+                BTime = convert_type_to_bin(Time),
+                Specific = case Qname of
+                             paths -> ["Path:", convert_type_to_bin(Val), " Time:", BTime];
+                             st_neighbours -> ["Neighbour:", convert_type_to_bin(Val)]
+                           end,
+                list_to_binary(
+                  ["\n ", TRole, " ", Specific, 
+                   " Count:", integer_to_binary(Count),
+                   " Total:", integer_to_binary(TS)])
+               end, queue:to_list(share:get(SM, Qname))).
 
 save_stat(SM, {ISrc, IDst}, Role)->
   case Role of
@@ -1325,16 +1309,8 @@ parse_tuple(Tuple) ->
   end.
 
 path_to_bin(SM, Path) ->
-  RevPath = lists:reverse(Path),
-  CheckDblPath = remove_dubl_in_path(RevPath),
-  lists:foldr(
-    fun(X, A) ->
-      Sign =
-      if byte_size(A) =:= 0 ->"";
-       true -> ","
-      end,
-      list_to_binary([integer_to_binary(addr_mac2nl(SM, X)), Sign, A])
-    end, <<>>, CheckDblPath).
+  CheckDblPath = remove_dubl_in_path(lists:reverse(Path)),
+  list_to_binary(lists:join(",",[integer_to_binary(addr_mac2nl(SM, X)) || X <- CheckDblPath])).
 
 analyse(SM, QName, Path, {Real_src, Real_dst}) ->
   {Time, Role, TSC, _Addrs} = get_stats_time(SM, Real_src, Real_dst),
@@ -1386,6 +1362,8 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
       share:put(SM, Qname, queue:in(Item, NewQ));
     _ ->
       {R, NP, NT, _, NewTS} = Item,
+
+      % FIXME: review and remove foldr here
       L =
       lists:foldr(
         fun({Role, P, T, Count, TS},A)->
@@ -1403,11 +1381,9 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
         true  -> queue:in(Item, NewQ);
         false -> queue:from_list(L)
       end,
-      NUQ = lists:foldr(
-              fun({Role, P, T, Count, TS},A) ->
-                  if R =:= Role -> [{Role, P, T, Count, NewTS} | A];
-                     true -> [{Role, P, T, Count, TS} | A]
-                  end
-              end,[],queue:to_list(QQ)),
+
+      NUQ = lists:map(fun({Role, P, T, Count, _}) when R == Role -> {Role, P, T, Count, NewTS};
+                         (Tuple) -> Tuple
+                      end, queue:to_list(QQ)),
       share:put(SM, Qname, queue:from_list(NUQ))
   end.
