@@ -80,23 +80,23 @@
 %%
 %% 1. Allowed are only instant messages (“*SENDIM”, DMACE protocol)
 %% 2. There are 3 states: idle, sensing phase and write
-%% 	- If a node has data to transmit and it is in idle state, it transmits
-%%	  and returns to idle state
-%% 	- If a node has data to transmit and it is in sensing state, it answers "OK"
-%% 	  to upper layer and sets a backoff timeout (tries to sen later)
-%% 	- If a node has data to transmit, it is in sensing state and backoff
-%%	  timeout left, it increases backoff timeout
-%%	  and sets the backoff timeout again
-%% 	- If a node sent data, it decreases the backoff timeout
+%%  - If a node has data to transmit and it is in idle state, it transmits
+%%    and returns to idle state
+%%  - If a node has data to transmit and it is in sensing state, it answers "OK"
+%%    to upper layer and sets a backoff timeout (tries to sen later)
+%%  - If a node has data to transmit, it is in sensing state and backoff
+%%    timeout left, it increases backoff timeout
+%%    and sets the backoff timeout again
+%%  - If a node sent data, it decreases the backoff timeout
 %% 3. Sensing phase is a state, where a node senses the channel  if there are
-%%	 some activities:
-%% 	 “BUSY” time between:
-%% 	- “SENDSTART”  and “SENDEND”,
-%% 	- “RECVSTART” and “RECVEND”
+%%   some activities:
+%%   “BUSY” time between:
+%%  - “SENDSTART”  and “SENDEND”,
+%%  - “RECVSTART” and “RECVEND”
 %% 4. If a node sends a package (didn't determined the channel as busy) and the
-%%	 modem is in “BUSY BACKOFF STATE”,
-%%	 the mac layer doesn't do anything, just reports the application layer, that
-%% 	 the modem is in backoff state.
+%%   modem is in “BUSY BACKOFF STATE”,
+%%   the mac layer doesn't do anything, just reports the application layer, that
+%%   the modem is in backoff state.
 %%
 %%  Abbreviation:
 %%  sp - sensing phase
@@ -168,8 +168,8 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
-      nl_mac_hf:insertETS(SM, {retransmit_count, Msg}, 0),
-      nl_mac_hf:insertETS(SM, current_msg, {not_delivered, Msg}),
+      share:put(SM, {retransmit_count, Msg}, 0),
+      share:put(SM, current_msg, {not_delivered, Msg}),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       SM2 = nl_mac_hf:process_send_payload(SM1, Msg),
       fsm:run_event(MM, SM2#sm{event = rcv_ul}, {rcv_ul, Msg});
@@ -177,7 +177,7 @@ handle_event(MM, SM, Term) ->
       SM;
     {async, {pid, NPid}, Tuple = {recvim, _, Src, _, _, _, _, _, _, Payload}} ->
       ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [Tuple]),
-      Current_msg = nl_mac_hf:readETS(SM, current_msg),
+      Current_msg = share:get(SM, current_msg),
       SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Payload),
       [H | T] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
@@ -234,7 +234,7 @@ handle_write_alh(_MM, SM, Term) ->
       fsm:send_at_command(SM1, Msg),
       SM1#sm{event = data_sent};
     _ when SM#sm.event =:= backoff_timeout ->
-      {_State, Current_msg} = nl_mac_hf:readETS(SM1, current_msg),
+      {_State, Current_msg} = share:get(SM1, current_msg),
       ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Current_msg]),
       fsm:send_at_command(SM1, Current_msg),
       SM1#sm{event = data_sent}
@@ -249,7 +249,7 @@ handle_final(_MM, SM, Term) ->
 
 %%--------------------------------------Helper functions------------------------
 init_backoff(SM)->
-  nl_mac_hf:insertETS(SM, current_step, 0). % 2 ^ 0
+  share:get(SM, current_step, 0). % 2 ^ 0
 
 check_limit(SM, Current_Backoff, Current_Step) ->
   case Current_Backoff of
@@ -262,7 +262,7 @@ check_limit(SM, Current_Backoff, Current_Step) ->
   end.
 
 change_backoff(SM, Type) ->
-  Exp = nl_mac_hf:readETS(SM, current_step),
+  Exp = share:get(SM, current_step),
   Current_Step =
   case Type of
     increment -> Exp + 1;
@@ -270,8 +270,8 @@ change_backoff(SM, Type) ->
   end,
   Current_Backoff = math:pow(2, Current_Step),
   NewStep = check_limit(SM, Current_Backoff, Current_Step),
-  nl_mac_hf:insertETS(SM, current_step, NewStep),
-  Val = math:pow(2, nl_mac_hf:readETS(SM, current_step)),
+  share:put(SM, current_step, NewStep),
+  Val = math:pow(2, share:get(SM, current_step)),
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
   Val.
 
@@ -300,7 +300,7 @@ send_multipath(SM, Src) ->
 
 get_multipath(SM, Term, Answer) ->
   SMAT = fsm:clear_timeout(SM, answer_timeout),
-  LA = nl_mac_hf:readETS(SM, local_address),
+  LA = share:get(SM, local_address),
   [Event_params, SMP] = nl_mac_hf:event_params(SMAT, Term, recv),
   case Event_params of
     {recv, Src} ->

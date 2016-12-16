@@ -148,7 +148,7 @@ handle_event(MM, SM, Term) ->
       ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
       SM1 = fsm:clear_timeout(SM, dp_ends),
       [SM2, P] = nl_mac_hf:process_retransmit(SM1, Msg, send_tone),
-      nl_mac_hf:insertETS(SM2, data_to_sent, {not_delivered, Msg}),
+      share:put(SM2, data_to_sent, {not_delivered, Msg}),
       fsm:run_event(MM, SM2, P);
     {timeout, {retransmit, _Tuple}} ->
       %nothing, the message has delivered state
@@ -166,13 +166,13 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
     {rcv_ul, Msg={at, _PID, _, _, _, _}} when State =:= idle; State =:= transmit_data ->
-      nl_mac_hf:insertETS(SM, data_to_sent, {not_delivered, Msg}),
-      nl_mac_hf:insertETS(SM, current_msg, {not_delivered, Msg}),
+      share:put(SM, data_to_sent, {not_delivered, Msg}),
+      share:put(SM, current_msg, {not_delivered, Msg}),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       fsm:run_event(MM, SM1#sm{event = transmit_ct}, {send_tone, Msg});
     {rcv_ul, Msg={at, _PID, _, _, _, _}} ->
-      nl_mac_hf:insertETS(SM, data_to_sent, {not_delivered, Msg}),
-      nl_mac_hf:insertETS(SM, current_msg, {not_delivered, Msg}),
+      share:put(SM, data_to_sent, {not_delivered, Msg}),
+      share:put(SM, current_msg, {not_delivered, Msg}),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       fsm:cast(SM1, alh,  {send, {sync, "OK"} }),
       SM;
@@ -190,7 +190,7 @@ handle_event(MM, SM, Term) ->
       SMN2 = send_multipath(SMN1, Src),
       fsm:run_event(MM, SMN2, {});
     {async, Tuple} ->
-      CR_Time = nl_mac_hf:readETS(SM, cr_time),
+      CR_Time = share:get(SM, cr_time),
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       SMN = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time}, end_of_frame),
       SMN1 = process_ct(SM, SMN, Tuple),
@@ -208,7 +208,7 @@ handle_event(MM, SM, Term) ->
 
 init_mac(SM) ->
   rand:seed(erlang:timestamp()),
-  %nl_mac_hf:insertETS(SM, retransmit_count, 0),
+  %share:put(SM, retransmit_count, 0),
   init_ct(SM).
 
 handle_idle(_MM, SM, _Term) when SM#sm.event =:= internal ->
@@ -222,7 +222,7 @@ handle_idle(_MM, SM, Term) ->
 handle_blocking_state(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   SM1=
-  case nl_mac_hf:readETS(SM, data_to_sent) of
+  case share:get(SM, data_to_sent) of
     {_St, SendT} ->
       nl_mac_hf:process_send_payload(SM, SendT);
     _ ->
@@ -233,7 +233,7 @@ handle_blocking_state(_MM, SM, Term) ->
 handle_backoff_state(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   SM1=
-  case nl_mac_hf:readETS(SM, data_to_sent) of
+  case share:get(SM, data_to_sent) of
     {_St, SendT} ->
       nl_mac_hf:process_send_payload(SM, SendT);
     _ ->
@@ -248,11 +248,11 @@ handle_cr(_MM, SMP, Term) ->
   case Param_Term of
     {send_tone, {_St, Msg}} ->
       SM2 = nl_mac_hf:send_helpers(SM1, at, Msg, tone),
-      Cr_time = nl_mac_hf:readETS(SM2, cr_time),
+      Cr_time = share:get(SM2, cr_time),
       fsm:set_timeout(SM2#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
     {send_tone, Msg} ->
       SM2 = nl_mac_hf:send_helpers(SM1, at, Msg, tone),
-      Cr_time = nl_mac_hf:readETS(SM2, cr_time),
+      Cr_time = share:get(SM2, cr_time),
       fsm:set_timeout(SM2#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
     _ ->
       SM1#sm{event = eps}
@@ -260,12 +260,12 @@ handle_cr(_MM, SMP, Term) ->
 
 handle_transmit_data(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  case nl_mac_hf:readETS(SM, data_to_sent) of
+  case share:get(SM, data_to_sent) of
     {_St, SendT} ->
-      nl_mac_hf:cleanETS(SM, data_to_sent),
+      share:clean(SM, data_to_sent),
       ?TRACE(?ID, "MAC_AT_SEND ~p~n", [SendT]),
       nl_mac_hf:send_mac(SM, at, data, SendT),
-      CR_Time = nl_mac_hf:readETS(SM, cr_time),
+      CR_Time = share:get(SM, cr_time),
       R = CR_Time * rand:uniform(),
       SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, dp_ends),
       nl_mac_hf:process_send_payload(SM1, SendT);
@@ -282,14 +282,14 @@ handle_final(_MM, SM, Term) ->
 
 %%------------------------------------------ process helper functions -----------------------------------------------------
 init_ct(SM) ->
-  nl_mac_hf:insertETS(SM, ctc, 0).
+  share:put(SM, ctc, 0).
 get_ct(SM) ->
-  nl_mac_hf:readETS(SM, ctc).
+  share:get(SM, ctc).
 increase_ct(SM) ->
-  nl_mac_hf:insertETS(SM, ctc, get_ct(SM) + 1).
+  share:put(SM, ctc, get_ct(SM) + 1).
 
 process_cr(SM, Msg) ->
-  CR_Time = nl_mac_hf:readETS(SM, cr_time),
+  CR_Time = share:get(SM, cr_time),
   Ct = get_ct(SM),
   if Ct =:= 0 ->
     SM#sm{event = no_ct};
@@ -332,12 +332,12 @@ process_recv(SM, T) ->
     [BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
     Flag = nl_mac_hf:num2flag(BFlag, mac),
     ShortTuple = {Len - LenAdd, P1, P2, P3, P4, P5, P6, P7, Data},
-    Current_msg = nl_mac_hf:readETS(SM, current_msg),
+    Current_msg = share:get(SM, current_msg),
     SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Data),
     [SM1, {Flag, ShortTuple}].
 
 process_rcv_flag(SM, Flag) ->
-  CR_Time = nl_mac_hf:readETS(SM, cr_time),
+  CR_Time = share:get(SM, cr_time),
   State = SM#sm.state,
   case Flag of
     nothing -> SM;
@@ -365,7 +365,7 @@ send_multipath(SM, Src) ->
 
 get_multipath(SM, Term, Answer) ->
   SMAT = fsm:clear_timeout(SM, answer_timeout),
-  LA = nl_mac_hf:readETS(SM, local_address),
+  LA = share:get(SM, local_address),
   [Event_params, SMP] = nl_mac_hf:event_params(SMAT, Term, recv),
   case Event_params of
     {recv, Src} ->

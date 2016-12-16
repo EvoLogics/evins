@@ -74,8 +74,8 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   %% supporting only NMEA!
   Jitter = lists:keyfind(jitter,1,Movements),
   ?TRACE(Mod_ID, "Jitter: ~180p~n", [Jitter]),
-  ets:insert(Share, {jitter, Jitter}),
-  ets:insert(Share, {lever_arm, Lever_arm}),
+  ShareID = #sm{share = Share},
+  share:put(ShareID, [{jitter, Jitter}, {lever_arm, Lever_arm}]),
   ?TRACE(Mod_ID, "Movements: ~140p~n", [Movements]),
   Roles =
     lists:foldl(
@@ -85,25 +85,23 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
                       {circle, _C, _R, _V, _Tau, _Phy} = Movement ->
                         [{geodetic, Lat, Lon, Alt}] = [R || {reference,R} <- ArgS],
                         Sea_level = Alt - Z_lever_arm + Depth,
-                        ets:insert(Share, {sea_level, Sea_level}),
-                        ets:insert(Share, {geodetic, [Lat, Lon, Alt]}),
-                        ets:insert(Share, {circle, Movement}),
+                        share:put(ShareID, [{sea_level, Sea_level}, {geodetic, [Lat, Lon, Alt]}, {circle, Movement}]),
                         fsm_worker:role_info(Role_IDs, [scli]) ++ Acc;
                       {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax} ->
                         [{geodetic, Lat, Lon, Alt}] = [R || {reference,R} <- ArgS],
                         Sea_level = Alt - Z_lever_arm + Depth,
-                        ets:insert(Share, {sea_level, Sea_level}),
                         Xs = (rand:uniform() * (XMax - XMin)) + XMin,
                         Ys = (rand:uniform() * (YMax - YMin)) + YMin,
                         Zs = (rand:uniform() * (ZMax - ZMin)) + ZMin,
-                        ets:insert(Share, {geodetic, [Lat, Lon, Alt]}),
-                        ets:insert(Share, {brownian, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xs, Ys, Zs}}),
+                        share:put(ShareID, [{sea_level, Sea_level},
+                                            {geodetic, [Lat, Lon, Alt]},
+                                            {brownian, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xs, Ys, Zs}}]),
                         fsm_worker:role_info(Role_IDs, [scli]) ++ Acc;
                       {tide, _Tau, _Pr, _Amp, _Phy, _Period} = Movement ->
-                        ets:insert(Share, {tide, Movement}),
+                        share:put(ShareID, tide, Movement),
                         Acc;
                       {rocking, _Tau} = Movement ->
-                        ets:insert(Share, {rocking, Movement}),
+                        share:put(ShareID, rocking, Movement),
                         Acc;
                       Unsupported ->
                         ?ERROR(Mod_ID, "Unsupported movement mode: ~p~n", [Unsupported]),

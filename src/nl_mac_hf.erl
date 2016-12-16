@@ -34,14 +34,14 @@
 
 %% Convert types functions
 -export([convert_to_binary/1, covert_type_to_bin/1, convert_t/2, convert_la/3, count_flag_bits/1]).
-%% ETS functions
--export([insertETS/3, readETS/2, cleanETS/2, init_dets/1, fill_dets/1]).
+%% DETS functions
+-export([init_dets/1, fill_dets/1]).
 %% handle events
 -export([event_params/3, clear_spec_timeout/2]).
 %% Math functions
 -export([rand_float/2, lerp/3]).
 %% Addressing functions
--export([init_nl_addrs/1, add_to_table/3, get_dst_addr/1, set_dst_addr/2]).
+-export([init_nl_addrs/1, get_dst_addr/1, set_dst_addr/2]).
 -export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1]).
 %% NL header functions
 -export([parse_path_data/2]).
@@ -54,7 +54,7 @@
 %% Parse NL functions
 -export([prepare_send_path/3, parse_path/3, save_path/3]).
 %% Process NL functions
--export([add_neighbours/5, process_pkg_id/3, proccess_relay/2, process_path_life/2, neighbours_to_list/2, routing_to_bin/1, check_dubl_in_path/2]).
+-export([add_neighbours/5, process_pkg_id/3, process_relay/2, process_path_life/2, routing_to_bin/1, check_dubl_in_path/2]).
 %% RTT functions
 -export([getRTT/2, smooth_RTT/3]).
 %% command functions
@@ -114,22 +114,6 @@ convert_t(Val, T) ->
     {s, us} -> Val * 1000000
   end.
 
-%%--------------------------------------------------- ETS functions -----------------------------------------------
-insertETS(SM, Term, Value) ->
-  cleanETS(SM, Term),
-  case ets:insert(SM#sm.share, [{Term, Value}]) of
-    true  -> SM;
-    false -> insertETS(SM, Term, Value)
-  end.
-
-readETS(SM, Term) ->
-  case ets:lookup(SM#sm.share, Term) of
-    [{Term, Value}] -> Value;
-    _     -> not_inside
-  end.
-
-cleanETS(SM, Term) -> ets:match_delete(SM#sm.share, {Term, '_'}).
-
 %%--------------------------------------------------- Handle events functions -----------------------------------------------
 event_params(SM, Term, Event) ->
   if SM#sm.event_params =:= [] ->
@@ -153,7 +137,7 @@ clear_spec_timeout(SM, Spec) ->
 
 %%--------------------------------------------------- Math functions -----------------------------------------------
 rand_float(SM, Random_interval) ->
-  {Start, End} = readETS(SM, Random_interval),
+  {Start, End} = share:get(SM, Random_interval),
   (Start + rand:uniform() * (End - Start)) * 1000.
 
 lerp(A, B, F) -> A + F * (B - A).
@@ -165,13 +149,9 @@ send_helpers(SM, Interface, MACP, Flag) ->
   case Flag of
     tone -> <<"t">>;
     rts   ->
-      C = readETS(SM, sound_speed),
-      U =
-      case Val = readETS(SM, {u, IDst}) of
-        % max distance between nodes in the network, in m
-        not_inside -> readETS(SM, u);
-        _      -> Val
-      end,
+      C = share:get(SM, sound_speed),
+      % max distance between nodes in the network, in m
+      U = share:get(SM, u, IDst, share:get(SM, u)),
       T_us = erlang:round( convert_t( (U / C), {s, us}) ), % to us
       integer_to_binary(T_us);
     warn ->
@@ -195,10 +175,10 @@ send_ack(SM,  {send_ack, {_, [Packet_id, _, _PAdditional]}, {async, {nl, recv, R
 
 send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src, Payload}}}) ->
   MAC_addr  = convert_la(SM, integer, mac),
-  case readETS(SM, current_neighbours) of
-    not_inside -> error;
-    _ ->
-      BCN = neighbours_to_list(SM, mac),
+  case share:get(SM, current_neighbours) of
+    nothing -> error;
+    Neighbours ->
+      BCN = neighbours_to_list(SM,Neighbours, mac),
       [SMN, BMsg] =
       case Flag of
         neighbours ->
@@ -220,7 +200,8 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, rec
           RCheckDblPath = lists:reverse(CheckDblPath),
 
           analyse(SM, paths, ExtrListPath, {Real_src, Real_dst}),
-          proccess_and_update_path(SM, {Real_src, Real_dst, RCheckDblPath} ),
+          % FIXME: below lost updated SM value
+          process_and_update_path(SM, {Real_src, Real_dst, RCheckDblPath} ),
           [SMNTmp, fill_msg(neighbours_path, {BCN, RCheckDblPath})]
       end,
       send_nl_command(SMN, alh, {path, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BMsg})
@@ -228,17 +209,17 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, rec
 
 send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL) ->
   Real_dst = get_dst_addr(NL),
-  Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
+  Protocol = share:get(SM, protocol_config, share:get(SM, np)),
   if Real_dst =:= wrong_format -> error;
      true ->
-       Rout_addr = get_routing_addr(SM, Flag, Real_dst),
-       [MAC_addr, MAC_real_src, MAC_real_dst] = addr_nl2mac(SM, [Rout_addr, Real_src, Real_dst]),
-       if(Rout_addr =:= no_routing_table) ->
-        ?ERROR(?ID, "~s: Wrong Rout_addr:~p, check config file ~n", [?MODULE, Rout_addr]);
+       Route_addr = get_routing_addr(SM, Flag, Real_dst),
+       [MAC_addr, MAC_real_src, MAC_real_dst] = addr_nl2mac(SM, [Route_addr, Real_src, Real_dst]),
+       if(Route_addr =:= no_routing_table) ->
+        ?ERROR(?ID, "~s: Wrong Route_addr:~p, check config file ~n", [?MODULE, Route_addr]);
         true -> nothing
        end,
 
-       ?TRACE(?ID, "Rout_addr ~p, MAC_addrm ~p, MAC_real_src ~p, MAC_real_dst ~p~n", [Rout_addr, MAC_addr, MAC_real_src, MAC_real_dst]),
+       ?TRACE(?ID, "Route_addr ~p, MAC_addrm ~p, MAC_real_src ~p, MAC_real_dst ~p~n", [Route_addr, MAC_addr, MAC_real_src, MAC_real_dst]),
        if ((MAC_addr =:= error) or (MAC_real_src =:= error) or (MAC_real_dst =:= error)
            or ((MAC_real_dst =:= ?BITS_ADDRESS_MAX) and Protocol#pr_conf.br_na)) ->
             error;
@@ -248,12 +229,12 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
             if NLarp =:= wrong_format -> error;
                true ->
                  ?TRACE(?ID, "Send AT command ~p~n", [AT]),
-                 Local_address = readETS(SM, local_address),
+                 Local_address = share:get(SM, local_address),
                  CurrentRTT = {rtt, Local_address, Real_dst},
                  ?TRACE(?ID, "CurrentRTT sending AT command ~p~n", [CurrentRTT]),
-                 insertETS(SM, {last_nl_sent_time, CurrentRTT}, erlang:timestamp()),
-                 insertETS(SM, last_nl_sent, {Flag, Real_src, NLarp}),
-                 insertETS(SM, ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}),
+                 share:put(SM, [{{last_nl_sent_time, CurrentRTT}, erlang:timestamp()},
+                                {last_nl_sent, {Flag, Real_src, NLarp}},
+                                {ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}}]),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
                  %fsm:cast(SM, nl, {send, AT}),
@@ -274,7 +255,7 @@ mac2at(Flag, Tuple) when is_tuple(Tuple)->
   end.
 
 nl2at (SM, Tuple) when is_tuple(Tuple)->
-  ETSPID =  list_to_binary(["p", integer_to_binary(readETS(SM, pid))]),
+  ETSPID =  list_to_binary(["p", integer_to_binary(share:get(SM, pid))]),
   case Tuple of
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  ->
       NewData = create_payload_nl_flag(Flag, BPacket_id, MAC_real_src, MAC_real_dst, Data),
@@ -366,10 +347,10 @@ remove_dubl_in_path([H|T]) -> [H | [X || X <- remove_dubl_in_path(T), X /= H]].
 %-------> data
 % 3b        6b
 %   TYPEMSG   MAX_DATA_LEN
-create_data(Type, TransmitLen, Data) ->
+create_data(TransmitLen, Data) ->
   CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  TypeNum = ?TYPEMSG2NUM(Type),
+  TypeNum = ?TYPEMSG2NUM(data),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
   BLenData = <<TransmitLen:CBitsMaxLenData>>,
@@ -382,12 +363,12 @@ create_data(Type, TransmitLen, Data) ->
 %-------> path_data
 %   3b        6b            6b        LenPath * 6b   REST till / 8
 %   TYPEMSG   MAX_DATA_LEN  LenPath   Path           ADD
-create_path_data(Type, Path, TransmitLen, Data) ->
+create_path_data(Path, TransmitLen, Data) ->
   LenPath = length(Path),
   CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
-  TypeNum = ?TYPEMSG2NUM(Type),
+  TypeNum = ?TYPEMSG2NUM(path_data),
 
   BLenData = <<TransmitLen:CBitsMaxLenData>>,
   BType = <<TypeNum:CBitsTypeMsg>>,
@@ -493,11 +474,11 @@ extract_ack(SM, Payl) ->
 %%--------------- neighbours -------------------
 %   3b        6b                LenNeighbours * 6b    REST till / 8
 %   TYPEMSG   LenNeighbours     Neighbours            ADD
-create_neighbours(Type, Neighbours) ->
+create_neighbours(Neighbours) ->
   LenNeighbours = length(Neighbours),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
-  TypeNum = ?TYPEMSG2NUM(Type),
+  TypeNum = ?TYPEMSG2NUM(neighbours),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
   BLenNeigbours = <<LenNeighbours:CBitsLenNeigbours>>,
@@ -512,13 +493,13 @@ create_neighbours(Type, Neighbours) ->
      TmpData
   end.
 
-create_neighbours_path(Type, Neighbours, Path) ->
+create_neighbours_path(Neighbours, Path) ->
   LenNeighbours = length(Neighbours),
   LenPath = length(Path),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
-  TypeNum = ?TYPEMSG2NUM(Type),
+  TypeNum = ?TYPEMSG2NUM(neighbours_path),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
 
@@ -564,13 +545,13 @@ extract_neighbours_path(SM, Payl) ->
 %-------> path_addit
 %   3b        6b        LenPath * 6b    2b        LenAdd * 8b       REST till / 8
 %   TYPEMSG   LenPath   Path            LenAdd    Addtional Info     ADD
-create_path_addit(Type, Path, Additional) ->
+create_path_addit(Path, Additional) ->
   LenPath = length(Path),
   LenAdd = length(Additional),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
   CBitsLenAdd = count_flag_bits(?BITS_LEN_ADD),
-  TypeNum = ?TYPEMSG2NUM(Type),
+  TypeNum = ?TYPEMSG2NUM(path_addit),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
 
@@ -617,72 +598,52 @@ num2flag(Num, Layer) when is_binary(Num)->
   ?NUM2FLAG(binary_to_integer(Num), Layer).
 
 init_nl_addrs(SM) ->
-  lists:map(fun(X)-> add_to_table(SM, table_nl_mac_addrs, X) end, ?TABLE_LADDR_MACADDR).
+  share:put(SM, table_nl_mac_addrs, ?TABLE_LADDR_MACADDR).
 
-add_to_table(SM, Table_name, El) ->
-  Table = readETS(SM, Table_name),
-  if Table =:= not_inside -> insertETS(SM, Table_name, []); true -> nothing end,
-  insertETS(SM, Table_name, [El | readETS(SM, Table_name)]).
+get_dst_addr({nl, send, IDst,_}) -> IDst;
+get_dst_addr({at, _, _, IDst, _, _}) -> IDst.
 
-get_dst_addr(NL) ->
-  case NL of
-    {nl, send, IDst,_}  -> IDst;
-    {at, _, _, IDst, _, _}  -> IDst;
-    _   -> wrong_format
-  end.
-
-set_dst_addr(NL, Addr) ->
-  case NL of
-    {nl, send,_, Data} -> {nl, send, Addr, Data};
-    _   -> wrong_format
-  end.
+set_dst_addr({nl, send, _, Data}, Addr) -> {nl, send, Addr, Data}.
 
 addr_nl2mac(SM, ListAddr) when is_list(ListAddr) ->
-  lists:foldr(fun(X, A) -> [addr_nl2mac(SM, X) | A] end, [], ListAddr);
-addr_nl2mac(SM, SAddr) ->
-  F = fun(Elem, Acc) ->
-          {NL_addr, Mac_addr} = Elem,
-          if SAddr =:= NL_addr -> [Mac_addr | Acc]; true -> Acc end
-      end,
-  MAC_addr = lists:foldr(F, [], readETS(SM, table_nl_mac_addrs)),
-  if MAC_addr =:= [] -> error;
-     true -> [Addr] = MAC_addr, Addr
+  lists:map(fun(Addr) -> addr_nl2mac(SM, Addr) end, ListAddr);
+addr_nl2mac(SM, NLAddr) when is_integer(NLAddr) ->
+  case lists:keyfind(NLAddr, 1, share:get(SM, table_nl_mac_addrs)) of
+    {_, MACAddr} -> MACAddr;
+    _ -> error
   end.
 
 addr_mac2nl(SM, ListAddr) when is_list(ListAddr) ->
-  lists:foldr(fun(X, A) -> [addr_mac2nl(SM, X) | A] end, [], ListAddr);
-addr_mac2nl(SM, SAddr) ->
-  F = fun(Elem, Acc) ->
-          {Nl_addr, Mac_addr} = Elem,
-          if SAddr =:= Mac_addr -> [Nl_addr | Acc]; true -> Acc end
-      end,
-  NL_addr = lists:foldr(F, [], readETS(SM, table_nl_mac_addrs)),
-  if NL_addr =:= [] -> error; true -> [Addr] = NL_addr, Addr end.
+  lists:map(fun(Addr) -> addr_mac2nl(SM, Addr) end, ListAddr);
+addr_mac2nl(SM, MACAddr) when is_integer(MACAddr) ->
+  case lists:keyfind(MACAddr, 2, share:get(SM, table_nl_mac_addrs)) of
+    {NLAddr, _} -> NLAddr;
+    false -> error
+  end.
+
+required_routing(_,_,staticr) -> true;
+required_routing(_,_,staticrack) -> true;
+required_routing(Flag,#pr_conf{pf = true},_) when Flag =:= data; Flag =:= ack -> true;
+required_routing(path,#pr_conf{lo = LO, dbl = DBL},_) when LO; DBL -> true;
+required_routing(_,_,_) -> false.
 
 get_routing_addr(SM, Flag, AddrSrc) ->
-  NProtocol = readETS(SM, np),
-  Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
-  Routing_table = readETS(SM, routing_table),
-  case NProtocol of
-    NProtocol when ((NProtocol =:= staticr) or (NProtocol =:= staticrack)
-                    or (Protocol#pr_conf.pf and ((Flag =:= data) or (Flag =:= ack)))
-                    or ( (Protocol#pr_conf.lo or Protocol#pr_conf.dbl) and (Flag =:= path)) ) ->
-      find_in_routing_table(Routing_table, AddrSrc);
-    _ ->  ?BITS_ADDRESS_MAX
+  NProtocol = share:get(SM, np),
+  Protocol = share:get(SM, protocol_config, NProtocol),
+  case required_routing(Flag, Protocol, NProtocol) of
+    true -> find_in_routing_table(share:get(SM, routing_table), AddrSrc);
+    false -> ?BITS_ADDRESS_MAX
   end.
 
 find_in_routing_table(?BITS_ADDRESS_MAX, _) -> ?BITS_ADDRESS_MAX;
-find_in_routing_table([], _) -> no_routing_table;
 find_in_routing_table(Routing_table, AddrSrc) ->
-  lists:foldr(
-    fun(X, El) ->
-      if is_tuple(X) -> case X of {AddrSrc, To} -> To; _-> El end;
-         true -> X
-      end
-    end, no_routing_table, Routing_table).
+  case lists:keyfind(AddrSrc, 1, Routing_table) of
+    {_, To} -> To;
+    false -> no_routing_table
+  end.
 
 convert_la(SM, Type, Format) ->
-  LAddr  = readETS(SM, local_address),
+  LAddr  = share:get(SM, local_address),
   CLAddr =
   case Format of
     nl -> LAddr;
@@ -694,27 +655,20 @@ convert_la(SM, Type, Format) ->
   end.
 
 %%----------------------------Parse NL functions -------------------------------
-fill_msg(Format, Tuple) ->
-  case Format of
-    data ->
-      {TransmitLen, Data} = Tuple,
-      create_data(Format, TransmitLen, Data);
-    neighbours ->
-      create_neighbours(Format, Tuple);
-    neighbours_path ->
-      {Neighbours, Path} = Tuple,
-      create_neighbours_path(Format, Neighbours, Path);
-    path_data ->
-      {TransmitLen, Data, Path} = Tuple,
-      create_path_data(Format, Path, TransmitLen, Data);
-    path_addit ->
-      {Path, Additional} = Tuple,
-      create_path_addit(Format, Path, Additional)
-  end.
+fill_msg(data, {TransmitLen, Data}) ->
+  create_data(TransmitLen, Data);
+fill_msg(neighbours, Tuple) ->
+  create_neighbours(Tuple);
+fill_msg(neighbours_path, {Neighbours, Path}) ->
+  create_neighbours_path(Neighbours, Path);
+fill_msg(path_data, {TransmitLen, Data, Path}) ->
+  create_path_data(Path, TransmitLen, Data);
+fill_msg(path_addit, {Path, Additional}) ->
+  create_path_addit(Path, Additional).
 
 prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src, Payload}}) ->
   MAC_addr = convert_la(SM, integer, mac),
-  {nl,send, _, IDst, Data} = readETS(SM, current_pkg),
+  {nl,send, _, IDst, Data} = share:get(SM, current_pkg),
 
   [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
   NPathTuple = {ListNeighbours, ListPath},
@@ -726,7 +680,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src
     _ -> analyse(SM1, paths, NPath, {Real_src, Real_dst})
   end,
 
-  SDParams = {data, [increase_pkgid(SM), readETS(SM, local_address), PAdditional]},
+  SDParams = {data, [increase_pkgid(SM), share:get(SM, local_address), PAdditional]},
   SDTuple = {nl, send, IDst, fill_msg(path_data, {Data, NPath})},
 
   case check_path(SM1, Real_src, Real_dst, NPath) of
@@ -747,7 +701,7 @@ parse_path(SM, {_, ListPath}, {ISrc, IDst}) ->
      MacLAddr = convert_la(SM, integer, mac),
      case lists:member(MacLAddr, ListPath) of
        true  ->
-        SMN = proccess_and_update_path(SM, {ISrc, IDst, ListPath}),
+        SMN = process_and_update_path(SM, {ISrc, IDst, ListPath}),
         [SMN, ListPath];
        false ->
         [SM, ListPath]
@@ -756,30 +710,26 @@ parse_path(SM, {_, ListPath}, {ISrc, IDst}) ->
 
 add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {_IRssi, _IIntegrity}) ->
   ?INFO(?ID, "+++ Flag ~p, NLSrcAT ~p, RealSrc ~p~n", [Flag, NLSrcAT, RealSrc]),
-  Current_neighbours = readETS(SM, current_neighbours),
-  SM1 = fsm:set_timeout(SM, {s, readETS(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
+  SM1 = fsm:set_timeout(SM, {s, share:get(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
   analyse(SM1, st_neighbours, NLSrcAT, {RealSrc, Real_dst}),
-  case Current_neighbours of
-    not_inside ->
-      insertETS(SM1, current_neighbours, [NLSrcAT]);
-    _ ->
-      case lists:member(NLSrcAT, Current_neighbours) of
-        true -> SM1;
-        false -> insertETS(SM1, current_neighbours, [NLSrcAT | Current_neighbours])
-      end
-  end.
+  Add_uniq = fun(Neighbours) ->
+                 case lists:member(NLSrcAT, Neighbours) of
+                   true -> Neighbours;
+                   false -> [NLSrcAT | Neighbours]
+                 end
+             end,
+  share:update_with(SM1, current_neighbours, Add_uniq, []).
 
-%%-------------------------------------------------- Proccess NL functions -------------------------------------------
+%%-------------------------------------------------- Process NL functions -------------------------------------------
 get_aver_value(0, Val2) ->
   round(Val2);
 get_aver_value(Val1, Val2) ->
   round((Val1 + Val2) / 2).
 
-proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
+process_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
   {Flag, [_, ISrc, PAdditional]} = Params,
   MAC_addr = convert_la(SM, integer, mac),
-  Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
-
+  Protocol = share:get(SM, protocol_config, share:get(SM, np)), 
   case Flag of
     data when (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) ->
       CheckedTuple = parse_path_data(SM, Payload),
@@ -795,8 +745,8 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
     data ->
       [SM, Tuple];
     neighbours ->
-      case LNeighbours = get_current_neighbours(SM) of
-        no_neighbours ->
+      case LNeighbours = neighbours_to_list(SM, share:get(SM, current_neighbours), mac) of
+        [] ->
           [SM, not_relay];
         _ ->
           Payl = fill_msg(neighbours, LNeighbours),
@@ -825,10 +775,10 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
       NewPayload = fill_msg(path_addit, {CheckDublPath, []}),
       [SM, {send, Params, {nl, send, IDst, NewPayload}}];
     path ->
-      case LNeighbours = get_current_neighbours(SM) of
-        no_neighbours -> [SM, not_relay];
+      case LNeighbours = neighbours_to_list(SM, share:get(SM, current_neighbours), mac) of
+        [] -> [SM, not_relay];
         _ ->
-          Local_address = readETS(SM, local_address),
+          Local_address = share:get(SM, local_address),
           [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
           NPathTuple = {ListNeighbours, ListPath},
           %% save path and set path life
@@ -852,76 +802,62 @@ proccess_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
     _ -> [SM, Tuple]
   end.
 
-proccess_and_update_path(SM, {ISrc, IDst, ListPath}) ->
-  LAddr = readETS(SM, local_address),
-  NLListPath = lists:foldr(fun(X,A) -> [ addr_mac2nl(SM, X) | A] end, [], ListPath),
+process_and_update_path(SM, {ISrc, IDst, ListPath}) ->
+  LAddr = share:get(SM, local_address),
+  NLListPath = [addr_mac2nl(SM, X) || X <- ListPath],
   MemberSrcL = lists:member(ISrc, NLListPath),
   MemberDstL = lists:member(IDst, NLListPath),
-  NLSortListPath =
-  case (MemberSrcL and MemberDstL) of
-    true ->
-      case lists:nth(1, NLListPath) of ISrc -> NLListPath; IDst -> lists:reverse(NLListPath) end;
-    false when MemberSrcL ->
-      NLListPath;
-    false when MemberDstL ->
-      lists:reverse(NLListPath)
-  end,
-
-  {LSrc, LDst} = lists:splitwith(fun(A) -> A =/= LAddr end, NLSortListPath),
-  LengthLSrc  = length(LSrc),
-  LengthLDst  = length(LDst),
+  NLOrderListPath =
+    case {MemberSrcL, MemberDstL, hd(NLListPath)} of
+      {true, true, ISrc} -> NLListPath;
+      {true, false, _} -> NLListPath;
+      {true, true, IDst} -> lists:reverse(NLListPath);
+      {false, true, _} -> lists:reverse(NLListPath)
+    end,
+  {LSrc, LDst} = lists:splitwith(fun(A) -> A =/= LAddr end, NLOrderListPath),
   LRevSrc = lists:reverse(LSrc),
-
-  SMN =
-  case lists:member(LAddr, NLSortListPath) of
-    true  when (( LengthLSrc =:= 1 ) and (LengthLDst =:= 1)) ->
+  case {LSrc, LDst} of
+    {_,[]} ->
+      SM;
+    {[_],[_]} ->
       [SM1, NList] =
-      if (ISrc =:= LAddr) -> proccess_rout_table(SM, LDst, IDst, []);
-        true -> proccess_rout_table(SM, LSrc, ISrc, [])
+      if (ISrc =:= LAddr) -> process_route_table(SM, LDst, IDst, []);
+        true -> process_route_table(SM, LSrc, ISrc, [])
       end,
-      update_rout_table(SM1, NList);
-    true  when ( LengthLSrc =< 1 ) ->
-      proccess_rout_table_helper(SM, lists:nth(2, LDst), LDst);
-    true  when ( LengthLDst =< 1 ) ->
-      proccess_rout_table_helper(SM, lists:nth(1, LRevSrc), LRevSrc);
-    true ->
-      SM1 = proccess_rout_table_helper(SM, lists:nth(1, LRevSrc), LRevSrc),
-      proccess_rout_table_helper(SM1, lists:nth(2, LDst), LDst);
-    false ->
-      SM
-  end,
-  SMN.
-
-proccess_rout_table_helper(SM, FromAddr, NListPath) ->
-  case readETS(SM, current_neighbours) of
-    not_inside -> SM;
+      update_route_table(SM1, NList);
+    {_, _} when length(LSrc) =< 1 -> % FIXME: suspicious condition
+      process_route_table_helper(SM, lists:nth(2, LDst), LDst);
+    {_, [_]} ->
+      process_route_table_helper(SM, hd(LRevSrc), LRevSrc);
     _ ->
-      case lists:member(FromAddr, readETS(SM, current_neighbours)) of
+      SM1 = process_route_table_helper(SM, hd(LRevSrc), LRevSrc),
+      process_route_table_helper(SM1, lists:nth(2, LDst), LDst)
+  end.
+
+process_route_table_helper(SM, FromAddr, NListPath) ->
+  case share:get(SM, current_neighbours) of
+    nothing -> SM;
+    _ ->
+      case lists:member(FromAddr, share:get(SM, current_neighbours)) of
         true  ->
-          [SM1, NList] = proccess_rout_table(SM, NListPath, FromAddr, []),
-          update_rout_table(SM1, NList);
+          [SM1, NList] = process_route_table(SM, NListPath, FromAddr, []),
+          update_route_table(SM1, NList);
         false ->
           SM
       end
   end.
-proccess_rout_table(SM, [],_, Routing_table) ->
+process_route_table(SM, [],_, Routing_table) ->
   [SM, lists:reverse([?BITS_ADDRESS_MAX | Routing_table]) ];
-proccess_rout_table(SM, [H | T], NLFrom, Routing_table) ->
-  SM1 = fsm:set_timeout(SM, {s, readETS(SM, path_life)}, {path_life, {H, NLFrom}}),
-  proccess_rout_table(SM1, T, NLFrom, [ {H, NLFrom} | Routing_table]).
+process_route_table(SM, [H | T], NLFrom, Routing_table) ->
+  SM1 = fsm:set_timeout(SM, {s, share:get(SM, path_life)}, {path_life, {H, NLFrom}}),
+  process_route_table(SM1, T, NLFrom, [ {H, NLFrom} | Routing_table]).
 
 process_path_life(SM, Tuple) ->
-  NRouting_table =
-  lists:foldr(
-    fun(X,A) ->
-       if (is_tuple(X) and (X =:= Tuple)) -> A;
-        true-> [X|A]
-       end
-    end,[], readETS(SM, routing_table)),
-  insertETS(SM, routing_table, NRouting_table).
+  share:update_with(SM, routing_table, fun(T) -> lists:delete(Tuple, T) end).
 
+% FIXME: better to store protocol_config at env
 save_path(SM, {Flag,_} = Params, Tuple) ->
-  Protocol = readETS(SM, {protocol_config, readETS(SM, np)}),
+  Protocol = share:get(SM, protocol_config, share:get(SM, np)),
   case Flag of
     data when Protocol#pr_conf.ry_only and Protocol#pr_conf.pf ->
       {async,{nl,recv, Real_src, Real_dst, Payload}} = Tuple,
@@ -931,17 +867,17 @@ save_path(SM, {Flag,_} = Params, Tuple) ->
       {async,{nl,recv, _, _, Payload}} = Tuple,
       [_, [DIRssi, DIIntegr]] = extract_path_addit(SM, Payload),
       El = { DIRssi, DIIntegr, {Params, Tuple} },
-      insertETS(SM, list_current_wvp, readETS(SM, list_current_wvp) ++ [El]);
+      share:update_with(SM, list_current_wvp, fun(L) -> L ++ [El] end);
     _ -> SM
   end.
 
-update_rout_table(SM, NRouting_table) ->
-  ORouting_table = readETS(SM, routing_table),
+update_route_table(SM, NRouting_table) ->
+  ORouting_table = share:get(SM, routing_table),
   LRouting_table = if ORouting_table =:= ?BITS_ADDRESS_MAX -> [?BITS_ADDRESS_MAX]; true -> ORouting_table end,
   SMN1 =
   lists:foldr(
      fun(X, SMTmp) ->
-       if is_tuple(X) -> fsm:set_timeout(SMTmp, {s, readETS(SMTmp, path_life)}, {path_life, X});
+       if is_tuple(X) -> fsm:set_timeout(SMTmp, {s, share:get(SMTmp, path_life)}, {path_life, X});
           true-> SMTmp
        end
      end, SM, NRouting_table),
@@ -962,32 +898,25 @@ update_rout_table(SM, NRouting_table) ->
   % sort and delete dublicated
   Routing_table = lists:reverse(lists:usort(sets:to_list(sets:from_list(FL ++ NRouting_table)))),
   ?INFO(?ID, "+++ Updated routing table ~w ~n", [Routing_table]),
-  insertETS(SMN2, routing_table, Routing_table),
-  SMN2.
-
-get_current_neighbours(SM) ->
-  case readETS(SM, current_neighbours) of
-    not_inside -> no_neighbours;
-    _ -> neighbours_to_list(SM, mac)
-  end.
+  share:put(SMN2, routing_table, Routing_table).
 
 process_pkg_id(SM, ATParams, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
   %{ATSrc, ATDst} = ATParams,
-  Local_address = readETS(SM, local_address),
-  LocalPkgID = readETS(SM, packet_id),
-  Max_pkg_id = readETS(SM, max_pkg_id),
+  Local_address = share:get(SM, local_address),
+  LocalPkgID = share:get(SM, packet_id),
+  Max_pkg_id = share:get(SM, max_pkg_id),
   MoreRecent = sequence_more_recent(RemotePkgID, LocalPkgID, Max_pkg_id),
   PkgIDOld =
-  if MoreRecent -> insertETS(SM, packet_id, RemotePkgID), false;
+  if MoreRecent -> share:put(SM, packet_id, RemotePkgID), false;
     true -> true
   end,
   %% not to relay packets with older ids
   case PkgIDOld of
     true when ((RecvNLDst =/= Local_address) and
               (RecvNLSrc =/= Local_address)) -> old_id;
-    true when (RecvNLSrc =:= Local_address) -> proccessed;
+    true when (RecvNLSrc =:= Local_address) -> processed;
     _ ->
-      Queue_ids = readETS(SM, queue_ids),
+      Queue_ids = share:get(SM, queue_ids),
       NewQ =
       case queue:len(Queue_ids) of
         Len when Len >= 10 ->
@@ -999,19 +928,19 @@ process_pkg_id(SM, ATParams, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
       NTuple = {ATParams, Tuple},
       case queue:member(NTuple, NewQ) of
         true  ->
-          insertETS(SM, queue_ids, NewQ),
-          not_proccessed;
+          share:put(SM, queue_ids, NewQ),
+          not_processed;
         false ->
           % check if same package was received from other src dst,
-          % if yes  -> insertETS(SM, queue_ids, NewQ), proccessed
-          % if no -> insertETS(SM, queue_ids, queue:in(NTuple, NewQ)), not_proccessed
+          % if yes  -> share:put(SM, queue_ids, NewQ), processed
+          % if no -> share:put(SM, queue_ids, queue:in(NTuple, NewQ)), not_processed
           Skey = searchKey(NTuple, NewQ, not_found),
           if Skey == found ->
-            insertETS(SM, queue_ids, NewQ),
-            proccessed;
+            share:put(SM, queue_ids, NewQ),
+            processed;
           true ->
-            insertETS(SM, queue_ids, queue:in(NTuple, NewQ)),
-            not_proccessed
+            share:put(SM, queue_ids, queue:in(NTuple, NewQ)),
+            not_processed
           end
       end
   end.
@@ -1030,41 +959,42 @@ searchKey({ATParams, Tuple}, Q, not_found) ->
 
 %%--------------------------------------------------  RTT functions -------------------------------------------
 getRTT(SM, RTTTuple) ->
-  CurrentRTT  = readETS(SM, RTTTuple),
-  if CurrentRTT =:= not_inside -> readETS(SM, rtt);
-    true -> CurrentRTT
+  case share:get(SM, RTTTuple) of
+    nothing -> share:get(SM, rtt);
+    RTT -> RTT
   end.
 
 smooth_RTT(SM, Flag, RTTTuple={_,_,Dst}) ->
   ?TRACE(?ID, "RTT receiving AT command ~p~n", [RTTTuple]),
-  Time_send_msg = readETS(SM, {last_nl_sent_time, RTTTuple}),
-  Max_rtt = readETS(SM, max_rtt),
-  Min_rtt = readETS(SM, min_rtt),
-  if Time_send_msg =:= not_inside -> nothing;
-     true ->
+  Time_send_msg = share:get(SM, last_nl_sent_time, RTTTuple),
+  Max_rtt = share:get(SM, max_rtt),
+  Min_rtt = share:get(SM, min_rtt),
+  case Time_send_msg of
+    nothing -> nothing;
+    _ ->
        EndValMicro = timer:now_diff(erlang:timestamp(), Time_send_msg),
        CurrentRTT = getRTT(SM, RTTTuple),
        Smooth_RTT =
        if Flag =:= direct ->
         lerp( CurrentRTT, convert_t(EndValMicro, {us, s}), 0.05);
        true ->
-        lerp(CurrentRTT, readETS(SM, rtt), 0.05)
+        lerp(CurrentRTT, share:get(SM, rtt), 0.05)
        end,
-       cleanETS(SM, {last_nl_sent_time, RTTTuple}),
+       share:clean(SM, last_nl_sent_time),
        Val =
        case Smooth_RTT of
         _ when Smooth_RTT < Min_rtt ->
-          insertETS(SM, RTTTuple, Min_rtt),
+          share:put(SM, RTTTuple, Min_rtt),
           Min_rtt;
         _ when Smooth_RTT > Max_rtt ->
-          insertETS(SM, RTTTuple, Max_rtt),
+          share:put(SM, RTTTuple, Max_rtt),
           Max_rtt;
         _ ->
-          insertETS(SM, RTTTuple, Smooth_RTT),
+          share:put(SM, RTTTuple, Smooth_RTT),
           Smooth_RTT
        end,
 
-       LA = readETS(SM, local_address),
+       LA = share:get(SM, local_address),
        ?TRACE(?ID, "Smooth_RTT for Src ~p and Dst ~p is ~120p~n", [LA, Dst, Val])
   end.
 %%--------------------------------------------------  Other functions -------------------------------------------
@@ -1086,39 +1016,38 @@ bin_to_num(N) when is_list(N) ->
   end.
 
 increase_pkgid(SM) ->
-  Max_pkg_id = readETS(SM, max_pkg_id),
-  PkgID =
-  case TmpPId = readETS(SM, packet_id) of
-    _ when TmpPId >= Max_pkg_id -> 0; %-1;
-    _ -> TmpPId
-  end,
-  ?TRACE(?ID, "Increase Pkg, Current Pkg id ~p~n", [PkgID + 1]),
-  insertETS(SM, packet_id, PkgID + 1),
-  PkgID.
+  Max_pkg_id = share:get(SM, max_pkg_id),
+  PkgID = case share:get(SM, packet_id) of
+            Prev_id when Prev_id >= Max_pkg_id -> 1;
+            (Prev_id) -> Prev_id + 1
+          end,
+  ?TRACE(?ID, "Increase Pkg, Current Pkg id ~p~n", [PkgID]),
+  share:put(SM, packet_id, PkgID),
+  PkgID - 1.
 
 init_dets(SM) ->
-  LA  = readETS(SM, local_address),
+  LA  = share:get(SM, local_address),
   Ref = SM#sm.dets_share,
-  NL_protocol = readETS(SM, nl_protocol),
+  NL_protocol = share:get(SM, nl_protocol),
   B = dets:lookup(Ref, NL_protocol),
   SM1=
   case B of
-    []  -> insertETS(SM, packet_id, 0);
+    []  -> share:put(SM, packet_id, 0);
     [{NL_protocol, PkgID}] ->
       dets:insert(Ref, {NL_protocol, PkgID + 1}),
-      insertETS(SM, packet_id, PkgID + 1);
+      share:put(SM, packet_id, PkgID + 1);
     _ -> dets:insert(Ref, {NL_protocol, 0}),
-         insertETS(SM, packet_id, 0)
+         share:put(SM, packet_id, 0)
   end,
   B1 = dets:lookup(Ref, NL_protocol),
   ?INFO(?ID, "Init dets LA ~p ~p~n", [LA, B1]),
   SM1#sm{dets_share = Ref}.
 
 fill_dets(SM) ->
-  LA  = readETS(SM, local_address),
+  LA  = share:get(SM, local_address),
   Ref = SM#sm.dets_share,
-  NL_protocol = readETS(SM, nl_protocol),
-  Packet_id = readETS(SM, packet_id),
+  NL_protocol = share:get(SM, nl_protocol),
+  Packet_id = share:get(SM, packet_id),
   dets:insert(Ref, {NL_protocol, Packet_id}),
   B = dets:lookup(Ref, NL_protocol),
   ?INFO(?ID, "Fill_dets LA ~p ~p~n", [LA, B] ),
@@ -1127,60 +1056,44 @@ fill_dets(SM) ->
 % split_bin_comma(Bin) when is_binary(Bin) ->
 %   binary:split(Bin, <<",">>,[global]).
 
-neighbours_to_list(SM, Type) ->
-  Current_neighbours = readETS(SM, current_neighbours),
-  lists:foldr(fun(X, A) ->
-                  case Type of
-                    mac -> [addr_nl2mac(SM, X) | A];
-                    nl  -> [X | A]
-                  end
-              end, [], Current_neighbours).
+neighbours_to_list(SM,Neigbours, mac) ->
+  [addr_nl2mac(SM,X) || X <- Neigbours];
+neighbours_to_list(_,Neigbours, nl) ->
+  Neigbours.
 
 neighbours_to_bin(SM, Type) ->
-  Current_neighbours = readETS(SM, current_neighbours),
-  lists:foldr(fun(X, A) ->
-     Sign =
-     if byte_size(A) =:= 0-> "";
-       true-> ","
-     end,
-     case Type of
-       mac -> list_to_binary([integer_to_binary(addr_nl2mac(SM, X)), Sign, A]);
-       nl  -> list_to_binary([integer_to_binary(X), Sign, A])
-     end
- end, <<>>, Current_neighbours).
+  F = fun(X) when Type =:= mac -> integer_to_binary(addr_nl2mac(SM, X));
+         (X) when Type =:= nl  -> integer_to_binary(X)
+      end,
+  binary:list_to_bin(lists:join(",", [F(X) || X <- share:get(SM, current_neighbours)])).
 
 routing_to_bin(SM) ->
-  Routing_table = readETS(SM, routing_table),
-  Local_address = readETS(SM, local_address),
+  Routing_table = share:get(SM, routing_table),
+  Local_address = share:get(SM, local_address),
   case Routing_table of
     ?BITS_ADDRESS_MAX ->
       list_to_binary(["default->",integer_to_binary(?BITS_ADDRESS_MAX)]);
     _ ->
-      lists:foldr(
-        fun(X,A) ->
-            Sign = if byte_size(A) =:= 0-> ""; true -> "," end,
-            case X of
-              {From, To} ->
-                if (From =/= Local_address) -> list_to_binary([integer_to_binary(From),"->",integer_to_binary(To), Sign, A]);
-                   true -> A
-                end;
-              _ ->
-                list_to_binary(["default->",integer_to_binary(X), Sign, A])
-            end
-        end, <<>>, Routing_table)
+      Path = lists:filtermap(fun({From, To}) when From =/= Local_address ->
+                                 {true, [integer_to_binary(From),"->",integer_to_binary(To)]};
+                                ({_,_}) -> false;
+                                (X) -> {true, ["default->",integer_to_binary(X)]}
+                             end, Routing_table),
+      binary:list_to_bin(lists:join(",", Path))
   end.
 
 add_item_to_queue(SM, Qname, Item, Max) ->
-  Q = readETS(SM, Qname),
+  Q = share:get(SM, Qname),
   NewQ=
   case queue:len(Q) of
     Len when Len >= Max ->  {_, Queue_out} = queue:out(Q), Queue_out;
     _ ->  Q
   end,
-  insertETS(SM, Qname, queue:in(Item, NewQ)).
+  %% FIXME: use update_with?
+  share:put(SM, Qname, queue:in(Item, NewQ)).
 
 %%--------------------------------------------------  Only MAC functions -------------------------------------------
-process_rcv_payload(SM, not_inside, _Payload) ->
+process_rcv_payload(SM, nothing, _Payload) ->
   SM;
 process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
   [PFlag, SM1, HRcvPayload] =
@@ -1216,7 +1129,7 @@ check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
   AckReversed = (( Flag == ack ) and (RevCurrentPayload == HRcvPayload)),
 
   if (ExaxtTheSame or IfDstReached or AckReversed) ->
-       insertETS(SM, current_msg, {delivered, Current_msg}),
+       share:put(SM, current_msg, {delivered, Current_msg}),
        clear_spec_timeout(SM, retransmit);
     true ->
        SM
@@ -1247,16 +1160,16 @@ process_send_payload(SM, Msg) ->
   end.
 
 process_retransmit(SM, Msg, Ev) ->
-  Retransmit_count = readETS(SM, {retransmit_count, Msg}),
-  Max_retransmit_count = readETS(SM, max_retransmit_count),
+  Retransmit_count = share:get(SM, retransmit_count, Msg),
+  Max_retransmit_count = share:get(SM, max_retransmit_count),
   ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
 
   case Retransmit_count of
-    not_inside ->
-      insertETS(SM, {retransmit_count, Msg}, 0),
+    nothing -> 
+      share:put(SM, retransmit_count, Msg, 0),
       [SM#sm{event = Ev}, {Ev, Msg}];
     _ when Retransmit_count < Max_retransmit_count - 1 ->
-      insertETS(SM, {retransmit_count, Msg}, Retransmit_count + 1),
+      share:put(SM, retransmit_count, Msg, Retransmit_count + 1),
       SM1 = process_send_payload(SM, Msg),
       [SM1#sm{event = Ev}, {Ev, Msg}];
     _ ->
@@ -1264,29 +1177,29 @@ process_retransmit(SM, Msg, Ev) ->
   end.
 %%--------------------------------------------------  command functions -------------------------------------------
 process_command(SM, Debug, Command) ->
-  Protocol   = readETS(SM, {protocol_config, readETS(SM, np)}),
+  Protocol   = share:get(SM, protocol_config, share:get(SM, np)),
   [Req, Asw] =
   case Command of
     protocols ->
       [?PROTOCOL_DESCR, protocols];
     {protocol, _} ->
-      [readETS(SM, np), protocol_info];
+      [share:get(SM, np), protocol_info];
     {statistics, paths} when Protocol#pr_conf.pf ->
-      [readETS(SM, paths), paths];
+      [share:get(SM, paths), paths];
     {statistics, neighbours} ->
-      [readETS(SM, st_neighbours), neighbours];
+      [share:get(SM, st_neighbours), neighbours];
     {statistics, data} when Protocol#pr_conf.ack ->
-      [readETS(SM, st_data), data];
+      [share:get(SM, st_data), data];
     states ->
-      Last_states = readETS(SM, last_states),
+      Last_states = share:get(SM, last_states),
       [queue:to_list(Last_states), states];
     state ->
       States = list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")"]),
       [States, state];
     neighbours ->
-      [readETS(SM, current_neighbours), neighbours];
+      [share:get(SM, current_neighbours), neighbours];
     routing ->
-      [readETS(SM, routing_table), routing];
+      [share:get(SM, routing_table), routing];
     _ -> [error, nothing]
   end,
 
@@ -1294,7 +1207,7 @@ process_command(SM, Debug, Command) ->
   case Req of
     error ->
       {nl, error};
-    Req when Req =:= not_inside; Req =:= []; Req =:= {[],[]} ->
+    Req when Req =:= nothing; Req =:= []; Req =:= {[],[]} ->
       {nl, Asw, empty};
     _ ->
       case Command of
@@ -1331,17 +1244,17 @@ process_command(SM, Debug, Command) ->
 update_states_list(SM) ->
   [{_, Msg}] =
   lists:filter(fun({St, _Descr}) -> St =:= SM#sm.state end, ?STATE_DESCR),
-  insertETS(SM, pr_state, Msg),
+  share:put(SM, pr_state, Msg),
   add_item_to_queue(SM, pr_states, Msg, 50),
   add_item_to_queue(SM, last_states, list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")\n"]), 50).
 
 get_protocol_info(SM, Name) ->
   BName = atom_to_binary(Name, utf8),
-  Conf  = readETS(SM, {protocol_config, Name}),
+  Conf  = share:get(SM, protocol_config, Name),
   list_to_binary(["\nName\t\t: ", BName,"\n", ?PROTOCOL_SPEC(Conf)]).
 
 get_stat_data(SM, Qname) ->
-  PT = readETS(SM, Qname),
+  PT = share:get(SM, Qname),
   lists:foldr(
     fun(X,A) ->
       {Role, Payload, Time, Length, State, TS, Dst, Count_hops} = X,
@@ -1354,7 +1267,7 @@ get_stat_data(SM, Qname) ->
     end,[],queue:to_list(PT)).
 
 get_stat(SM, Qname) ->
-  PT = readETS(SM, Qname),
+  PT = share:get(SM, Qname),
   lists:foldr(
     fun(X,A) ->
       {Role, Val, Time, Count, TS} = X,
@@ -1377,36 +1290,36 @@ get_stat(SM, Qname) ->
 save_stat(SM, {ISrc, IDst}, Role)->
   case Role of
     source ->
-      S_total_sent = readETS(SM, s_total_sent),
-      insertETS(SM, s_send_time, {{ISrc, IDst}, erlang:timestamp()}),
-      insertETS(SM, s_total_sent, S_total_sent + 1);
+      S_total_sent = share:get(SM, s_total_sent),
+      share:put(SM, s_send_time, {{ISrc, IDst}, erlang:timestamp()}),
+      share:put(SM, s_total_sent, S_total_sent + 1);
     relay ->
-      R_total_sent = readETS(SM, r_total_sent),
-      insertETS(SM, r_send_time, {{ISrc, IDst}, erlang:timestamp()}),
-      insertETS(SM, r_total_sent, R_total_sent + 1);
+      R_total_sent = share:get(SM, r_total_sent),
+      share:put(SM, r_send_time, {{ISrc, IDst}, erlang:timestamp()}),
+      share:put(SM, r_total_sent, R_total_sent + 1);
     _ ->
       nothing
   end.
 
 get_stats_time(SM, Real_src, Real_dst) ->
-  Local_address = readETS(SM, local_address),
+  Local_address = share:get(SM, local_address),
   if Local_address =:= Real_src;
      Local_address =:= Real_dst ->
-     ST_send_time = readETS(SM, s_send_time),
+     ST_send_time = share:get(SM, s_send_time),
      {Addrs, S_send_time} = parse_tuple(ST_send_time),
-     S_total_sent = readETS(SM, s_total_sent),
+     S_total_sent = share:get(SM, s_total_sent),
      {S_send_time, source, S_total_sent, Addrs};
   true ->
-     RT_send_time = readETS(SM, r_send_time),
+     RT_send_time = share:get(SM, r_send_time),
      {Addrs, R_send_time} = parse_tuple(RT_send_time),
-     R_total_sent = readETS(SM, r_total_sent),
+     R_total_sent = share:get(SM, r_total_sent),
      {R_send_time, relay, R_total_sent, Addrs}
   end.
 
 parse_tuple(Tuple) ->
   case Tuple of
-    not_inside ->
-      {not_inside, not_inside};
+    nothing ->
+      {nothing, nothing};
     _ ->
       Tuple
   end.
@@ -1439,7 +1352,7 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
   end,
 
   case Time of
-    not_inside  when QName =/= st_data ->
+    nothing when QName =/= st_data ->
       Tuple = {Role, BPath, 0.0, 1, TSC},
       add_item_to_queue_nd(SM, QName, Tuple, 300);
     _ when QName =/= st_data ->
@@ -1447,7 +1360,7 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
       CTDiff = convert_t(TDiff, {us, s}),
       Tuple = {Role, BPath, CTDiff, 1, TSC},
       add_item_to_queue_nd(SM, QName, Tuple, 300);
-    not_inside  when QName =:= st_data ->
+    nothing when QName =:= st_data ->
       {P, Dst, Count_hops, St} = BPath,
       Tuple = {Role, P, 0.0, byte_size(P), St, TSC, Dst, Count_hops},
       add_item_to_queue_nd(SM, QName, Tuple, 300);
@@ -1460,7 +1373,7 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
   end.
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
-  Q = readETS(SM, Qname),
+  Q = share:get(SM, Qname),
 
   NewQ=
   case queue:len(Q) of
@@ -1470,7 +1383,7 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
   end,
   case Qname of
     st_data ->
-      insertETS(SM, Qname, queue:in(Item, NewQ));
+      share:put(SM, Qname, queue:in(Item, NewQ));
     _ ->
       {R, NP, NT, _, NewTS} = Item,
       L =
@@ -1496,5 +1409,5 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
                      true -> [{Role, P, T, Count, TS} | A]
                   end
               end,[],queue:to_list(QQ)),
-      insertETS(SM, Qname, queue:from_list(NUQ))
+      share:put(SM, Qname, queue:from_list(NUQ))
   end.

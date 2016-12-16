@@ -98,7 +98,8 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     ?ERROR(Mod_ID, "!!! No NL protocol ID!~n", []);
   true ->
     [_, _, SMN] = Module,
-    [{local_address, La}] = ets:lookup(Share, local_address),
+    ShareID = #sm{share = Share},
+    La = share:get(ShareID, local_address),  
     DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
     %Filename = "/tmp/" ++ "share_file_" ++ integer_to_list(La),
     Roles = fsm_worker:role_info(Role_IDs, [alh, nl]),
@@ -147,24 +148,25 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Path_life       = set_params(Path_life_set, 2 * WTmo_path),
   Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
 
-  ets:insert(Share, [{nl_protocol, NL_Protocol}]),
-  ets:insert(Share, [{routing_table, Routing_table}]),
-  ets:insert(Share, [{local_address, Addr}]),
-  ets:insert(Share, [{max_address, Max_address}]),
-  ets:insert(Share, [{blacklist, Blacklist}]),
-  ets:insert(Share, [{wwv_tmo,   {Wwv_tmo_start, Wwv_tmo_end} }]),
-  ets:insert(Share, [{wack_tmo,  {Wack_tmo_start, Wack_tmo_end} }]),
-  ets:insert(Share, [{spath_tmo, {Spath_tmo_start, Spath_tmo_end} }]),
-  ets:insert(Share, [{wpath_tmo, WTmo_path}]),
-  ets:insert(Share, [{neighbour_tmo, Tmo_Neighbour}]),
-  ets:insert(Share, [{max_rtt, 2 * RTT}]),
-  ets:insert(Share, [{min_rtt, RTT}]),
-  ets:insert(Share, [{path_life, Path_life}]),
-  ets:insert(Share, [{neighbour_life, Neighbour_life}]),
-  ets:insert(Share, [{max_pkg_id, ?BITS_ADDRESS_MAX}]),
-  ets:insert(Share, [{rtt, RTT + RTT/2}]),
-  ets:insert(Share, [{send_wv_dbl_tmo, Tmo_dbl_wv}]),
-  ets:insert(Share, [{probability, Probability}]),
+  ShareID = #sm{share = Share},
+  share:put(ShareID, [{nl_protocol, NL_Protocol},
+                      {routing_table, Routing_table},
+                      {local_address, Addr},
+                      {max_address, Max_address},
+                      {blacklist, Blacklist},
+                      {wwv_tmo,   {Wwv_tmo_start, Wwv_tmo_end} },
+                      {wack_tmo,  {Wack_tmo_start, Wack_tmo_end} },
+                      {spath_tmo, {Spath_tmo_start, Spath_tmo_end} },
+                      {wpath_tmo, WTmo_path},
+                      {neighbour_tmo, Tmo_Neighbour},
+                      {max_rtt, 2 * RTT},
+                      {min_rtt, RTT},
+                      {path_life, Path_life},
+                      {neighbour_life, Neighbour_life},
+                      {max_pkg_id, ?BITS_ADDRESS_MAX},
+                      {rtt, RTT + RTT/2},
+                      {send_wv_dbl_tmo, Tmo_dbl_wv},
+                      {probability, Probability}]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
   ?TRACE(Mod_ID, "Routing Table ~p ~n", [Routing_table]),
@@ -196,15 +198,16 @@ conf_fsm(Protocol) ->
   Decr.
 
 conf_protocol(CurrentProtocol, Share, Protocol, Pid, Params, SMName) ->
+  ShareID = #sm{share = Share},
   if (CurrentProtocol =:= Protocol) ->
-      ets:insert(Share, [{pid, Pid}]),
-      ets:insert(Share, [{np,  Protocol}]);
+      share:put(ShareID, [{pid, Pid}, {np,  Protocol}]);
     true -> nothing
   end,
   parse_pr_params(Share, Params, Protocol),
   SMName.
 
 parse_pr_params(Share, Params, Protocol) ->
+  ShareID = #sm{share = Share},
   NP = #pr_conf{},
   List_config = lists:foldr(
     fun(LP, A) ->
@@ -216,7 +219,7 @@ parse_pr_params(Share, Params, Protocol) ->
   Config = lists:foldr(fun(X, NPP) ->
       setelement(get_nfield(X), NPP, true)
     end, NP, List_config),
-  ets:insert(Share, [{ {protocol_config, Protocol}, Config }]).
+  share:put(ShareID, protocol_config, Protocol, Config).
 
 get_nfield(Param) ->
   {_, FNumber}=

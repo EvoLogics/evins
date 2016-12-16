@@ -67,7 +67,7 @@ start(Behaviour, Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 init(#modstate{behaviour = B, mod_id = Mod_ID, role_ids = Role_IDs, mfa = {_, _, ArgS}} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {Mod_ID, init}}),
   process_flag(trap_exit, true),
-  Share = ets:new(table, [ordered_set, public]),
+  Share = share:init(),
   FSMs_pre = B:register_fsms(Mod_ID, Role_IDs, Share, ArgS),
   FSMs = lists:map(fun(FSM) -> FSM#sm{id = Mod_ID} end, FSMs_pre),
   {ok, State#modstate{fsms = FSMs, share = Share}}.
@@ -101,13 +101,13 @@ handle_cast(restart, #modstate{mod_id = ID} = State) ->
 
 handle_cast({stop, SM, normal}, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {stop, SM, normal}}}),
-  ets:delete(SM#sm.table),
+  share:delete(SM),
   %% {noreply, State};
   {stop, normal, State};
 
 handle_cast({stop, SM, Reason}, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {stop, SM, Reason}}}),
-  ets:delete(SM#sm.table),
+  share:delete(SM),
   {stop, Reason, State};
 
 handle_cast(Request, #modstate{mod_id = ID} = State) ->
@@ -131,7 +131,7 @@ terminate(Reason, #modstate{mod_id = ID, sup_id = _Sup_ID, share = Share}) ->
   %%   {error, not_found} ->
   %%     gen_event:notify(error_logger, {fsm_core, self(), {ID, {error, child_not_found}}})
   %% end,
-  ets:delete(Share),
+  share:delete(#sm{share = Share}),
   ok.
 
 code_change(_, State, _) ->

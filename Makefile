@@ -9,6 +9,8 @@ dep_cowlib = pkg://cowlib 1.3.0
 dep_ranch = pkg://ranch 1.2.1
 dep_parse_trans = pkg://parse_trans master
 
+CT_SUITES = share
+
 rel: 
 
 ebin/$(PROJECT).app: src/$(PROJECT).app.src

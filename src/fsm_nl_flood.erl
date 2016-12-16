@@ -137,8 +137,8 @@ stop(_SM)      -> ok.
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
   ?TRACE(?ID, "handle_event ~120p~n", [Term]),
-  Local_address = nl_mac_hf:readETS(SM, local_address),
-  Protocol    = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
+  Local_address = share:get(SM, local_address),
+  Protocol    = share:get(SM, protocol_config, share:get(SM, np)),
   case Term of
     {timeout, Event} ->
       ?INFO(?ID, "timeout ~140p~n", [Event]),
@@ -147,9 +147,9 @@ handle_event(MM, SM, Term) ->
           nl_mac_hf:process_path_life(SM, Tuple);
         {neighbour_life, Addr} ->
           %% TODO: if neighbour does not exist any more, delete from routing table
-          nl_mac_hf:insertETS(SM, current_neighbours, nl_mac_hf:readETS(SM, current_neighbours) -- [Addr]);
+          share:update_with(SM, current_neighbours, fun(L) -> lists:delete(Addr, L) end);
         {relay_wv, Tuple = {send, {Flag, _}, _}} ->
-          [SMN, PTuple] = nl_mac_hf:proccess_relay(SM, Tuple),
+          [SMN, PTuple] = nl_mac_hf:process_relay(SM, Tuple),
           case PTuple of
             not_relay when (Flag =:= path) ->
               fsm:run_event(MM, SMN#sm{event = not_relay, state=idle}, {});
@@ -163,7 +163,7 @@ handle_event(MM, SM, Term) ->
         {send_path, PkgID, Tuple} ->
           fsm:run_event(MM, SM#sm{event=send_path,  state=rwv}, {send_path, PkgID, Tuple});
         {wack_timeout, {_Packet_id, Real_src, Real_dst}} ->
-          case nl_mac_hf:readETS(SM, current_pkg) of
+          case share:get(SM, current_pkg) of
             {nl, send, _, _, Payload} ->
               nl_mac_hf:analyse(SM, st_data, {Payload, Real_dst, 0, "Failed"}, {Real_src, Real_dst});
             _ ->
@@ -177,7 +177,7 @@ handle_event(MM, SM, Term) ->
           end,
           fsm:run_event(MM, SM#sm{event=timeout_ack,  state=wack}, {});
         {wpath_timeout, {_Packet_id, Real_src, Real_dst}} ->
-          case nl_mac_hf:readETS(SM, current_pkg) of
+          case share:get(SM, current_pkg) of
             {nl, send, _, _, Payload} ->
               nl_mac_hf:analyse(SM, st_data, {Payload, Real_dst, 0, "Failed"}, {Real_src, Real_dst});
             _ ->
@@ -198,12 +198,12 @@ handle_event(MM, SM, Term) ->
       ?INFO(?ID, "connected ~n", []),
       SM;
     T={sync,_} ->
-      case nl_mac_hf:readETS(SM, last_nl_sent) of
+      case share:get(SM, last_nl_sent) of
         %% rcv sync message for NL
         {Flag, Real_src,_} ->
-          nl_mac_hf:cleanETS(SM, last_nl_sent),
-          Path_exists = nl_mac_hf:readETS(SM, path_exists),
-          nl_mac_hf:insertETS(SM, path_exists, false),
+          share:clean(SM, last_nl_sent),
+          Path_exists = share:get(SM, path_exists),
+          share:put(SM, path_exists, false),
           case parse_ll_msg(SM, T) of
             nothing -> SM;
             [SMN, NT] when  (Local_address=:=Real_src) and Protocol#pr_conf.pf and Path_exists and (Flag =:= data);
@@ -219,7 +219,7 @@ handle_event(MM, SM, Term) ->
       end;
 
     T={async, {pid, PID}, Tuple} ->
-      case nl_mac_hf:readETS(SM, pid) =:= PID of
+      case share:get(SM, pid) =:= PID of
         true ->
           [SMN, NT] = parse_ll_msg(SM, T),
           case NT of
@@ -268,8 +268,8 @@ handle_event(MM, SM, Term) ->
       SM;
     {rcv_ul, {get, protocol}} ->
       AProtocolID =
-      case P = nl_mac_hf:readETS(SM, np) of
-        not_inside -> "nothing";
+      case P = share:get(SM, np) of
+        nothing -> "nothing";
         _ -> P
       end,
       fsm:cast(SM, nl, {send, {sync, {nl, protocol, AProtocolID} } }),
@@ -282,12 +282,12 @@ handle_event(MM, SM, Term) ->
       nl_mac_hf:process_command(SM, false, Command),
       SM;
     {rcv_ul, {set, protocol, AProtocolID} } ->
-      nl_mac_hf:insertETS(SM, np, AProtocolID),
+      share:put(SM, np, AProtocolID),
       fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
       SM;
     {rcv_ul, Tuple} ->
       if SM#sm.state =:= idle ->
-        case proccess_send(SM, Tuple) of
+        case process_send(SM, Tuple) of
           error  -> fsm:cast(SM, nl, {send, {nl, error}});
           Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
         end;
@@ -304,18 +304,20 @@ handle_event(MM, SM, Term) ->
 %%------------------------------------------ init -----------------------------------------------------
 init_flood(SM) ->
   {H, M, Ms} = erlang:timestamp(),
-  rand:seed({H * nl_mac_hf:readETS(SM, local_address), M * nl_mac_hf:readETS(SM, local_address), Ms}),
-  nl_mac_hf:insertETS(SM, packet_id, 0),
-  nl_mac_hf:insertETS(SM, path_exists, false),
-  nl_mac_hf:insertETS(SM, list_current_wvp, []),
-  nl_mac_hf:insertETS(SM, s_total_sent, 0),
-  nl_mac_hf:insertETS(SM, r_total_sent, 0),
-  nl_mac_hf:insertETS(SM, queue_ids, queue:new()),
-  nl_mac_hf:insertETS(SM, last_states, queue:new()),
-  nl_mac_hf:insertETS(SM, pr_states, queue:new()),
-  nl_mac_hf:insertETS(SM, paths, queue:new()),
-  nl_mac_hf:insertETS(SM, st_neighbours, queue:new()),
-  nl_mac_hf:insertETS(SM, st_data, queue:new()),
+  LA = share:get(SM, local_address),
+  rand:seed({H * LA, M * LA, Ms}),
+  share:put(SM, [{packet_id, 0},
+                 {packet_id, 0},
+                 {path_exists, false},
+                 {list_current_wvp, []},
+                 {s_total_sent, 0},
+                 {r_total_sent, 0},
+                 {queue_ids, queue:new()},
+                 {last_states, queue:new()},
+                 {pr_states, queue:new()},
+                 {paths, queue:new()},
+                 {st_neighbours, queuee:new()},
+                 {st_data, queue:new()}]),
   SM1 = nl_mac_hf:init_dets(SM),
   nl_mac_hf:init_nl_addrs(SM1).
 
@@ -328,13 +330,13 @@ handle_idle(_MM, SMP, Term) ->
   nl_mac_hf:update_states_list(SMP),
   [Param_Term, SM] = nl_mac_hf:event_params(SMP, Term, error),
   ?TRACE(?ID, "handle_idle ~120p~n", [Term]),
-  Protocol    = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
-  Local_address = nl_mac_hf:readETS(SM, local_address),
+  Protocol    = share:get(SM, protocol_config, share:get(SM, np)),
+  Local_address = share:get(SM, local_address),
   case SM#sm.event of
     error when Protocol#pr_conf.ack ->
       case Param_Term of
         {error, {Real_src, Real_dst}} when (Real_dst =:= Local_address) ->
-          case nl_mac_hf:readETS(SM, current_pkg) of
+          case share:get(SM, current_pkg) of
             {nl, send, _, _, Payload} ->
               nl_mac_hf:analyse(SM, st_data, {Payload, Real_dst, 0, "Failed"}, {Real_src, Real_dst});
             _ ->
@@ -387,7 +389,7 @@ handle_rwv(_MM, SM, Term) ->
 
 handle_sack(_MM, SM, Term) ->
   nl_mac_hf:update_states_list(SM),
-  Protocol    = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
+  Protocol    = share:get(SM, protocol_config, share:get(SM, np)),
   ?TRACE(?ID, "handle_sack ~120p~n", [Term]),
   case Term of
     {send_ack, _, {async, {nl, recv, ISrc, IDst, Payload}}} ->
@@ -411,27 +413,27 @@ handle_sack(_MM, SM, Term) ->
 handle_spath(_MM, SM, Term) ->
   nl_mac_hf:update_states_list(SM),
   ?TRACE(?ID, "handle_spath ~120p~n", [Term]),
-  Protocol = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
+  Protocol = share:get(SM, protocol_config, share:get(SM, np)),
   case Term of
     {send_path, Params={_,[Packet_id, ISrc,_]},{nl, send, IDst, Data}} ->
       NTerm = {async, {nl, recv, ISrc, IDst, Data}},
       SM1 = nl_mac_hf:send_path(SM, {send_path, Params, NTerm}),
-      Local_address = nl_mac_hf:readETS(SM, local_address),
+      Local_address = share:get(SM, local_address),
       WTP = if Local_address =:= IDst -> {Packet_id, IDst, ISrc}; true -> {Packet_id, ISrc, IDst} end,
       if SM1 =:= error->
         fsm:cast(SM, nl, {send, {nl, error}}),
         SM#sm{event = error, event_params={error, {ISrc, IDst}}};
-      true -> fsm:set_timeout(SM1#sm{event=wait_pf}, {s, nl_mac_hf:readETS(SM, wpath_tmo)}, {wpath_timeout,WTP})
+      true -> fsm:set_timeout(SM1#sm{event=wait_pf}, {s, share:get(SM, wpath_tmo)}, {wpath_timeout,WTP})
       end;
     {send_path,_,{async,{nl,recv,_,_,_}}} ->
       %% choose path with best integrity and rssii
       NTerm =
       case Protocol#pr_conf.evo of
         true ->
-          List_current_wvp = nl_mac_hf:readETS(SM, list_current_wvp),
+          List_current_wvp = share:get(SM, list_current_wvp),
           Sorted_list = lists:sort(fun({IntA,RssiA,ValA}, {IntB,RssiB,ValB}) -> {IntA,RssiA,ValA} =< {IntB,RssiB,ValB} end, List_current_wvp),
           {_,_, {Params, Tuple} } = lists:nth(length(Sorted_list), Sorted_list),
-          nl_mac_hf:insertETS(SM, list_current_wvp, []),
+          share:put(SM, list_current_wvp, []),
           {send_path, Params, Tuple};
         false ->
           Term
@@ -449,7 +451,7 @@ handle_spath(_MM, SM, Term) ->
 handle_wack(_MM, SM, Term) ->
   nl_mac_hf:update_states_list(SM),
   ?TRACE(?ID, "handle_wack ~120p~n", [Term]),
-  Local_address = nl_mac_hf:readETS(SM, local_address),
+  Local_address = share:get(SM, local_address),
   case Term of
     {relay_wv, Params={Flag, [Packet_id, Real_src, _PAdditional]}, Tuple={nl,send,Real_dst,_}} ->
       SM1 = fsm:clear_timeout(SM, {wack_timeout, {Packet_id, Real_dst, Real_src}}),
@@ -460,14 +462,14 @@ handle_wack(_MM, SM, Term) ->
       end,
       SM1#sm{event = relay_wv, event_params = {relay_wv, {send, Params, Tuple}}};
     {dst_reached,{ack, [Packet_id,_, PAdditional]} ,{async,{nl, recv, Real_dst, Real_src, Payl}}} ->
-      case nl_mac_hf:readETS(SM, current_pkg) of
+      case share:get(SM, current_pkg) of
         {nl, send, _, TIDst, Payload} ->
           Count_hops = nl_mac_hf:extract_ack(SM, Payl),
           nl_mac_hf:analyse(SM, st_data, {Payload, TIDst, Count_hops + 1, "Delivered"}, {Real_src, Real_dst});
         _ ->
           nothing
       end,
-      Ack_last_nl_sent = nl_mac_hf:readETS(SM, ack_last_nl_sent),
+      Ack_last_nl_sent = share:get(SM, ack_last_nl_sent),
       if {Packet_id, Real_src, Real_dst} == Ack_last_nl_sent  ->
         SM1 = nl_mac_hf:send_nl_command(SM, alh, {dst_reached, [Packet_id, Real_dst, PAdditional]}, {nl,send,Real_src,<<"">>}),
         SM2 = fsm:clear_timeout(SM1, {wack_timeout, {Packet_id, Real_src, Real_dst}}),
@@ -486,7 +488,7 @@ handle_wack(_MM, SM, Term) ->
   end.
 
 handle_wpath(_MM, SM, Term) ->
-  Protocol = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
+  Protocol = share:get(SM, protocol_config, share:get(SM, np)),
   nl_mac_hf:update_states_list(SM),
   case Term of
     {relay_wv, Params = {_, [Packet_id, Real_src, _]}, Tuple = {nl, send, Real_dst, Payload}} ->
@@ -507,10 +509,10 @@ handle_wpath(_MM, SM, Term) ->
       try
         nl_mac_hf:prepare_send_path(SM, Params, Tuple)
       catch error: _Reason ->
-        not_inside
+        nothing
       end,
       case Res of
-        not_inside ->
+        nothing ->
           SM#sm{event = eps};
         [SM1, SDParams, SDTuple]  ->
           SM2 = fsm:clear_timeout(SM1, {wpath_timeout, {Packet_id, Real_src, Real_dst}}),
@@ -538,14 +540,14 @@ handle_alarm(_MM, SM, _Term) ->
 
 handle_final(_MM, SM, _Term) ->
   ?INFO(?ID, "FINAL~n", []),
-  nl_mac_hf:dump_sm(SM, nl, nl_mac_hf:readETS(SM, debug)),
+  nl_mac_hf:dump_sm(SM, nl, share:get(SM, debug)),
   fsm:clear_timeouts(SM#sm{event = eps}).
 
 %%------------------------------------------ process helper functions -----------------------------------------------------
-proccess_send(SM, Tuple) ->
-  NP = nl_mac_hf:readETS(SM, np),
-  Protocol    = nl_mac_hf:readETS(SM, {protocol_config, NP}),
-  Local_address = nl_mac_hf:readETS(SM, local_address),
+process_send(SM, Tuple) ->
+  NP = share:get(SM, np),
+  Protocol    = share:get(SM, protocol_config, NP),
+  Local_address = share:get(SM, local_address),
   PkgID = nl_mac_hf:increase_pkgid(SM),
   {nl, send, TransmitLen, Dst, Data} = Tuple,
 
@@ -553,7 +555,7 @@ proccess_send(SM, Tuple) ->
     error;
    true ->
      MAC_addr  = nl_mac_hf:addr_nl2mac(SM, Local_address),
-     nl_mac_hf:insertETS(SM, current_pkg, Tuple),
+     share:get(SM, current_pkg, Tuple),
      nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
      case (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) of
        true ->
@@ -566,7 +568,7 @@ proccess_send(SM, Tuple) ->
        false when Protocol#pr_conf.pf ->
          Path_exists = nl_mac_hf:get_routing_addr(SM, data, Dst),
          if (Path_exists =/= ?BITS_ADDRESS_MAX) ->
-              nl_mac_hf:insertETS(SM, path_exists, true),
+              share:get(SM, path_exists, true),
               Payl = nl_mac_hf:fill_msg(data, {TransmitLen, Data}),
               NTuple = {nl, send, Dst, Payl},
               {send, {data, [PkgID, Local_address, []]}, NTuple};
@@ -625,10 +627,10 @@ process_async(SM, Msg) ->
 
 
 process_recv(SM, L) ->
-  Local_address = nl_mac_hf:readETS(SM, local_address),
+  Local_address = share:get(SM, local_address),
   ?TRACE(?ID, "Recv AT command ~p~n", [L]),
   [ISrc, IDst, IRssi, IIntegrity, PayloadTail] = L,
-  Blacklist = nl_mac_hf:readETS(SM, blacklist),
+  Blacklist = share:get(SM, blacklist),
   ?INFO(?ID, "Blacklist : ~w ~n", [Blacklist]),
   NLSrcAT  = nl_mac_hf:addr_mac2nl(SM, ISrc),
   NLDstAT  = nl_mac_hf:addr_mac2nl(SM, IDst),
@@ -665,8 +667,8 @@ parse_rcv(SM, RcvParams, PayloadTail) ->
   end.
 
 process_rcv_wv(SM, RcvParams, DataParams) ->
-  Local_address = nl_mac_hf:readETS(SM, local_address),
-  Protocol    = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
+  Local_address = share:get(SM, local_address),
+  Protocol    = share:get(SM, protocol_config, share:get(SM, np)),
 
   [NLSrcAT, NLDstAT, IRssi, IIntegrity] = RcvParams,
   [BFlag, Pkg_id, Real_src, Real_dst, Tail] = DataParams,
@@ -702,9 +704,9 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
     _ when Flag =:= dst_reached ->
       [SMN, nothing];
     old_id-> [SMN, nothing];
-    proccessed ->
+    processed ->
       [SMN, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
-    not_proccessed ->
+    not_processed ->
       if  (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= Local_address);
           (RecvNLSrc =/= error) and (RecvNLSrc =/= Local_address) and (NLDstAT =:= ?BITS_ADDRESS_MAX) ->
             %% check probability, for probabilistic protocols
@@ -724,7 +726,7 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
   end.
 
 form_rcv_tuple(SMN, RTuple) ->
-  Local_address = nl_mac_hf:readETS(SMN, local_address),
+  Local_address = share:get(SMN, local_address),
   if RTuple =:= nothing -> [SMN, nothing];
      true ->
        [Type, NLDst, RcvTuple, RDstTuple] = RTuple,
@@ -747,11 +749,11 @@ form_rcv_tuple(SMN, RTuple) ->
   end.
 
 check_probability(SM) ->
-  {Pmin, Pmax} = nl_mac_hf:readETS(SM, probability),
-  CN = nl_mac_hf:readETS(SM, current_neighbours),
+  {Pmin, Pmax} = share:get(SM, probability),
+  CN = share:get(SM, current_neighbours),
   Snbr =
   case CN of
-    not_inside -> 0;
+    nothing -> 0;
     _ -> length(CN)
   end,
 
@@ -774,8 +776,8 @@ multi_array(Snbr, Pmax, P) -> multi_array(Snbr - 1, Pmax, P * Pmax).
 
 process_send_flag(SM, Params, Tuple) ->
   {Flag, [Packet_id, Real_src, _PAdditional]} = Params,
-  Protocol    = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
-  Local_address = nl_mac_hf:readETS(SM, local_address),
+  Protocol    = share:get(SM, protocol_config, share:get(SM, np)),
+  Local_address = share:get(SM, local_address),
   Real_dst     = nl_mac_hf:get_dst_addr(Tuple),
   nl_mac_hf:save_stat(SM, {Real_src, Real_dst}, relay),
   case Flag of
@@ -790,7 +792,7 @@ process_send_flag(SM, Params, Tuple) ->
     neighbours when  (Protocol#pr_conf.dbl and (Real_src =:= Local_address)) ->
       case fsm:check_timeout(SM, send_wv_dbl_tmo) of
         false ->
-          fsm:set_timeout(SM#sm{event = eps}, {s, nl_mac_hf:readETS(SM, send_wv_dbl_tmo)}, {send_wv_dbl, Params, Tuple});
+          fsm:set_timeout(SM#sm{event = eps}, {s, share:get(SM, send_wv_dbl_tmo)}, {send_wv_dbl, Params, Tuple});
         true ->
           SM#sm{event=eps}
       end;
@@ -799,7 +801,7 @@ process_send_flag(SM, Params, Tuple) ->
     Flag when  Protocol#pr_conf.pf and (Flag =:= neighbours);
                Protocol#pr_conf.pf and (Flag =:= path_addit);
                Protocol#pr_conf.dbl and (Flag =:= path) ->
-      fsm:set_timeout(SM#sm{event=wait_pf}, {s, nl_mac_hf:readETS(SM, wpath_tmo)}, {wpath_timeout, {Packet_id, Real_src, Real_dst} });
+      fsm:set_timeout(SM#sm{event=wait_pf}, {s, share:get(SM, wpath_tmo)}, {wpath_timeout, {Packet_id, Real_src, Real_dst} });
     ack when  Protocol#pr_conf.ack ->
       SM#sm{event = rcv_ack};
     path when  Protocol#pr_conf.pf ->
@@ -809,7 +811,7 @@ process_send_flag(SM, Params, Tuple) ->
   end.
 
 process_rcv_flag(SM, Params={Flag,[Packet_id, _Real_src, PAdditional]}, Tuple={async,{nl,recv,ISrc,IDst,_}}) ->
-  Protocol = nl_mac_hf:readETS(SM, {protocol_config, nl_mac_hf:readETS(SM, np)}),
+  Protocol = share:get(SM, protocol_config, share:get(SM, np)),
   Rand_timeout_spath = nl_mac_hf:rand_float(SM, spath_tmo),
   Rand_timeout_wack = nl_mac_hf:rand_float(SM, wack_tmo),
   SDParams = [Packet_id, IDst, PAdditional],

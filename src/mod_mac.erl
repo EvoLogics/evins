@@ -78,23 +78,25 @@ parse_conf(ArgS, Share) ->
   Max_Retry_count = set_params(Max_rc_set, 3),
   {_Tmo_backoff_min, Tmo_backoff_max} = Tmo_backoff,
   Tmo_retransmit = set_timeouts(Tmo_retransmit_set, {Tmo_backoff_max, 2 * Tmo_backoff_max + 1}),
-  ets:insert(Share, [{sound_speed, Sound_speed}]),
-  ets:insert(Share, [{pmax, PMax}]),
-  ets:insert(Share, [{tdetect, TDect}]),
-  ets:insert(Share, [{max_retransmit_count, Max_Retry_count}]),
-  ets:insert(Share, [{tmo_retransmit, Tmo_retransmit}]),
+
+  ShareID = #sm{share = Share},
+  share:put(ShareID, [{sound_speed, Sound_speed},
+                      {pmax, PMax},
+                      {tdetect, TDect},
+                      {max_retransmit_count, Max_Retry_count},
+                      {tmo_retransmit, Tmo_retransmit}]),
 
   case Protocol of
     cut_lohi ->
-      ets:insert(Share, [{cr_time, 2 * (PMax + TDect)}]);
+      share:put(ShareID, cr_time, 2 * (PMax + TDect));
     aut_lohi ->
-      ets:insert(Share, [{cr_time, (PMax + TDect)}]);
+      share:put(ShareID, cr_time, (PMax + TDect));
     dacap ->
-      ets:insert(Share, [{tmo_backoff, Tmo_backoff}]),
+      share:put(ShareID, tmo_backoff, Tmo_backoff),
       % TODO: duration of the data packet to be transmitted in s
-      ets:insert(Share, [{t_data, 1}]),
+      share:put(ShareID, t_data, 1),
       % max distance between nodes in the network in m
-      ets:insert(Share, [{u, U}]);
+      share:put(ShareID, u, U);
     _  -> nothing
   end,
   io:format("!!! Name of current protocol ~p~n", [Protocol]),

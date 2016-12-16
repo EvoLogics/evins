@@ -194,11 +194,11 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
     {rcv_ul, T = {at, _PID, _, IDst, _, _}} when State =:= idle ->
-      nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0}),
+      share:put(SM, rts_cts_time_total, {0, 0}),
       if IDst =:= 255 ->
         fsm:send_at_command(SM, T);
       true ->
-        nl_mac_hf:insertETS(SM, current_pkg, T),
+        share:put(SM, current_pkg, T),
         fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, T})
       end;
     {rcv_ul, _} ->
@@ -223,8 +223,8 @@ handle_event(MM, SM, Term) ->
   end.
 
 init_mac(SM) ->
-  nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0}),
-  nl_mac_hf:insertETS(SM, cts_rts_time_total, {0, 0}),
+  share:put(SM, rts_cts_time_total, {0, 0}),
+  share:put(SM, cts_rts_time_total, {0, 0}),
   rand:seed(erlang:timestamp()).
 
 handle_idle(_MM, SM, Term) ->
@@ -246,10 +246,10 @@ handle_wcts(_MM, SM, Term) ->
       fsm:set_timeout(SM, {ms, 50}, {send_rts, IDst, Msg});
     {send_rts, IDst, Msg} ->
       SM1 = nl_mac_hf:send_helpers(SM, at, Msg, rts),
-      Tmin = get_distance(SM, IDst) / nl_mac_hf:readETS(SM, sound_speed),
+      Tmin = get_distance(SM, IDst) / share:get(SM, sound_speed),
       SM2 = fsm:set_timeout(SM1, {s, Tmin}, tmo_defer_trans),
       RTT = get_current_rtt(SM2, IDst),
-      nl_mac_hf:insertETS(SM2, time_srts, erlang:timestamp()),
+      share:put(SM2, time_srts, erlang:timestamp()),
       fsm:set_timeout(SM1#sm{event = eps}, {s, RTT}, wcts_end);
     {rcv_cts_fm, RTmo, Src} ->
       SM#sm{event = rcv_cts_fm, event_params = {rcv_cts_fm, RTmo, Src}};
@@ -272,12 +272,12 @@ handle_scts(_MM, SM, Term) ->
     {rcv_rts_fm, error, _} ->
       SM1#sm{event = error};
     {rcv_rts_fm, SM2, STuple}->
-      nl_mac_hf:insertETS(SM2, wait_data, STuple),
-      C = nl_mac_hf:readETS(SM2, sound_speed),
+      share:put(SM2, wait_data, STuple),
+      C = share:get(SM2, sound_speed),
       Dst_addr = nl_mac_hf:get_dst_addr(STuple),
       U =
-      case Val = nl_mac_hf:readETS(SM2, {u, Dst_addr}) of
-       not_inside -> nl_mac_hf:readETS(SM2, u);
+      case Val = share:get(SM2, u, Dst_addr) of
+       nothing -> share:get(SM2, u);
        _ -> Val
       end,
       fsm:set_timeout(SM2#sm{event = cts_sent}, {s, 2 * U / C}, no_data);
@@ -299,9 +299,9 @@ handle_ws_data(_MM, SMP, Term) ->
       % try to send data once more in 50 ms
       fsm:set_timeout(SM1#sm{event = eps}, {ms, 50}, send_data);
     send_data ->
-      Current_pkg = nl_mac_hf:readETS(SM, current_pkg),
+      Current_pkg = share:get(SM, current_pkg),
       SM2 = nl_mac_hf:send_mac(SM1, at, data, Current_pkg),
-      nl_mac_hf:cleanETS(SM2, current_pkg),
+      share:clean(SM2, current_pkg),
       SM2#sm{event = data_sent};
     {rcv_warn} ->
       fsm:clear_timeout(SM1#sm{event = rcv_warn}, send_data);
@@ -316,7 +316,7 @@ handle_backoff(_MM, SM, Term) ->
       fsm:set_timeout(SM#sm{event = eps}, {ms, 50}, send_warn);
     send_warn ->
       Tmo_backoff = nl_mac_hf:rand_float(SM, tmo_backoff),
-      STuple = nl_mac_hf:readETS(SM, wait_data),
+      STuple = share:get(SM, wait_data),
       SM1 = nl_mac_hf:send_helpers(SM, at, STuple, warn),
       SM2 = fsm:set_timeout(SM1, {ms, Tmo_backoff}, backoff_end),
       SM2#sm{event = send_warn};
@@ -339,14 +339,10 @@ handle_final(_MM, SM, Term) ->
 
 %%-----------------------------process helper functions ------------------------
 get_distance(SM, IDst) ->
-  case Val = nl_mac_hf:readETS(SM, {u, IDst}) of
-    not_inside ->
-      nl_mac_hf:readETS(SM, u);% max distance between nodes in the network, in m
-    _ -> Val
-  end.
+  share:get(SM, u, IDst, share:get(SM, u)).
 
 calc_wcts(SM, IDst) ->
-  C = nl_mac_hf:readETS(SM, sound_speed),
+  C = share:get(SM, sound_speed),
   U = get_distance(SM, IDst),
   T = U / C,    % propagation delay
   T_min = T,    % min handshake length, in s
@@ -356,7 +352,7 @@ calc_wcts(SM, IDst) ->
   %% when some links are shorter it can be reduced, in s
 
   % duration of the data packet to be transmitted, in s
-  T_data = nl_mac_hf:readETS(SM, t_data),
+  T_data = share:get(SM, t_data),
   T1 = (T_min - lists:min([Delta_d / C , T_data,  2 * T - T_min])) / 2,
   Tw =
   if U / C < T1 -> T_min - 2 * U / C;
@@ -366,9 +362,9 @@ calc_wcts(SM, IDst) ->
   Tw.
 
 update_wcts(SM, RTmo, IDst) ->
-  C = nl_mac_hf:readETS(SM, sound_speed),
-  LA = nl_mac_hf:readETS(SM,local_address),
-  case nl_mac_hf:readETS(SM, rts_cts_time_total) of
+  C = share:get(SM, sound_speed),
+  LA = share:get(SM,local_address),
+  case share:get(SM, rts_cts_time_total) of
     {0, 0} -> nothing;
     {T1, T2} ->
       Tot = T2 - T1,
@@ -377,17 +373,17 @@ update_wcts(SM, RTmo, IDst) ->
       U = T * C,
       ?TRACE(?ID, "T1 ~p T2 ~p Tot ~p RTmo ~p RTT ~p T ~p ~n", [T1, T2, Tot, RTmo, RTT, T]),
       ?TRACE(?ID, "Distance between ~p and ~p is U = ~p ~n", [LA, IDst, U]),
-      nl_mac_hf:insertETS(SM, {u, IDst}, U),
+      share:put(SM, u, IDst, U),
       Delta_d = T/4 * C,
       CTot = nl_mac_hf:convert_t(Tot, {us, s}),
-      nl_mac_hf:insertETS(SM, {rtt, IDst}, CTot + 2 * Delta_d / C)
+      share:put(SM, rtt, IDst, CTot + 2 * Delta_d / C)
   end.
 
 get_current_rtt(SM, IDst) ->
-  C = nl_mac_hf:readETS(SM, sound_speed),
-  case RTT = nl_mac_hf:readETS(SM, {rtt, IDst}) of
-    not_inside ->
-      2 * nl_mac_hf:readETS(SM, u) / C;
+  C = share:get(SM, sound_speed),
+  case RTT = share:get(SM, rtt, IDst) of
+    nothing ->
+      2 * share:get(SM, u) / C;
     _ -> RTT
   end.
 
@@ -420,7 +416,7 @@ process_recv_helper(SM, Len, Src, Dst, P1, P2, P3, P4, P5, Payl) ->
   process_recv_helper(SM, Flag, ShortTuple, Dst).
 
 process_recv_helper(SM, Flag, ShortTuple, Dst) ->
-  Local_addr = nl_mac_hf:readETS(SM, local_address),
+  Local_addr = share:get(SM, local_address),
   case Flag of
     rts when Dst =:= Local_addr ->
       [SM, {rts_fm, ShortTuple}];
@@ -438,22 +434,22 @@ process_recv_helper(SM, Flag, ShortTuple, Dst) ->
 
 process_sync(SM1, Req, Answer, {rcv_rts_fm, STuple}) when Req =:= "?CLOCK" ->
   Timestemp2 = list_to_integer(Answer),
-  Cts_rts_time_total = nl_mac_hf:readETS(SM1, cts_rts_time_total),
+  Cts_rts_time_total = share:get(SM1, cts_rts_time_total),
   case Cts_rts_time_total of
     {Timestemp1, 0} ->
       TDiff  = Timestemp2 - Timestemp1,
       SM2 = nl_mac_hf:send_cts(SM1, at, STuple, Timestemp2, 1000000, TDiff),
       {at, _, _, IDst, _, _} = STuple,
-      C = nl_mac_hf:readETS(SM2, sound_speed),
+      C = share:get(SM2, sound_speed),
       U = get_distance(SM2, IDst),
       T = U/C,
       Tmin = T,
       SM3 = fsm:set_timeout(SM2, {s, 2 * T - Tmin}, tmo_send_warn),
-      nl_mac_hf:insertETS(SM3, cts_rts_time_total, {Timestemp1, Timestemp2}),
+      share:get(SM3, cts_rts_time_total, {Timestemp1, Timestemp2}),
       SM4 = SM3#sm{event = rcv_rts_fm},
       [SM4, {rcv_rts_fm, SM2, STuple}];
     _ ->
-      nl_mac_hf:insertETS(SM1, cts_rts_time_total, {0, 0}),
+      share:get(SM1, cts_rts_time_total, {0, 0}),
       [SM1, {}]
   end;
 process_sync(SM1, _, _, _)  ->
@@ -512,35 +508,35 @@ process_rcv_flag(SM, PID, Tuple) ->
   end.
 
 % process_tmstmp(SM, {sendend, _, _, TmpStmp1, _TDur}) when SM#sm.state =:= wcts ->
-%   nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1, 0}),
+%   share:get(SM, rts_cts_time_total, {TmpStmp1, 0}),
 %   SM;
 % process_tmstmp(SM, {recvend, TmpStmp2, TDur, _, _}) when (SM#sm.state =:= wcts) ->
-%   case nl_mac_hf:readETS(SM, rts_cts_time_total) of
+%   case share:get(SM, rts_cts_time_total) of
 %     {TmpStmp1, 0} ->
-%       nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1 - TDur, TmpStmp2});
+%       share:put(SM, rts_cts_time_total, {TmpStmp1 - TDur, TmpStmp2});
 %     _ ->
-%       nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0})
+%       share:put(SM, rts_cts_time_total, {0, 0})
 %   end,
 %   SM;
 % process_tmstmp(SM, {recvend, TmpStmp1, TDur, _, _}) ->
-%   nl_mac_hf:insertETS(SM, cts_rts_time_total, {TmpStmp1 - TDur, 0}),
+%   share:put(SM, cts_rts_time_total, {TmpStmp1 - TDur, 0}),
 %   SM;
 % process_tmstmp(SM, _) ->
 %   SM.
 
 process_tmstmp(SM, {sendend, _, _, TmpStmp1, TDur}) when SM#sm.state =:= wcts ->
-  nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1 - TDur, 0}),
+  share:put(SM, rts_cts_time_total, {TmpStmp1 - TDur, 0}),
   SM;
 process_tmstmp(SM, {recvend, TmpStmp2, TDur, _, _}) when (SM#sm.state =:= wcts) ->
-  case nl_mac_hf:readETS(SM, rts_cts_time_total) of
+  case share:get(SM, rts_cts_time_total) of
     {TmpStmp1, 0} ->
-      nl_mac_hf:insertETS(SM, rts_cts_time_total, {TmpStmp1, TmpStmp2 + TDur});
+      share:put(SM, rts_cts_time_total, {TmpStmp1, TmpStmp2 + TDur});
     _ ->
-      nl_mac_hf:insertETS(SM, rts_cts_time_total, {0, 0})
+      share:put(SM, rts_cts_time_total, {0, 0})
   end,
   SM;
 process_tmstmp(SM, {recvend, TmpStmp1, TDur, _, _}) ->
-  nl_mac_hf:insertETS(SM, cts_rts_time_total, {TmpStmp1 - TDur, 0}),
+  share:put(SM, cts_rts_time_total, {TmpStmp1 - TDur, 0}),
   SM;
 process_tmstmp(SM, _) ->
   SM.

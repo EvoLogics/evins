@@ -53,8 +53,9 @@
 
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       ->
-  P = [0,0,0], ets:insert(SM#sm.share, {tail, [P,P,P], 0.0,math:pi()/2,0.0}),
-  ets:insert(SM#sm.share, {ahrs, [0,0,0]}),
+  P = [0,0,0],
+  share:put(SM, tail, {tail, [P,P,P], 0.0,math:pi()/2,0.0}),
+  share:put(SM, ahrs, {ahrs, [0,0,0]}),
   SM.
 trans()        -> ?TRANS.
 final()        -> [].
@@ -77,14 +78,14 @@ handle_event(MM, SM, Term) ->
 handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
   case Event of
     initial -> 
-      MS = [ets:lookup(SM#sm.share, T) || T <- [circle, brownian, tide, rocking]],
+      MS = [share:get(SM, T) || T <- [circle, brownian, tide, rocking]],
       ?TRACE(?ID, "MS: ~p~n", [MS]),
       lists:foldl(fun(M,SM_acc) ->
                       case M of
-                        [{tide, {tide, Tau, _Pr, _Amp, _Phy, _Period}}] -> fsm:set_interval(SM_acc, {ms, Tau}, tide);
-                        [{circle, {circle, _C, _R, _V, Tau, _Phy}}] -> fsm:set_interval(SM_acc, {ms, Tau}, circle);
-                        [{brownian, {brownian,Tau,_,_,_,_,_,_,_,_,_}}] -> fsm:set_interval(SM_acc, {ms, Tau}, brownian);
-                        [{rocking, {rocking, Tau}}] -> fsm:set_interval(SM_acc, {ms, Tau}, rocking);
+                        [{tide, Tau, _Pr, _Amp, _Phy, _Period}] -> fsm:set_interval(SM_acc, {ms, Tau}, tide);
+                        [{circle, _C, _R, _V, Tau, _Phy}] -> fsm:set_interval(SM_acc, {ms, Tau}, circle);
+                        [{brownian,Tau,_,_,_,_,_,_,_,_,_}] -> fsm:set_interval(SM_acc, {ms, Tau}, brownian);
+                        [{rocking, Tau}] -> fsm:set_interval(SM_acc, {ms, Tau}, rocking);
                         _ ->
                           ?TRACE(?ID, "Hmmm: ~p~n", [M]),
                           SM_acc
@@ -100,15 +101,15 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       fsm:set_event(SM, eps);
     tide ->
       %% Depth in meters
-      [{tide, {tide, Tau, Depth, A, Phy, Period}}] = ets:lookup(SM#sm.share, tide),
+      {tide, Tau, Depth, A, Phy, Period} = share:get(SM, tide),
       Phy1 = Phy + 2*math:pi()*Tau/Period,
       Depth1 = Depth + A * math:sin(Phy1),
-      ets:insert(SM#sm.share, {tide, {tide, Tau, Depth, A, Phy1, Period}}),
+      share:put(SM, tide, {tide, Tau, Depth, A, Phy1, Period}),
       DBS = {dbs, Depth1},
       fsm:broadcast(SM, pressure, {send, {nmea, DBS}}),
       fsm:broadcast(fsm:set_event(SM, eps), nmea, {send, {nmea, DBS}});
     circle ->
-      [{circle, {circle, C, R, V, Tau, Phy}}] = ets:lookup(SM#sm.share, circle),
+      {circle, C, R, V, Tau, Phy} = share:get(SM#sm.share, circle),
       {XO, YO, ZO} = C,
       Phy1 = Phy + V*(Tau/1000)/R,
       %% X,Y,Z in ENU reference frame
@@ -116,18 +117,18 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       Yn = YO + R * math:sin(Phy1),
       Zn = ZO,
       broadcast_position(SM, [Xn,Yn,Zn]),
-      ets:insert(SM#sm.share, {circle, {circle, C, R, V, Tau, Phy1}}),
+      share:put(SM, circle, {circle, C, R, V, Tau, Phy1}),
       fsm:set_event(SM, eps);
     brownian ->
-      [{brownian, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, X, Y, Z}}] = ets:lookup(SM#sm.share, brownian),
+      {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, X, Y, Z} = share:get(SM, brownian),
       Xn = geometry:brownian_walk(XMin, XMax, X),
       Yn = geometry:brownian_walk(YMin, YMax, Y),
       Zn = geometry:brownian_walk(ZMin, ZMax, Z),
       broadcast_position(SM, [Xn,Yn,Zn]),
-      ets:insert(SM#sm.share, {brownian, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xn, Yn, Zn}}),
+      share:put(SM, brownian, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xn, Yn, Zn}),
       fsm:set_event(SM, eps);
     rocking ->
-      [{ahrs, [Yaw, Pitch, Roll]}] = ets:lookup(SM#sm.share, ahrs),
+      {ahrs, [Yaw, Pitch, Roll]} = share:get(SM, ahrs),
       fsm:broadcast(fsm:set_event(SM, eps), nmea, {send, {nmea, {tnthpr,Yaw,"N",Pitch,"N",Roll,"N"}}});
     {nmea, _} ->
       SM;
@@ -136,18 +137,18 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
   end.
 
 broadcast_position(SM, [Xn,Yn,Zn]) ->
-  [{lever_arm, Lever_arm}] = ets:lookup(SM#sm.share, lever_arm),
+  Lever_arm = share:get(SM, lever_arm),
   [Psi, Theta, Phi] = rock(SM, [Xn,Yn,Zn]),
   %% converting to global reference system
   [Xl,Yl,Zl] = geometry:rotate({sensor, Lever_arm}, [Psi, Theta, Phi]),
   %% lever_arm to transducer is taken into account by transducer movement in the emulator
-  [{_, Ref}] = ets:lookup(SM#sm.share, geodetic),
+  Ref = share:get(SM, geodetic),
   [_,_,Alt] = ecef2geodetic(enu2ecef([0,0,Zn+Zl], Ref)),
-  [{_,Sea_level}] = ets:lookup(SM#sm.share, sea_level),
+  Sea_level = share:get(SM, sea_level),
   Str = lists:flatten(io_lib:format("~p ~p ~p ~p ~p ~p", [Xn+Xl,Yn+Yl,Alt-Sea_level,Phi,Theta,Psi])),
   fsm:cast(SM, scli, {send, {string, Str}}),
   [Yaw, Pitch, Roll] = [V*180/math:pi() || V <- flip_rot([Psi, Theta, Phi])],
-  ets:insert(SM#sm.share, {ahrs, [Yaw,Pitch,Roll]}),
+  share:put(SM, ahrs, {ahrs, [Yaw,Pitch,Roll]}),
   broadcast_nmea(SM, apply_jitter(SM, [Xn, Yn, Zn])).
 
 hypot(X,Y) ->
@@ -168,7 +169,7 @@ flip_rot([ Heading, Pitch, Roll]) ->
 %% values in radians
 rock(SM, [E2,N2,_]=P2) ->
   K = 0.1,
-  [{tail, [P1,P0,_], Pitch_phase, Heading_prev, Roll_prev}] = ets:lookup(SM#sm.share, tail),
+  {tail, [P1,P0,_], Pitch_phase, Heading_prev, Roll_prev} = share:get(SM, tail),
   Pitch_phase1 = Pitch_phase + 2 * math:pi() / 20, %% freq dependend, here update each second
   Pitch = 5 * math:sin(Pitch_phase1) * math:pi() / 180,
   [E0,N0,_] = P0,
@@ -182,14 +183,14 @@ rock(SM, [E2,N2,_]=P2) ->
   AlphaB = Heading,
   Sign = -sign(AlphaB - AlphaA),
   Roll = wrap_pi(lp_wrap((Sign * Alpha / 2), Roll_prev, K)),
-  ets:insert(SM#sm.share, {tail, [P2,P1,P0], Pitch_phase1, Heading, Roll}),
+  share:put(SM, tail, {tail, [P2,P1,P0], Pitch_phase1, Heading, Roll}),
   [Heading, Pitch, Roll].
 
 broadcast_nmea(SM, [X, Y, Z]) ->
   try  {MS,S,US} = os:timestamp(),
        {{Year,Month,Day},{HH,MM,SS}} = calendar:now_to_universal_time({MS,S,US}),
        Timestamp = 60*(60*HH + MM) + SS + US / 1000000,
-       [{_, Ref}] = ets:lookup(SM#sm.share, geodetic),
+       Ref = share:get(SM, geodetic),
        [Lat,Lon,Alt] = ecef2geodetic(enu2ecef([X,Y,Z], Ref)),
 
        GGA = {gga, Timestamp, Lat, Lon, 4,nothing,nothing,Alt,nothing,nothing,nothing},
@@ -200,7 +201,7 @@ broadcast_nmea(SM, [X, Y, Z]) ->
   end.
 
 apply_jitter(SM, [X, Y, Z]) ->
-  [{_, {jitter, Jx, Jy, Jz}}] = ets:lookup(SM#sm.share, jitter),
+  {jitter, Jx, Jy, Jz} = share:get(SM, jitter),
   [X + (2*Jx*rand:uniform() - Jx),
    Y + (2*Jy*rand:uniform() - Jy),
    Z + (2*Jz*rand:uniform() - Jz)].

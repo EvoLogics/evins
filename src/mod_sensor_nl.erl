@@ -65,9 +65,8 @@ parse_conf(ArgS, Share) ->
   Sensor         = set_params(SensorSet, no_sensor),
   SensorFile     = set_params(SensorFileSet, no_file),
 
-  ets:insert(Share, [{sensor, Sensor}]),
-  ets:insert(Share, [{sensor_file, SensorFile}]),
-  ets:insert(Share, [{save_file, SaveFile}]),
+  ShareID = #sm{share = Share},
+  share:put(ShareID, [{sensor, Sensor}, {sensor_file, SensorFile}, {save_file, SaveFile}]),
 
   Sensor.
 
