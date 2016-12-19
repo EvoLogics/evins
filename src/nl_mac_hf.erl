@@ -1327,34 +1327,30 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
       Path
   end,
 
-  case Time of
-    nothing when QName =/= st_data ->
-      Tuple = {Role, BPath, 0.0, 1, TSC},
-      add_item_to_queue_nd(SM, QName, Tuple, 300);
-    _ when QName =/= st_data ->
-      TDiff = erlang:monotonic_time(micro_seconds) - Time,
-      CTDiff = convert_t(TDiff, {us, s}),
-      Tuple = {Role, BPath, CTDiff, 1, TSC},
-      add_item_to_queue_nd(SM, QName, Tuple, 300);
-    nothing when QName =:= st_data ->
-      {P, Dst, Count_hops, St} = BPath,
-      Tuple = {Role, P, 0.0, byte_size(P), St, TSC, Dst, Count_hops},
-      add_item_to_queue_nd(SM, QName, Tuple, 300);
-    _ when QName =:= st_data ->
-      {P, Dst, Count_hops, St} = BPath,
-      TDiff = erlang:monotonic_time(micro_seconds) - Time,
-      CTDiff = convert_t(TDiff, {us, s}),
-      Tuple = {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops},
-      add_item_to_queue_nd(SM, QName, Tuple, 300)
-  end.
+  Tuple = case {QName, Time} of
+            {st_data, nothing} ->
+              {P, Dst, Count_hops, St} = BPath,
+              {Role, P, 0.0, byte_size(P), St, TSC, Dst, Count_hops};
+            {st_data, _} ->
+              {P, Dst, Count_hops, St} = BPath,
+              TDiff = erlang:monotonic_time(micro_seconds) - Time,
+              CTDiff = convert_t(TDiff, {us, s}),
+              {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops},
+            {_, nothing} ->
+              {Role, BPath, 0.0, 1, TSC};
+            _ ->
+              TDiff = erlang:monotonic_time(micro_seconds) - Time,
+              CTDiff = convert_t(TDiff, {us, s}),
+              {Role, BPath, CTDiff, 1, TSC};
+          end,
+  add_item_to_queue_nd(SM, QName, Tuple, 300);
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
   Q = share:get(SM, Qname),
-
   NewQ=
   case queue:len(Q) of
     Len when Len >= Max ->
-      {_, Queue_out} = queue:out(Q), Queue_out;
+      queue:drop(Q);
     _ -> Q
   end,
   case Qname of
@@ -1363,6 +1359,7 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
     _ ->
       {R, NP, NT, _, NewTS} = Item,
 
+      %% Role,P - key
       L = lists:map(fun({Role, P, T, Count, TS}) when P == NP, R == Role, T > 0 ->
                         {Role, P, (T + NT) / 2, Count + 1, TS};
                        ({Role, P, 0, Count, TS}) when P == NP, R == Role ->
@@ -1375,6 +1372,7 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
         false -> queue:from_list(L)
       end,
 
+      % FIXME: just modify TS -> NewTS with Role,P key in the map above
       NUQ = lists:map(fun({Role, P, T, Count, _}) when R == Role -> {Role, P, T, Count, NewTS};
                          (Tuple) -> Tuple
                       end, queue:to_list(QQ)),
