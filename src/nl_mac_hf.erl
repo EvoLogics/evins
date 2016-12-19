@@ -1363,19 +1363,12 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
     _ ->
       {R, NP, NT, _, NewTS} = Item,
 
-      % FIXME: review and remove foldr here
-      L =
-      lists:foldr(
-        fun({Role, P, T, Count, TS},A)->
-          if R =:= Role ->
-               case P of
-                 NP when T > 0 -> [{Role, P, (T + NT) / 2, Count + 1, TS} | A];
-                 NP when T =:= 0.0 -> [{Role, P, T, Count + 1, TS} | A];
-                 _  when T >= 0 -> [{Role, P, T, Count, TS} | A]
-               end;
-             true -> [{Role, P, T, Count, TS} | A]
-          end
-        end,[],queue:to_list(NewQ)),
+      L = lists:map(fun({Role, P, T, Count, TS}) when P == NP, R == Role, T > 0 ->
+                        {Role, P, (T + NT) / 2, Count + 1, TS};
+                       ({Role, P, 0, Count, TS}) when P == NP, R == Role ->
+                        {Role, P, 0, Count + 1, TS};
+                       (Other) -> Other
+                    end, queue:to_list(NewQ)),
       QQ =
       case L =:= queue:to_list(NewQ) of
         true  -> queue:in(Item, NewQ);
