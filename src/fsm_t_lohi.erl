@@ -123,7 +123,9 @@ handle_event(MM, SM, Term) ->
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   ?TRACE(?ID, "State = ~p, Term = ~p~n", [State, Term]),
   case Term of
-    {timeout, answer_timeout} -> SM;
+    {timeout, answer_timeout} ->
+      fsm:cast(SM, alh, {send, {sync, {error, <<"ANSWER TIMEOUT">>} } }),
+      SM;
     {timeout, {backoff_timeout, Msg}} when State =:= backoff_state ->
       init_ct(SM),
       fsm:run_event(MM, SM#sm{event = backoff_end}, {send_tone, Msg});
@@ -139,20 +141,17 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM2, {});
     {timeout, {cr_end, Msg}} ->
       fsm:clear_timeout(SM, {send_tone, Msg});
-    {timeout, {retransmit, {not_delivered, Msg}}} when State =:= blocking_state;
+    {timeout, {retransmit, Msg}} when State =:= blocking_state;
                                                        State =:= backoff_state ->
       SM1 = fsm:clear_timeout(SM, dp_ends),
       Tmo_retransmit = nl_mac_hf:rand_float(SM, tmo_retransmit),
-      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
-    {timeout, {retransmit, {not_delivered, Msg}}} ->
+      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, Msg});
+    {timeout, {retransmit, Msg}} ->
       ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
       SM1 = fsm:clear_timeout(SM, dp_ends),
       [SM2, P] = nl_mac_hf:process_retransmit(SM1, Msg, send_tone),
-      share:put(SM2, data_to_sent, {not_delivered, Msg}),
+      share:put(SM2, data_to_sent, Msg),
       fsm:run_event(MM, SM2, P);
-    {timeout, {retransmit, _Tuple}} ->
-      %nothing, the message has delivered state
-      SM;
     {timeout, Event} ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
@@ -166,20 +165,20 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
     {rcv_ul, Msg={at, _PID, _, _, _, _}} when State =:= idle; State =:= transmit_data ->
-      share:put(SM, data_to_sent, {not_delivered, Msg}),
-      share:put(SM, current_msg, {not_delivered, Msg}),
+      share:put(SM, data_to_sent, Msg),
+      share:put(SM, current_msg, Msg),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       fsm:run_event(MM, SM1#sm{event = transmit_ct}, {send_tone, Msg});
     {rcv_ul, Msg={at, _PID, _, _, _, _}} ->
-      share:put(SM, data_to_sent, {not_delivered, Msg}),
-      share:put(SM, current_msg, {not_delivered, Msg}),
+      share:put(SM, data_to_sent, Msg),
+      share:put(SM, current_msg, Msg),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       fsm:cast(SM1, alh,  {send, {sync, "OK"} }),
       SM;
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
     T =
-    {async, {pid, NPid}, Tuple = {recvim, _, Src, _, _, _, _, _, _, _}} ->
+    {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
       ?TRACE(?ID, "MAC_AT_RECV ~p~n", [Tuple]),
       [H |_] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
@@ -187,16 +186,13 @@ handle_event(MM, SM, Term) ->
       SMsg = list_to_tuple([H | [BPid | tuple_to_list(STuple) ]]),
       fsm:cast(SMN, alh, {send, {async, SMsg} }),
       SMN1 = process_rcv_flag(SMN, Flag),
-      SMN2 = send_multipath(SMN1, Src),
-      fsm:run_event(MM, SMN2, {});
+      fsm:run_event(MM, SMN1, {});
     {async, Tuple} ->
       CR_Time = share:get(SM, cr_time),
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       SMN = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time}, end_of_frame),
       SMN1 = process_ct(SM, SMN, Tuple),
       fsm:run_event(MM, SMN1, {});
-    {sync, "?P", Answer} ->
-      get_multipath(SM, Term, Answer);
     {sync, _Req, Answer} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
       fsm:cast(SMAT, alh, {send, {sync, Answer} }),
@@ -221,25 +217,21 @@ handle_idle(_MM, SM, Term) ->
 
 handle_blocking_state(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  SM1=
   case share:get(SM, data_to_sent) of
-    {_St, SendT} ->
-      nl_mac_hf:process_send_payload(SM, SendT);
-    _ ->
-      SM#sm{event = eps}
-  end,
-  SM1#sm{event = eps}.
+    nothing ->
+      SM#sm{event = eps};
+    SendT ->
+      nl_mac_hf:process_send_payload(SM#sm{event = eps}, SendT)    
+  end.
 
 handle_backoff_state(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  SM1=
   case share:get(SM, data_to_sent) of
-    {_St, SendT} ->
-      nl_mac_hf:process_send_payload(SM, SendT);
-    _ ->
-      SM#sm{event = eps}
-  end,
-  SM1#sm{event = eps}.
+    nothing ->
+      SM#sm{event = eps};
+    SendT ->
+      nl_mac_hf:process_send_payload(SM#sm{event = eps}, SendT)
+  end.
 
 handle_cr(_MM, SMP, Term) ->
   [Param_Term, SM] = nl_mac_hf:event_params(SMP, Term, send_tone),
@@ -261,15 +253,16 @@ handle_cr(_MM, SMP, Term) ->
 handle_transmit_data(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   case share:get(SM, data_to_sent) of
-    {_St, SendT} ->
+    nothing ->
+      SM#sm{event = eps};
+    SendT ->
       share:clean(SM, data_to_sent),
       ?TRACE(?ID, "MAC_AT_SEND ~p~n", [SendT]),
       nl_mac_hf:send_mac(SM, at, data, SendT),
       CR_Time = share:get(SM, cr_time),
       R = CR_Time * rand:uniform(),
       SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, dp_ends),
-      nl_mac_hf:process_send_payload(SM1, SendT);
-    _ -> SM#sm{event = eps}
+      nl_mac_hf:process_send_payload(SM1, SendT)
   end.
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
@@ -354,23 +347,3 @@ process_rcv_flag(SM, Flag) ->
     data ->
       SM#sm{event = rcv_data}
   end.
-
-send_multipath(SM, Src) ->
-  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
-  if Answer_timeout == false ->
-    SMT = SM#sm{event_params = {recv, Src}},
-    fsm:send_at_command(SMT, {at, "?P", ""});
-  true -> SM
-  end.
-
-get_multipath(SM, Term, Answer) ->
-  SMAT = fsm:clear_timeout(SM, answer_timeout),
-  LA = share:get(SM, local_address),
-  [Event_params, SMP] = nl_mac_hf:event_params(SMAT, Term, recv),
-  case Event_params of
-    {recv, Src} ->
-      ?TRACE(?ID, "Multipath LA ~p from ~p : ~p~n", [LA, Src, Answer]);
-    _ -> nothing
-  end,
-  fsm:cast(SMP, alh, {send, {sync, Answer} }),
-  SMP.
