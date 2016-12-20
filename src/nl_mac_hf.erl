@@ -601,7 +601,7 @@ set_dst_addr({nl, send, _, Data}, Addr) -> {nl, send, Addr, Data}.
 
 addr_nl2mac(SM, ListAddr) when is_list(ListAddr) ->
   lists:map(fun(Addr) -> addr_nl2mac(SM, Addr) end, ListAddr);
-addr_nl2mac(SM, NLAddr) when is_integer(NLAddr) ->
+addr_nl2mac(SM, NLAddr) ->
   case lists:keyfind(NLAddr, 1, share:get(SM, table_nl_mac_addrs)) of
     {_, MACAddr} -> MACAddr;
     _ -> error
@@ -630,10 +630,11 @@ get_routing_addr(SM, Flag, AddrSrc) ->
   end.
 
 find_in_routing_table(?BITS_ADDRESS_MAX, _) -> ?BITS_ADDRESS_MAX;
+find_in_routing_table([], _) -> no_routing_table;
 find_in_routing_table(Routing_table, AddrSrc) ->
   case lists:keyfind(AddrSrc, 1, Routing_table) of
     {_, To} -> To;
-    false -> no_routing_table
+    false -> ?BITS_ADDRESS_MAX
   end.
 
 convert_la(SM, Type, Format) ->
@@ -1089,7 +1090,7 @@ add_item_to_queue(SM, Qname, Item, Max) ->
 %%--------------------------------------------------  Only MAC functions -------------------------------------------
 process_rcv_payload(SM, nothing, _Payload) ->
   SM;
-process_rcv_payload(SM, {_State, Current_msg}, RcvPayload) ->
+process_rcv_payload(SM, Current_msg, RcvPayload) ->
   [PFlag, SM1, HRcvPayload] =
   case parse_payload(SM, RcvPayload) of
     [relay, Payload] ->
@@ -1115,7 +1116,7 @@ parse_payload(SM, Payload) ->
   catch error: _Reason -> [relay, Payload]
   end.
 
-check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
+check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, _Current_msg) ->
   HCurrentPayload = {PkgID, Dst, Src},
   RevCurrentPayload = {PkgID, Src, Dst},
   ExaxtTheSame = (HCurrentPayload == HRcvPayload),
@@ -1123,7 +1124,8 @@ check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, Current_msg) ->
   AckReversed = (( Flag == ack ) and (RevCurrentPayload == HRcvPayload)),
 
   if (ExaxtTheSame or IfDstReached or AckReversed) ->
-       share:put(SM, current_msg, {delivered, Current_msg}),
+       %share:put(SM, current_msg, {delivered, Current_msg}),
+       share:clean(SM, current_msg),
        clear_spec_timeout(SM, retransmit);
     true ->
        SM
@@ -1146,7 +1148,7 @@ process_send_payload(SM, Msg) ->
     [Flag, _P] when Flag == reverse; Flag == relay; Flag =:= ack ->
       SM1 = clear_spec_timeout(SM, retransmit),
       Tmo_retransmit = rand_float(SM, tmo_retransmit),
-      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, {not_delivered, Msg}});
+      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, Msg});
     [dst, _P] ->
       SM;
     _ ->
@@ -1335,15 +1337,15 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
               {P, Dst, Count_hops, St} = BPath,
               TDiff = erlang:monotonic_time(micro_seconds) - Time,
               CTDiff = convert_t(TDiff, {us, s}),
-              {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops},
+              {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops};
             {_, nothing} ->
               {Role, BPath, 0.0, 1, TSC};
             _ ->
               TDiff = erlang:monotonic_time(micro_seconds) - Time,
               CTDiff = convert_t(TDiff, {us, s}),
-              {Role, BPath, CTDiff, 1, TSC};
+              {Role, BPath, CTDiff, 1, TSC}
           end,
-  add_item_to_queue_nd(SM, QName, Tuple, 300);
+  add_item_to_queue_nd(SM, QName, Tuple, 300).
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
   Q = share:get(SM, Qname),

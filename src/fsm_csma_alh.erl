@@ -115,16 +115,19 @@
                  ]},
 
                 {write_alh,
-                 [{data_sent, idle}
+                 [{data_sent, sp},
+                  {internal, idle}
                  ]},
 
                 {sp,
                  [{backoff_timeout, sp},
+                  {busy,  sp},
                   {rcv_ul,  sp},
                   {sendstart, sp},
                   {recvstart, sp},
                   {sendend, idle},
-                  {recvend, idle}
+                  {recvend, idle},
+                  {error, idle}
                  ]},
 
                 {alarm,
@@ -143,57 +146,60 @@ stop(_SM)      -> ok.
 
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
-  ?INFO(?ID, "HANDLE EVENT~n", []),
+  ?INFO(?ID, "HANDLE EVENT  ~p   ~p ~n", [MM, SM]),
   ?TRACE(?ID, "~p~n", [Term]),
   case Term of
     {timeout, answer_timeout} ->
+      fsm:cast(SM, alh, {send, {sync, {error, <<"ANSWER TIMEOUT">>} } }),
       SM;
-    {timeout, {retransmit, {not_delivered, Msg}}} ->
+    {timeout, {retransmit, Msg}} ->
       ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
       [SM1, P] = nl_mac_hf:process_retransmit(SM, Msg, rcv_ul),
       fsm:run_event(MM, SM1, P);
-    {timeout, {retransmit, _Tuple}} ->
-      %nothing, the message has delivered state
-      SM;
     {timeout, Event} ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
-    {rcv_ul, {other, Msg}} ->
-      fsm:send_at_command(SM, {at, binary_to_list(Msg), ""});
-    {rcv_ul, {command, C}} ->
-      fsm:send_at_command(SM, {at, binary_to_list(C), ""});
+   % {rcv_ul, {other, Msg}} ->
+   %   try_send_at_command(SM, {at, binary_to_list(Msg), ""});
+   % {rcv_ul, {command, C}} ->
+   %   try_send_at_command(SM, {at, binary_to_list(C), ""});
     {rcv_ul, {at, _, _, _, _}} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
       share:put(SM, {retransmit_count, Msg}, 0),
-      share:put(SM, current_msg, {not_delivered, Msg}),
+      share:put(SM, current_msg, Msg),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       SM2 = nl_mac_hf:process_send_payload(SM1, Msg),
       fsm:run_event(MM, SM2#sm{event = rcv_ul}, {rcv_ul, Msg});
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
-    {async, {pid, NPid}, Tuple = {recvim, _, Src, _, _, _, _, _, _, Payload}} ->
+    {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, Payload}} ->
       ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [Tuple]),
       Current_msg = share:get(SM, current_msg),
       SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Payload),
       [H | T] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
       fsm:cast(SM, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
-      SM2 = send_multipath(SM1, Src),
-      fsm:run_event(MM, SM2, {});
+      fsm:run_event(MM, SM1, {});
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       Ev = process_async(SM, Tuple),
       fsm:run_event(MM, SM#sm{event = Ev}, {});
-    {sync, "?P", Answer} ->
-      get_multipath(SM, Term, Answer);
+    {sync, _, {error, _}} ->
+      fsm:run_event(MM, SM#sm{event = error}, {});
+    {sync, _, {busy, _}} ->
+      Current_msg = share:get(SM, current_msg),
+      fsm:run_event(MM, SM#sm{event = busy}, {rcv_ul, Current_msg});
     {sync, _Req, Answer} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
-      fsm:cast(SMAT, alh, {send, {sync, Answer} }),
-      SMAT;
+      fsm:cast(SMAT, alh, {send, {sync, Answer} });
+      % TODO:
+      %[fsm:clear_timeout(__, answer_timeout),
+      % fsm:cast(__, alh, {send, {sync, Answer}})
+      %] (SM);
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -224,21 +230,23 @@ handle_sp(_MM, SM, Term) ->
     _ -> SM#sm{event = eps}
   end.
 
-handle_write_alh(_MM, SM, Term) ->
+handle_write_alh(_MM, #sm{event = backoff_timeout} = SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   SM1 = fsm:clear_timeout(SM, backoff_timeout),
-  change_backoff(SM, decrement),
-  case Term of
-    {rcv_ul, Msg} ->
-      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
-      fsm:send_at_command(SM1, Msg),
-      SM1#sm{event = data_sent};
-    _ when SM#sm.event =:= backoff_timeout ->
-      {_State, Current_msg} = share:get(SM1, current_msg),
-      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Current_msg]),
-      fsm:send_at_command(SM1, Current_msg),
-      SM1#sm{event = data_sent}
-  end.
+  change_backoff(SM1, decrement),
+  case share:get(SM1, current_msg) of
+    nothing ->
+      SM1#sm{event = internal};
+    Msg ->
+     ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
+     fsm:set_event(fsm:send_at_command(SM, Msg), data_sent)
+   end;
+handle_write_alh(_MM, SM, Term = {rcv_ul, Msg}) ->
+  ?TRACE(?ID, "~120p~n", [Term]),
+  SM1 = fsm:clear_timeout(SM, backoff_timeout),
+  change_backoff(SM1, decrement),
+  ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
+  fsm:set_event(fsm:send_at_command(SM, Msg), data_sent).
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
@@ -288,24 +296,3 @@ process_async(_SM, Tuple) ->
     _ ->
       eps
   end.
-
-
-send_multipath(SM, Src) ->
-  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
-  if Answer_timeout == false ->
-    SMT = SM#sm{event_params = {recv, Src}},
-    fsm:send_at_command(SMT, {at, "?P", ""});
-  true -> SM
-  end.
-
-get_multipath(SM, Term, Answer) ->
-  SMAT = fsm:clear_timeout(SM, answer_timeout),
-  LA = share:get(SM, local_address),
-  [Event_params, SMP] = nl_mac_hf:event_params(SMAT, Term, recv),
-  case Event_params of
-    {recv, Src} ->
-      ?TRACE(?ID, "Multipath LA ~p from ~p : ~p~n", [LA, Src, Answer]);
-    _ -> nothing
-  end,
-  fsm:cast(SMP, alh, {send, {sync, Answer} }),
-  SMP.
