@@ -1117,6 +1117,8 @@ parse_payload(SM, Payload) ->
   catch error: _Reason -> [relay, Payload]
   end.
 
+check_payload(SM, _, <<"t">>, _) ->
+  SM;
 check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}) ->
   HCurrentPayload = {PkgID, Dst, Src},
   RevCurrentPayload = {PkgID, Src, Dst},
@@ -1144,6 +1146,7 @@ check_dst(Flag) ->
 
 process_send_payload(SM, Msg) ->
   {at, _PID, _, _, _, Payload} = Msg,
+  share:clean(SM, data_to_sent),
   case parse_payload(SM, Payload) of
     [Flag, _P] when Flag == reverse; Flag == relay; Flag =:= ack ->
       SM1 = clear_spec_timeout(SM, retransmit),

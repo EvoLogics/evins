@@ -214,7 +214,6 @@ handle_event(MM, SM, Term) ->
 
 init_mac(SM) ->
   rand:seed(exsplus, erlang:timestamp()),
-  %share:put(SM, retransmit_count, 0),
   init_ct(SM).
 
 handle_idle(_MM, SM, _Term) when SM#sm.event =:= internal ->
@@ -264,7 +263,6 @@ handle_transmit_data(_MM, SM, Term) ->
     _ when SM#sm.event == busy->
       fsm:set_timeout(SM#sm{event = eps}, {ms, 50}, busy_handle);
     SendT ->
-      share:clean(SM, data_to_sent),
       ?TRACE(?ID, "MAC_AT_SEND ~p~n", [SendT]),
       nl_mac_hf:send_mac(SM, at, data, SendT),
       CR_Time = share:get(SM, cr_time),
