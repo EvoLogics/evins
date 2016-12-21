@@ -280,7 +280,7 @@ create_payload_nl_flag(Flag, PkgID, Src, Dst, Data) ->
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
 
   if Data_bin =:= false ->
-    Add = 8 - bit_size(TmpData) rem 8,
+    Add = (8 - bit_size(TmpData) rem 8) rem 8,
     <<BFlag/bitstring, BPkgID/bitstring, BSrc/bitstring, BDst/bitstring, 0:Add, Data/binary>>;
   true ->
     TmpData
@@ -295,7 +295,7 @@ create_payload_mac_flag(Flag, Data) ->
   TmpData = <<BFlag/bitstring, Data/binary>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
-    Add = 8 - bit_size(TmpData) rem 8,
+    Add = (8 - bit_size(TmpData) rem 8) rem 8,
     <<BFlag/bitstring, 0:Add, Data/binary>>;
   true ->
     TmpData
@@ -350,7 +350,7 @@ create_data(TransmitLen, Data) ->
   BLenData = <<TransmitLen:CBitsMaxLenData>>,
 
   BHeader = <<BType/bitstring, BLenData/bitstring>>,
-  Add = 8 - (bit_size(BHeader)) rem 8,
+  Add = (8 - (bit_size(BHeader)) rem 8) rem 8,
   <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 %%----------------NL functions create/extract protocol header-------------------
@@ -370,7 +370,7 @@ create_path_data(Path, TransmitLen, Data) ->
   BPath = code_header(path, Path),
 
   BHeader = <<BType/bitstring, BLenData/bitstring, BLenPath/bitstring, BPath/bitstring>>,
-  Add = 8 - (bit_size(BHeader)) rem 8,
+  Add = (8 - (bit_size(BHeader)) rem 8) rem 8,
   <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 extract_path_data(SM, Payl) ->
@@ -429,7 +429,6 @@ code_header(add, AddInfos) ->
   Saturated_integrities = lists:map(fun(S) when S > 255 -> 255; (S) -> S end, AddInfos),
   << <<N:W>> || N <- Saturated_integrities>>.
 
-
 parse_path_data(SM, Payl) ->
   try
     MAC_addr = convert_la(SM, integer, mac),
@@ -453,7 +452,7 @@ create_ack(CountHops) ->
   BCountHops = <<CountHops:CBitsLenPath>>,
   Data_bin = is_binary(BCountHops) =:= false or ( (bit_size(BCountHops) rem 8) =/= 0),
   if Data_bin =:= false ->
-     Add = 8 - bit_size(BCountHops) rem 8,
+     Add = (8 - bit_size(BCountHops) rem 8) rem 8,
      <<BCountHops/bitstring, 0:Add>>;
    true ->
      BCountHops
@@ -481,7 +480,7 @@ create_neighbours(Neighbours) ->
   TmpData = <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
-     Add = 8 - bit_size(TmpData) rem 8,
+     Add = (8 - bit_size(TmpData) rem 8) rem 8,
      <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring, 0:Add>>;
    true ->
      TmpData
@@ -507,7 +506,7 @@ create_neighbours_path(Neighbours, Path) ->
               BLenPath/bitstring, BPath/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
-     Add = 8 - bit_size(TmpData) rem 8,
+     Add = (8 - bit_size(TmpData) rem 8) rem 8,
      <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring,
        BLenPath/bitstring, BPath/bitstring, 0:Add>>;
    true ->
@@ -558,7 +557,7 @@ create_path_addit(Path, Additional) ->
             BLenAdd/bitstring, BAdd/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
-     Add = 8 - bit_size(TmpData) rem 8,
+     Add = (8 - bit_size(TmpData) rem 8) rem 8,
      <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
             BLenAdd/bitstring, BAdd/bitstring, 0:Add>>;
    true ->
@@ -921,10 +920,11 @@ process_pkg_id(SM, ATParams, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
           Queue_ids
       end,
       NTuple = {ATParams, Tuple},
+
       case queue:member(NTuple, NewQ) of
         true  ->
           share:put(SM, queue_ids, NewQ),
-          not_processed;
+          processed;
         false ->
           % check if same package was received from other src dst,
           % if yes  -> share:put(SM, queue_ids, NewQ), processed
@@ -1090,9 +1090,10 @@ add_item_to_queue(SM, Qname, Item, Max) ->
 %%--------------------------------------------------  Only MAC functions -------------------------------------------
 process_rcv_payload(SM, nothing, _Payload) ->
   SM;
-process_rcv_payload(SM, Current_msg, RcvPayload) ->
+process_rcv_payload(SM, CurrentMsg, RcvPayload) ->
+  PP = parse_payload(SM, RcvPayload),
   [PFlag, SM1, HRcvPayload] =
-  case parse_payload(SM, RcvPayload) of
+  case PP of
     [relay, Payload] ->
       [relay, SM, Payload];
     [reverse, Payload] ->
@@ -1103,9 +1104,9 @@ process_rcv_payload(SM, Current_msg, RcvPayload) ->
       [dst, clear_spec_timeout(SM, retransmit), Payload]
   end,
 
-  {at, _PID, _, _, _, CurrentPayload} = Current_msg,
+  {at, _PID, _, _, _, CurrentPayload} = CurrentMsg,
   [_CRole, HCurrentPayload] = parse_payload(SM, CurrentPayload),
-  check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload, Current_msg).
+  check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload).
 
 parse_payload(SM, Payload) ->
   try
@@ -1116,21 +1117,20 @@ parse_payload(SM, Payload) ->
   catch error: _Reason -> [relay, Payload]
   end.
 
-check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, _Current_msg) ->
+check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}) ->
   HCurrentPayload = {PkgID, Dst, Src},
   RevCurrentPayload = {PkgID, Src, Dst},
-  ExaxtTheSame = (HCurrentPayload == HRcvPayload),
+  ExactTheSame = (HCurrentPayload == HRcvPayload),
   IfDstReached = (Flag == dst),
   AckReversed = (( Flag == ack ) and (RevCurrentPayload == HRcvPayload)),
 
-  if (ExaxtTheSame or IfDstReached or AckReversed) ->
-       %share:put(SM, current_msg, {delivered, Current_msg}),
+  if (ExactTheSame or IfDstReached or AckReversed) ->
        share:clean(SM, current_msg),
        clear_spec_timeout(SM, retransmit);
     true ->
        SM
   end;
-check_payload(SM, _, _, _, _) ->
+check_payload(SM, _, _, _) ->
   SM.
 
 check_dst(Flag) ->

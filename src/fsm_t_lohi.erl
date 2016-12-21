@@ -90,7 +90,9 @@
                   {end_of_frame, cr},
                   {dp_ends, cr},
                   {no_ct, transmit_data},
-                  {ct_exist, backoff_state}
+                  {ct_exist, backoff_state},
+                  {error, idle},
+                  {busy, backoff_state}
                  ]},
 
                 {transmit_data,
@@ -99,7 +101,10 @@
                   {end_of_frame, transmit_data},
                   {rcv_ct, transmit_data},
                   {rcv_data, transmit_data},
-                  {send_tone, cr}
+                  {send_tone, cr},
+                  {error, idle},
+                  {busy, transmit_data},
+                  {busy_handle, transmit_data}
                  ]},
 
                 {alarm,
@@ -142,7 +147,7 @@ handle_event(MM, SM, Term) ->
     {timeout, {cr_end, Msg}} ->
       fsm:clear_timeout(SM, {send_tone, Msg});
     {timeout, {retransmit, Msg}} when State =:= blocking_state;
-                                                       State =:= backoff_state ->
+                                      State =:= backoff_state ->
       SM1 = fsm:clear_timeout(SM, dp_ends),
       Tmo_retransmit = nl_mac_hf:rand_float(SM, tmo_retransmit),
       fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, Msg});
@@ -157,10 +162,10 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
-    {rcv_ul, {other, Msg}} ->
-      fsm:send_at_command(SM, {at, binary_to_list(Msg), ""});
-    {rcv_ul, {command, C}} ->
-      fsm:send_at_command(SM, {at, binary_to_list(C), ""});
+    % {rcv_ul, {other, Msg}} ->
+    %   fsm:send_at_command(SM, {at, binary_to_list(Msg), ""});
+    % {rcv_ul, {command, C}} ->
+    %   fsm:send_at_command(SM, {at, binary_to_list(C), ""});
     {rcv_ul, {at, _, _, _, _}} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
@@ -193,6 +198,11 @@ handle_event(MM, SM, Term) ->
       SMN = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time}, end_of_frame),
       SMN1 = process_ct(SM, SMN, Tuple),
       fsm:run_event(MM, SMN1, {});
+    {sync, _, {error, _}} ->
+      fsm:run_event(MM, SM#sm{event = error}, {});
+    {sync, _, {busy, _}} ->
+      Current_msg = share:get(SM, current_msg),
+      fsm:run_event(MM, SM#sm{event = busy}, {rcv_ul, Current_msg});
     {sync, _Req, Answer} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
       fsm:cast(SMAT, alh, {send, {sync, Answer} }),
@@ -238,10 +248,6 @@ handle_cr(_MM, SMP, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   SM1 = fsm:clear_timeout(SM, dp_ends),
   case Param_Term of
-    {send_tone, {_St, Msg}} ->
-      SM2 = nl_mac_hf:send_helpers(SM1, at, Msg, tone),
-      Cr_time = share:get(SM2, cr_time),
-      fsm:set_timeout(SM2#sm{event = eps}, {ms, Cr_time}, {cr_end, Msg});
     {send_tone, Msg} ->
       SM2 = nl_mac_hf:send_helpers(SM1, at, Msg, tone),
       Cr_time = share:get(SM2, cr_time),
@@ -255,6 +261,8 @@ handle_transmit_data(_MM, SM, Term) ->
   case share:get(SM, data_to_sent) of
     nothing ->
       SM#sm{event = eps};
+    _ when SM#sm.event == busy->
+      fsm:set_timeout(SM#sm{event = eps}, {ms, 50}, busy_handle);
     SendT ->
       share:clean(SM, data_to_sent),
       ?TRACE(?ID, "MAC_AT_SEND ~p~n", [SendT]),
@@ -325,8 +333,7 @@ process_recv(SM, T) ->
     [BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
     Flag = nl_mac_hf:num2flag(BFlag, mac),
     ShortTuple = {Len - LenAdd, P1, P2, P3, P4, P5, P6, P7, Data},
-    Current_msg = share:get(SM, current_msg),
-    SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Data),
+    SM1 = nl_mac_hf:process_rcv_payload(SM, share:get(SM, current_msg), Data),
     [SM1, {Flag, ShortTuple}].
 
 process_rcv_flag(SM, Flag) ->
