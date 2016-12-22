@@ -510,14 +510,13 @@ handle_wpath(_MM, SM, Term) ->
         nothing ->
           SM#sm{event = eps};
         [SM1, SDParams, SDTuple]  ->
-          SM2 = nl_mac_hf:save_stat_total(SM1, source),
-          SM3 = fsm:clear_timeout(SM2, {wpath_timeout, {Packet_id, Real_src, Real_dst}}),
-          case nl_mac_hf:get_routing_addr(SM3, path, Real_dst) of
+          SM2 = fsm:clear_timeout(SM1, {wpath_timeout, {Packet_id, Real_src, Real_dst}}),
+          case nl_mac_hf:get_routing_addr(SM2, path, Real_dst) of
             ?BITS_ADDRESS_MAX when not Protocol#pr_conf.brp ->
               %% path can not have broadcast addrs, because these addrs have bidirectional links
-              SM3#sm{event=error, event_params={error, {Real_dst, Real_src}}};
+              SM2#sm{event=error, event_params={error, {Real_dst, Real_src}}};
             _ ->
-              SM3#sm{event = dst_rcv_path, event_params = {relay_wv, {send, SDParams, SDTuple}} }
+              SM2#sm{event = dst_rcv_path, event_params = {relay_wv, {send, SDParams, SDTuple}} }
           end;
         [SM1, path_not_completed] ->
           SM1#sm{event = eps}

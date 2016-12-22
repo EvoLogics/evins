@@ -193,9 +193,9 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, rec
           CheckDblPath = check_dubl_in_path(ExtrListPath, MAC_addr),
           RCheckDblPath = lists:reverse(CheckDblPath),
 
-          analyse(SMNTmp, paths, ExtrListPath, {Real_src, Real_dst}),
           % FIXME: below lost updated SM value
           SM1 = process_and_update_path(SMNTmp, {Real_src, Real_dst, RCheckDblPath} ),
+          analyse(SMNTmp, paths, RCheckDblPath, {Real_src, Real_dst}),
           [SM1, fill_msg(neighbours_path, {BCN, RCheckDblPath})]
       end,
       send_nl_command(SMN, alh, {path, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BMsg})
@@ -809,6 +809,7 @@ process_and_update_path(SM, {ISrc, IDst, ListPath}) ->
       {true, true, IDst} -> lists:reverse(NLListPath);
       {false, true, _} -> lists:reverse(NLListPath)
     end,
+
   {LSrc, LDst} = lists:splitwith(fun(A) -> A =/= LAddr end, NLOrderListPath),
   LRevSrc = lists:reverse(LSrc),
   case {LSrc, LDst} of
@@ -1223,11 +1224,11 @@ process_command(SM, Debug, Command) ->
         protocols ->
           {nl, Command, Req};
         {protocol, Name} ->
-          {nl, protocol, Asw, get_protocol_info(SM, Name)};
+          {nl, protocol, get_protocol_info(SM, Name)};
         neighbours ->
-          {nl, neighbours, Asw, neighbours_to_bin(SM, nl)};
+          {nl, neighbours, neighbours_to_bin(SM, nl)};
         routing ->
-          {nl, routing, Asw, routing_to_bin(SM)};
+          {nl, routing, routing_to_bin(SM)};
         state ->
           {nl, state, Req};
         states ->
@@ -1257,7 +1258,7 @@ get_protocol_info(SM, Name) ->
   list_to_binary(["\nName\t\t: ", BName,"\n", ?PROTOCOL_SPEC(Conf)]).
 
 get_stat_data(SM, Qname) ->
-  lists:map(fun({Role, Payload, Time, Length, State, TS, Dst, Count_hops}) ->
+  lists:map(fun({ {Role, Payload}, Time, Length, State, TS, Dst, Count_hops}) ->
                 TRole = if Role =:= source -> "Source"; true -> "Relay" end,
                 BTime = convert_type_to_bin(Time),
                 list_to_binary(
@@ -1267,7 +1268,7 @@ get_stat_data(SM, Qname) ->
             end, queue:to_list(share:get(SM, Qname))).
 
 get_stat(SM, Qname) ->
-  lists:map(fun({Role, Val, Time, Count, TS}) ->
+  lists:map(fun({ {Role, Val}, Time, Count, TS}) ->
                 TRole = if Role =:= source -> "Source"; true -> "Relay" end,
                 BTime = convert_type_to_bin(Time),
                 Specific = case Qname of
@@ -1332,35 +1333,36 @@ path_to_bin(SM, Path) ->
 analyse(SM, QName, Path, {Real_src, Real_dst}) ->
   {Time, Role, TSC, _Addrs} = get_stats_time(SM, Real_src, Real_dst),
 
-  BPath =
+  [SMN, BPath] =
   case QName of
     paths when Path =:= nothing ->
       <<>>;
     paths ->
-      path_to_bin(SM, Path);
+      SM1 = save_stat_total(SM, Role),
+      [SM1, path_to_bin(SM, Path)];
     st_neighbours ->
-      Path;
+      [SM, Path];
     st_data ->
-      Path
+      [SM, Path]
   end,
 
   Tuple = case {QName, Time} of
             {st_data, nothing} ->
               {P, Dst, Count_hops, St} = BPath,
-              {Role, P, 0.0, byte_size(P), St, TSC, Dst, Count_hops};
+              { {Role, P}, 0.0, byte_size(P), St, TSC, Dst, Count_hops};
             {st_data, _} ->
               {P, Dst, Count_hops, St} = BPath,
               TDiff = erlang:monotonic_time(micro_seconds) - Time,
               CTDiff = convert_t(TDiff, {us, s}),
-              {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops};
+              { {Role, P}, CTDiff, byte_size(P), St, TSC, Dst, Count_hops};
             {_, nothing} ->
-              {Role, BPath, 0.0, 1, TSC};
+              { {Role, BPath}, 0.0, 1, TSC};
             _ ->
               TDiff = erlang:monotonic_time(micro_seconds) - Time,
               CTDiff = convert_t(TDiff, {us, s}),
-              {Role, BPath, CTDiff, 1, TSC}
+              { {Role, BPath}, CTDiff, 1, TSC}
           end,
-  add_item_to_queue_nd(SM, QName, Tuple, 300).
+  add_item_to_queue_nd(SMN, QName, Tuple, 300).
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
   Q = share:get(SM, Qname),
@@ -1375,13 +1377,15 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
     st_data ->
       share:put(SM, Qname, queue:in(Item, NewQ));
     _ ->
-      {R, NP, NT, _, NewTS} = Item,
+      { {R, NP}, NT, _, NewTS} = Item,
 
       %% Role,P - key
-      L = lists:map(fun({Role, P, T, Count, _TS}) when P == NP, R == Role, T > 0 ->
-                        {Role, P, (T + NT) / 2, Count + 1, NewTS};
-                       ({Role, P, 0.0, Count, _TS}) when P == NP, R == Role ->
-                        {Role, P, 0.0, Count + 1, NewTS };
+      L = lists:map(fun({{Role, P}, T, Count, _TS}) when P == NP, R == Role, T > 0 ->
+                        {{Role, P}, (T + NT) / 2, Count + 1, NewTS};
+                       ({{Role, P}, 0.0, Count, _TS}) when P == NP, R == Role ->
+                        {{Role, P}, 0.0, Count + 1, NewTS };
+                       %({Key, T, Count, _TS}) ->
+                       % {Key, T, Count, NewTS };
                        (Other) -> Other
                     end, queue:to_list(NewQ)),
       QQ =
