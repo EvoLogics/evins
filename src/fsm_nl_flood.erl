@@ -310,8 +310,8 @@ init_flood(SM) ->
                  {packet_id, 0},
                  {path_exists, false},
                  {list_current_wvp, []},
-                 {s_total_sent, 0},
-                 {r_total_sent, 0},
+                 {s_total_sent, 1},
+                 {r_total_sent, 1},
                  {queue_ids, queue:new()},
                  {last_states, queue:new()},
                  {pr_states, queue:new()},
@@ -505,23 +505,19 @@ handle_wpath(_MM, SM, Term) ->
       end;
     {dst_reached, {path, Params = [Packet_id, _, _]}, Tuple = {async,{nl,recv, Real_dst, Real_src, Data}}} ->
       ?TRACE(?ID, "Path tuple on src ~120p~n", [Data]),
-      Res =
-      try
-        nl_mac_hf:prepare_send_path(SM, Params, Tuple)
-      catch error: _Reason ->
-        nothing
-      end,
+      Res = nl_mac_hf:prepare_send_path(SM, Params, Tuple),
       case Res of
         nothing ->
           SM#sm{event = eps};
         [SM1, SDParams, SDTuple]  ->
-          SM2 = fsm:clear_timeout(SM1, {wpath_timeout, {Packet_id, Real_src, Real_dst}}),
-          case nl_mac_hf:get_routing_addr(SM2, path, Real_dst) of
+          SM2 = nl_mac_hf:save_stat_total(SM1, source),
+          SM3 = fsm:clear_timeout(SM2, {wpath_timeout, {Packet_id, Real_src, Real_dst}}),
+          case nl_mac_hf:get_routing_addr(SM3, path, Real_dst) of
             ?BITS_ADDRESS_MAX when not Protocol#pr_conf.brp ->
               %% path can not have broadcast addrs, because these addrs have bidirectional links
-              SM2#sm{event=error, event_params={error, {Real_dst, Real_src}}};
+              SM3#sm{event=error, event_params={error, {Real_dst, Real_src}}};
             _ ->
-              SM2#sm{event = dst_rcv_path, event_params = {relay_wv, {send, SDParams, SDTuple}} }
+              SM3#sm{event = dst_rcv_path, event_params = {relay_wv, {send, SDParams, SDTuple}} }
           end;
         [SM1, path_not_completed] ->
           SM1#sm{event = eps}
@@ -555,8 +551,8 @@ process_send(SM, Tuple) ->
     error;
    true ->
      MAC_addr  = nl_mac_hf:addr_nl2mac(SM, Local_address),
-     share:get(SM, current_pkg, Tuple),
-     nl_mac_hf:save_stat(SM, {MAC_addr, Dst}, source),
+     share:put(SM, current_pkg, Tuple),
+     nl_mac_hf:save_stat_time(SM, {MAC_addr, Dst}, source),
      case (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) of
        true ->
          NTuple = {nl, send, Dst, nl_mac_hf:fill_msg(path_data, {TransmitLen, Data, [MAC_addr]})},
@@ -663,7 +659,9 @@ parse_rcv(SM, RcvParams, PayloadTail) ->
   try
     DataParams = nl_mac_hf:extract_payload_nl_flag(PayloadTail),
     process_rcv_wv(SM, RcvParams, DataParams)
-  catch error: _Reason -> [SM, nothing]
+  catch error: Reason ->
+    ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
+    [SM, nothing]
   end.
 
 process_rcv_wv(SM, RcvParams, DataParams) ->
@@ -779,7 +777,7 @@ process_send_flag(SM, Params, Tuple) ->
   Protocol    = share:get(SM, protocol_config, share:get(SM, np)),
   Local_address = share:get(SM, local_address),
   Real_dst     = nl_mac_hf:get_dst_addr(Tuple),
-  nl_mac_hf:save_stat(SM, {Real_src, Real_dst}, relay),
+  nl_mac_hf:save_stat_time(SM, {Real_src, Real_dst}, relay),
   case Flag of
     data when (Protocol#pr_conf.ry_only and Protocol#pr_conf.pf) ->
       Rtt = nl_mac_hf:getRTT(SM, {rtt, Real_src, Real_dst}),

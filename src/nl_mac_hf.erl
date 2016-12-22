@@ -58,7 +58,7 @@
 %% RTT functions
 -export([getRTT/2, smooth_RTT/3]).
 %% command functions
--export([process_command/3, save_stat/3, update_states_list/1]).
+-export([process_command/3, save_stat_time/3, update_states_list/1, save_stat_total/2]).
 %% Only MAC functions
 -export([process_rcv_payload/3, process_send_payload/2, process_retransmit/3]).
 %% Other functions
@@ -193,10 +193,10 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, rec
           CheckDblPath = check_dubl_in_path(ExtrListPath, MAC_addr),
           RCheckDblPath = lists:reverse(CheckDblPath),
 
-          analyse(SM, paths, ExtrListPath, {Real_src, Real_dst}),
+          analyse(SMNTmp, paths, ExtrListPath, {Real_src, Real_dst}),
           % FIXME: below lost updated SM value
-          process_and_update_path(SM, {Real_src, Real_dst, RCheckDblPath} ),
-          [SMNTmp, fill_msg(neighbours_path, {BCN, RCheckDblPath})]
+          SM1 = process_and_update_path(SMNTmp, {Real_src, Real_dst, RCheckDblPath} ),
+          [SM1, fill_msg(neighbours_path, {BCN, RCheckDblPath})]
       end,
       send_nl_command(SMN, alh, {path, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BMsg})
   end.
@@ -232,7 +232,6 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
                  %fsm:cast(SM, nl, {send, AT}),
-                 %io:format("AT ~p ~n ~p~n ", [AT, erlang:process_info(self(), current_stacktrace)]),
                  fill_dets(SM),
                  fsm:set_event(SM1, eps)
             end
@@ -441,7 +440,8 @@ parse_path_data(SM, Payl) ->
         ?TRACE(?ID, "recv parse path data ~p Data ~p~n", [CheckedDblPath, BData]),
         {LenData, BData, CheckedDblPath}
     end
-  catch error: _Reason ->
+  catch error: Reason ->
+    ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
     {Payl, nothing}
   end.
 %%--------------- ack -------------------
@@ -530,7 +530,8 @@ extract_neighbours_path(SM, Payl) ->
           [BType, Neighbours, Path]),
 
     [Neighbours, Path]
-   catch error: _Reason ->
+   catch error: Reason ->
+     ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
      [[], nothing]
    end.
 
@@ -662,7 +663,7 @@ fill_msg(path_addit, {Path, Additional}) ->
 
 prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src, Payload}}) ->
   MAC_addr = convert_la(SM, integer, mac),
-  {nl,send, _, IDst, Data} = share:get(SM, current_pkg),
+  {nl, send, CurrentLen, IDst, Data} = share:get(SM, current_pkg),
 
   [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
   NPathTuple = {ListNeighbours, ListPath},
@@ -675,7 +676,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src
   end,
 
   SDParams = {data, [increase_pkgid(SM), share:get(SM, local_address), PAdditional]},
-  SDTuple = {nl, send, IDst, fill_msg(path_data, {Data, NPath})},
+  SDTuple = {nl, send, IDst, fill_msg(path_data, {CurrentLen, Data, NPath})},
 
   case check_path(SM1, Real_src, Real_dst, NPath) of
     true  -> [SM1, SDParams, SDTuple];
@@ -814,10 +815,11 @@ process_and_update_path(SM, {ISrc, IDst, ListPath}) ->
     {_,[]} ->
       SM;
     {[_],[_]} ->
-      [SM1, NList] =
-      if (ISrc =:= LAddr) -> process_route_table(SM, LDst, IDst, []);
-        true -> process_route_table(SM, LSrc, ISrc, [])
+      {PSrc, Pdst} =
+      if (ISrc =:= LAddr) -> {LDst, IDst};
+        true -> {LSrc, ISrc}
       end,
+      [SM1, NList] = process_route_table(SM, PSrc, Pdst, []),
       update_route_table(SM1, NList);
     {_, _} when length(LSrc) =< 1 -> % FIXME: suspicious condition
       process_route_table_helper(SM, lists:nth(2, LDst), LDst);
@@ -1114,7 +1116,9 @@ parse_payload(SM, Payload) ->
     ?TRACE(?ID, "parse_payload Flag ~p PkgID ~p Dst ~p Src ~p~n",
           [num2flag(Flag, nl), PkgID, Dst, Src]),
     [check_dst(Flag), {PkgID, Dst, Src}]
-  catch error: _Reason -> [relay, Payload]
+  catch error: Reason ->
+    ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
+    [relay, Payload]
   end.
 
 check_payload(SM, _, <<"t">>, _) ->
@@ -1276,16 +1280,24 @@ get_stat(SM, Qname) ->
                    " Total:", integer_to_binary(TS)])
                end, queue:to_list(share:get(SM, Qname))).
 
-save_stat(SM, {ISrc, IDst}, Role)->
+save_stat_total(SM, Role)->
   case Role of
     source ->
       S_total_sent = share:get(SM, s_total_sent),
-      share:put(SM, s_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)}),
       share:put(SM, s_total_sent, S_total_sent + 1);
     relay ->
       R_total_sent = share:get(SM, r_total_sent),
-      share:put(SM, r_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)}),
       share:put(SM, r_total_sent, R_total_sent + 1);
+    _ ->
+      nothing
+  end.
+
+save_stat_time(SM, {ISrc, IDst}, Role)->
+  case Role of
+    source ->
+      share:put(SM, s_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)});
+    relay ->
+      share:put(SM, r_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)});
     _ ->
       nothing
   end.
@@ -1352,6 +1364,7 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
   Q = share:get(SM, Qname),
+
   NewQ=
   case queue:len(Q) of
     Len when Len >= Max ->
@@ -1365,10 +1378,10 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
       {R, NP, NT, _, NewTS} = Item,
 
       %% Role,P - key
-      L = lists:map(fun({Role, P, T, Count, TS}) when P == NP, R == Role, T > 0 ->
-                        {Role, P, (T + NT) / 2, Count + 1, TS};
-                       ({Role, P, 0, Count, TS}) when P == NP, R == Role ->
-                        {Role, P, 0, Count + 1, TS};
+      L = lists:map(fun({Role, P, T, Count, _TS}) when P == NP, R == Role, T > 0 ->
+                        {Role, P, (T + NT) / 2, Count + 1, NewTS};
+                       ({Role, P, 0.0, Count, _TS}) when P == NP, R == Role ->
+                        {Role, P, 0.0, Count + 1, NewTS };
                        (Other) -> Other
                     end, queue:to_list(NewQ)),
       QQ =
@@ -1377,9 +1390,5 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
         false -> queue:from_list(L)
       end,
 
-      % FIXME: just modify TS -> NewTS with Role,P key in the map above
-      NUQ = lists:map(fun({Role, P, T, Count, _}) when R == Role -> {Role, P, T, Count, NewTS};
-                         (Tuple) -> Tuple
-                      end, queue:to_list(QQ)),
-      share:put(SM, Qname, queue:from_list(NUQ))
+      share:put(SM, Qname, QQ)
   end.
