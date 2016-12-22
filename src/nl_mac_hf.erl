@@ -1333,17 +1333,17 @@ path_to_bin(SM, Path) ->
 analyse(SM, QName, Path, {Real_src, Real_dst}) ->
   {Time, Role, TSC, _Addrs} = get_stats_time(SM, Real_src, Real_dst),
 
-  [SMN, BPath] =
+  BPath =
   case QName of
     paths when Path =:= nothing ->
       <<>>;
     paths ->
-      SM1 = save_stat_total(SM, Role),
-      [SM1, path_to_bin(SM, Path)];
+      save_stat_total(SM, Role),
+      path_to_bin(SM, Path);
     st_neighbours ->
-      [SM, Path];
+      Path;
     st_data ->
-      [SM, Path]
+      Path
   end,
 
   Tuple = case {QName, Time} of
@@ -1362,37 +1362,37 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
               CTDiff = convert_t(TDiff, {us, s}),
               { {Role, BPath}, CTDiff, 1, TSC}
           end,
-  add_item_to_queue_nd(SMN, QName, Tuple, 300).
+  add_item_to_queue_nd(SM, QName, Tuple, 300).
 
-add_item_to_queue_nd(SM, Qname, Item, Max) ->
-  Q = share:get(SM, Qname),
-
-  NewQ=
+queue_limited_push(Q, Item, Max) ->
   case queue:len(Q) of
     Len when Len >= Max ->
-      queue:drop(Q);
-    _ -> Q
-  end,
-  case Qname of
-    st_data ->
-      share:put(SM, Qname, queue:in(Item, NewQ));
+      queue:in(Item, queue:drop(Q));
     _ ->
-      { {R, NP}, NT, _, NewTS} = Item,
-
-      %% Role,P - key
-      L = lists:map(fun({{Role, P}, T, Count, _TS}) when P == NP, R == Role, T > 0 ->
-                        {{Role, P}, (T + NT) / 2, Count + 1, NewTS};
-                       ({{Role, P}, 0.0, Count, _TS}) when P == NP, R == Role ->
-                        {{Role, P}, 0.0, Count + 1, NewTS };
-                       %({Key, T, Count, _TS}) ->
-                       % {Key, T, Count, NewTS };
-                       (Other) -> Other
-                    end, queue:to_list(NewQ)),
-      QQ =
-      case L =:= queue:to_list(NewQ) of
-        true  -> queue:in(Item, NewQ);
-        false -> queue:from_list(L)
-      end,
-
-      share:put(SM, Qname, QQ)
+      queue:in(Item, Q)
   end.
+
+add_item_to_queue_nd(SM, st_data, Item, Max) ->
+  Q = share:get(SM, st_data),
+  share:put(SM, st_data, queue_limited_push(Q, Item, Max));
+add_item_to_queue_nd(SM, Qname, {NKey, NT, _, NewTS} = Item, Max) ->
+  Q = share:get(SM, Qname),
+  LQ = queue:to_list(Q),
+  Matched = fun({Key,0.0,_,_}) when Key == NKey, NT == 0.0 -> true;
+               ({Key,_,_,_}) when Key == NKey, NT > 0 -> true;
+               (_) -> false
+            end,
+  QQ = 
+    case lists:any(Matched, LQ) of
+      true ->
+        queue:from_list(
+          lists:map(fun({Key, 0.0, Count, _TS}) when Key == NKey, NT == 0.0 ->
+                        {Key, 0.0, Count + 1, NewTS };
+                       ({Key, T, Count, _TS}) when Key == NKey, NT > 0 ->
+                        {Key, (T + NT) / 2, Count + 1, NewTS};
+                       (Other) -> Other
+                    end, LQ));
+      false ->
+        queue_limited_push(Item, Q, Max)
+    end,
+  share:put(SM, Qname, QQ).
