@@ -77,7 +77,13 @@ parse_conf(ArgS, Share) ->
   Tmo_backoff = set_timeouts(Tmo_backoff_set, {1,3}), %s
   Max_Retry_count = set_params(Max_rc_set, 3),
   {_Tmo_backoff_min, Tmo_backoff_max} = Tmo_backoff,
-  Tmo_retransmit = set_timeouts(Tmo_retransmit_set, {Tmo_backoff_max, 2 * Tmo_backoff_max + 1}),
+  Tmo_retransmit =
+  case Protocol of
+    csma_alh ->
+      set_timeouts(Tmo_retransmit_set, {Tmo_backoff_max, 2 * Tmo_backoff_max + 1});
+    _ ->
+      set_timeouts(Tmo_retransmit_set, {TDect, 2 * TDect + 1})
+  end,
 
   ShareID = #sm{share = Share},
   share:put(ShareID, [{sound_speed, Sound_speed},

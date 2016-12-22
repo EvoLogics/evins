@@ -58,7 +58,7 @@
 %% RTT functions
 -export([getRTT/2, smooth_RTT/3]).
 %% command functions
--export([process_command/3, save_stat/3, update_states_list/1]).
+-export([process_command/3, save_stat_time/3, update_states_list/1, save_stat_total/2]).
 %% Only MAC functions
 -export([process_rcv_payload/3, process_send_payload/2, process_retransmit/3]).
 %% Other functions
@@ -193,10 +193,10 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, rec
           CheckDblPath = check_dubl_in_path(ExtrListPath, MAC_addr),
           RCheckDblPath = lists:reverse(CheckDblPath),
 
-          analyse(SM, paths, ExtrListPath, {Real_src, Real_dst}),
           % FIXME: below lost updated SM value
-          process_and_update_path(SM, {Real_src, Real_dst, RCheckDblPath} ),
-          [SMNTmp, fill_msg(neighbours_path, {BCN, RCheckDblPath})]
+          SM1 = process_and_update_path(SMNTmp, {Real_src, Real_dst, RCheckDblPath} ),
+          analyse(SMNTmp, paths, RCheckDblPath, {Real_src, Real_dst}),
+          [SM1, fill_msg(neighbours_path, {BCN, RCheckDblPath})]
       end,
       send_nl_command(SMN, alh, {path, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BMsg})
   end.
@@ -232,7 +232,6 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
                  %fsm:cast(SM, nl, {send, AT}),
-                 %io:format("AT ~p ~n ~p~n ", [AT, erlang:process_info(self(), current_stacktrace)]),
                  fill_dets(SM),
                  fsm:set_event(SM1, eps)
             end
@@ -280,7 +279,7 @@ create_payload_nl_flag(Flag, PkgID, Src, Dst, Data) ->
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
 
   if Data_bin =:= false ->
-    Add = 8 - bit_size(TmpData) rem 8,
+    Add = (8 - bit_size(TmpData) rem 8) rem 8,
     <<BFlag/bitstring, BPkgID/bitstring, BSrc/bitstring, BDst/bitstring, 0:Add, Data/binary>>;
   true ->
     TmpData
@@ -295,7 +294,7 @@ create_payload_mac_flag(Flag, Data) ->
   TmpData = <<BFlag/bitstring, Data/binary>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
-    Add = 8 - bit_size(TmpData) rem 8,
+    Add = (8 - bit_size(TmpData) rem 8) rem 8,
     <<BFlag/bitstring, 0:Add, Data/binary>>;
   true ->
     TmpData
@@ -350,7 +349,7 @@ create_data(TransmitLen, Data) ->
   BLenData = <<TransmitLen:CBitsMaxLenData>>,
 
   BHeader = <<BType/bitstring, BLenData/bitstring>>,
-  Add = 8 - (bit_size(BHeader)) rem 8,
+  Add = (8 - (bit_size(BHeader)) rem 8) rem 8,
   <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 %%----------------NL functions create/extract protocol header-------------------
@@ -370,7 +369,7 @@ create_path_data(Path, TransmitLen, Data) ->
   BPath = code_header(path, Path),
 
   BHeader = <<BType/bitstring, BLenData/bitstring, BLenPath/bitstring, BPath/bitstring>>,
-  Add = 8 - (bit_size(BHeader)) rem 8,
+  Add = (8 - (bit_size(BHeader)) rem 8) rem 8,
   <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 extract_path_data(SM, Payl) ->
@@ -429,7 +428,6 @@ code_header(add, AddInfos) ->
   Saturated_integrities = lists:map(fun(S) when S > 255 -> 255; (S) -> S end, AddInfos),
   << <<N:W>> || N <- Saturated_integrities>>.
 
-
 parse_path_data(SM, Payl) ->
   try
     MAC_addr = convert_la(SM, integer, mac),
@@ -442,7 +440,8 @@ parse_path_data(SM, Payl) ->
         ?TRACE(?ID, "recv parse path data ~p Data ~p~n", [CheckedDblPath, BData]),
         {LenData, BData, CheckedDblPath}
     end
-  catch error: _Reason ->
+  catch error: Reason ->
+    ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
     {Payl, nothing}
   end.
 %%--------------- ack -------------------
@@ -453,7 +452,7 @@ create_ack(CountHops) ->
   BCountHops = <<CountHops:CBitsLenPath>>,
   Data_bin = is_binary(BCountHops) =:= false or ( (bit_size(BCountHops) rem 8) =/= 0),
   if Data_bin =:= false ->
-     Add = 8 - bit_size(BCountHops) rem 8,
+     Add = (8 - bit_size(BCountHops) rem 8) rem 8,
      <<BCountHops/bitstring, 0:Add>>;
    true ->
      BCountHops
@@ -481,7 +480,7 @@ create_neighbours(Neighbours) ->
   TmpData = <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
-     Add = 8 - bit_size(TmpData) rem 8,
+     Add = (8 - bit_size(TmpData) rem 8) rem 8,
      <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring, 0:Add>>;
    true ->
      TmpData
@@ -507,7 +506,7 @@ create_neighbours_path(Neighbours, Path) ->
               BLenPath/bitstring, BPath/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
-     Add = 8 - bit_size(TmpData) rem 8,
+     Add = (8 - bit_size(TmpData) rem 8) rem 8,
      <<BType/bitstring, BLenNeigbours/bitstring, BNeighbours/bitstring,
        BLenPath/bitstring, BPath/bitstring, 0:Add>>;
    true ->
@@ -531,7 +530,8 @@ extract_neighbours_path(SM, Payl) ->
           [BType, Neighbours, Path]),
 
     [Neighbours, Path]
-   catch error: _Reason ->
+   catch error: Reason ->
+     ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
      [[], nothing]
    end.
 
@@ -558,7 +558,7 @@ create_path_addit(Path, Additional) ->
             BLenAdd/bitstring, BAdd/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
-     Add = 8 - bit_size(TmpData) rem 8,
+     Add = (8 - bit_size(TmpData) rem 8) rem 8,
      <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
             BLenAdd/bitstring, BAdd/bitstring, 0:Add>>;
    true ->
@@ -663,7 +663,7 @@ fill_msg(path_addit, {Path, Additional}) ->
 
 prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src, Payload}}) ->
   MAC_addr = convert_la(SM, integer, mac),
-  {nl,send, _, IDst, Data} = share:get(SM, current_pkg),
+  {nl, send, CurrentLen, IDst, Data} = share:get(SM, current_pkg),
 
   [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
   NPathTuple = {ListNeighbours, ListPath},
@@ -676,7 +676,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src
   end,
 
   SDParams = {data, [increase_pkgid(SM), share:get(SM, local_address), PAdditional]},
-  SDTuple = {nl, send, IDst, fill_msg(path_data, {Data, NPath})},
+  SDTuple = {nl, send, IDst, fill_msg(path_data, {CurrentLen, Data, NPath})},
 
   case check_path(SM1, Real_src, Real_dst, NPath) of
     true  -> [SM1, SDParams, SDTuple];
@@ -809,16 +809,18 @@ process_and_update_path(SM, {ISrc, IDst, ListPath}) ->
       {true, true, IDst} -> lists:reverse(NLListPath);
       {false, true, _} -> lists:reverse(NLListPath)
     end,
+
   {LSrc, LDst} = lists:splitwith(fun(A) -> A =/= LAddr end, NLOrderListPath),
   LRevSrc = lists:reverse(LSrc),
   case {LSrc, LDst} of
     {_,[]} ->
       SM;
     {[_],[_]} ->
-      [SM1, NList] =
-      if (ISrc =:= LAddr) -> process_route_table(SM, LDst, IDst, []);
-        true -> process_route_table(SM, LSrc, ISrc, [])
+      {PSrc, Pdst} =
+      if (ISrc =:= LAddr) -> {LDst, IDst};
+        true -> {LSrc, ISrc}
       end,
+      [SM1, NList] = process_route_table(SM, PSrc, Pdst, []),
       update_route_table(SM1, NList);
     {_, _} when length(LSrc) =< 1 -> % FIXME: suspicious condition
       process_route_table_helper(SM, lists:nth(2, LDst), LDst);
@@ -921,10 +923,11 @@ process_pkg_id(SM, ATParams, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
           Queue_ids
       end,
       NTuple = {ATParams, Tuple},
+
       case queue:member(NTuple, NewQ) of
         true  ->
           share:put(SM, queue_ids, NewQ),
-          not_processed;
+          processed;
         false ->
           % check if same package was received from other src dst,
           % if yes  -> share:put(SM, queue_ids, NewQ), processed
@@ -1090,9 +1093,10 @@ add_item_to_queue(SM, Qname, Item, Max) ->
 %%--------------------------------------------------  Only MAC functions -------------------------------------------
 process_rcv_payload(SM, nothing, _Payload) ->
   SM;
-process_rcv_payload(SM, Current_msg, RcvPayload) ->
+process_rcv_payload(SM, CurrentMsg, RcvPayload) ->
+  PP = parse_payload(SM, RcvPayload),
   [PFlag, SM1, HRcvPayload] =
-  case parse_payload(SM, RcvPayload) of
+  case PP of
     [relay, Payload] ->
       [relay, SM, Payload];
     [reverse, Payload] ->
@@ -1103,9 +1107,9 @@ process_rcv_payload(SM, Current_msg, RcvPayload) ->
       [dst, clear_spec_timeout(SM, retransmit), Payload]
   end,
 
-  {at, _PID, _, _, _, CurrentPayload} = Current_msg,
+  {at, _PID, _, _, _, CurrentPayload} = CurrentMsg,
   [_CRole, HCurrentPayload] = parse_payload(SM, CurrentPayload),
-  check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload, Current_msg).
+  check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload).
 
 parse_payload(SM, Payload) ->
   try
@@ -1113,24 +1117,27 @@ parse_payload(SM, Payload) ->
     ?TRACE(?ID, "parse_payload Flag ~p PkgID ~p Dst ~p Src ~p~n",
           [num2flag(Flag, nl), PkgID, Dst, Src]),
     [check_dst(Flag), {PkgID, Dst, Src}]
-  catch error: _Reason -> [relay, Payload]
+  catch error: Reason ->
+    ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
+    [relay, Payload]
   end.
 
-check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}, _Current_msg) ->
+check_payload(SM, _, <<"t">>, _) ->
+  SM;
+check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}) ->
   HCurrentPayload = {PkgID, Dst, Src},
   RevCurrentPayload = {PkgID, Src, Dst},
-  ExaxtTheSame = (HCurrentPayload == HRcvPayload),
+  ExactTheSame = (HCurrentPayload == HRcvPayload),
   IfDstReached = (Flag == dst),
   AckReversed = (( Flag == ack ) and (RevCurrentPayload == HRcvPayload)),
 
-  if (ExaxtTheSame or IfDstReached or AckReversed) ->
-       %share:put(SM, current_msg, {delivered, Current_msg}),
+  if (ExactTheSame or IfDstReached or AckReversed) ->
        share:clean(SM, current_msg),
        clear_spec_timeout(SM, retransmit);
     true ->
        SM
   end;
-check_payload(SM, _, _, _, _) ->
+check_payload(SM, _, _, _) ->
   SM.
 
 check_dst(Flag) ->
@@ -1144,6 +1151,7 @@ check_dst(Flag) ->
 
 process_send_payload(SM, Msg) ->
   {at, _PID, _, _, _, Payload} = Msg,
+  share:clean(SM, data_to_sent),
   case parse_payload(SM, Payload) of
     [Flag, _P] when Flag == reverse; Flag == relay; Flag =:= ack ->
       SM1 = clear_spec_timeout(SM, retransmit),
@@ -1216,11 +1224,11 @@ process_command(SM, Debug, Command) ->
         protocols ->
           {nl, Command, Req};
         {protocol, Name} ->
-          {nl, protocol, Asw, get_protocol_info(SM, Name)};
+          {nl, protocol, get_protocol_info(SM, Name)};
         neighbours ->
-          {nl, neighbours, Asw, neighbours_to_bin(SM, nl)};
+          {nl, neighbours, neighbours_to_bin(SM, nl)};
         routing ->
-          {nl, routing, Asw, routing_to_bin(SM)};
+          {nl, routing, routing_to_bin(SM)};
         state ->
           {nl, state, Req};
         states ->
@@ -1250,7 +1258,7 @@ get_protocol_info(SM, Name) ->
   list_to_binary(["\nName\t\t: ", BName,"\n", ?PROTOCOL_SPEC(Conf)]).
 
 get_stat_data(SM, Qname) ->
-  lists:map(fun({Role, Payload, Time, Length, State, TS, Dst, Count_hops}) ->
+  lists:map(fun({ {Role, Payload}, Time, Length, State, TS, Dst, Count_hops}) ->
                 TRole = if Role =:= source -> "Source"; true -> "Relay" end,
                 BTime = convert_type_to_bin(Time),
                 list_to_binary(
@@ -1260,7 +1268,7 @@ get_stat_data(SM, Qname) ->
             end, queue:to_list(share:get(SM, Qname))).
 
 get_stat(SM, Qname) ->
-  lists:map(fun({Role, Val, Time, Count, TS}) ->
+  lists:map(fun({ {Role, Val}, Time, Count, TS}) ->
                 TRole = if Role =:= source -> "Source"; true -> "Relay" end,
                 BTime = convert_type_to_bin(Time),
                 Specific = case Qname of
@@ -1273,16 +1281,24 @@ get_stat(SM, Qname) ->
                    " Total:", integer_to_binary(TS)])
                end, queue:to_list(share:get(SM, Qname))).
 
-save_stat(SM, {ISrc, IDst}, Role)->
+save_stat_total(SM, Role)->
   case Role of
     source ->
       S_total_sent = share:get(SM, s_total_sent),
-      share:put(SM, s_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)}),
       share:put(SM, s_total_sent, S_total_sent + 1);
     relay ->
       R_total_sent = share:get(SM, r_total_sent),
-      share:put(SM, r_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)}),
       share:put(SM, r_total_sent, R_total_sent + 1);
+    _ ->
+      nothing
+  end.
+
+save_stat_time(SM, {ISrc, IDst}, Role)->
+  case Role of
+    source ->
+      share:put(SM, s_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)});
+    relay ->
+      share:put(SM, r_send_time, {{ISrc, IDst}, erlang:monotonic_time(micro_seconds)});
     _ ->
       nothing
   end.
@@ -1317,38 +1333,40 @@ path_to_bin(SM, Path) ->
 analyse(SM, QName, Path, {Real_src, Real_dst}) ->
   {Time, Role, TSC, _Addrs} = get_stats_time(SM, Real_src, Real_dst),
 
-  BPath =
+  [SMN, BPath] =
   case QName of
     paths when Path =:= nothing ->
       <<>>;
     paths ->
-      path_to_bin(SM, Path);
+      SM1 = save_stat_total(SM, Role),
+      [SM1, path_to_bin(SM, Path)];
     st_neighbours ->
-      Path;
+      [SM, Path];
     st_data ->
-      Path
+      [SM, Path]
   end,
 
   Tuple = case {QName, Time} of
             {st_data, nothing} ->
               {P, Dst, Count_hops, St} = BPath,
-              {Role, P, 0.0, byte_size(P), St, TSC, Dst, Count_hops};
+              { {Role, P}, 0.0, byte_size(P), St, TSC, Dst, Count_hops};
             {st_data, _} ->
               {P, Dst, Count_hops, St} = BPath,
               TDiff = erlang:monotonic_time(micro_seconds) - Time,
               CTDiff = convert_t(TDiff, {us, s}),
-              {Role, P, CTDiff, byte_size(P), St, TSC, Dst, Count_hops};
+              { {Role, P}, CTDiff, byte_size(P), St, TSC, Dst, Count_hops};
             {_, nothing} ->
-              {Role, BPath, 0.0, 1, TSC};
+              { {Role, BPath}, 0.0, 1, TSC};
             _ ->
               TDiff = erlang:monotonic_time(micro_seconds) - Time,
               CTDiff = convert_t(TDiff, {us, s}),
-              {Role, BPath, CTDiff, 1, TSC}
+              { {Role, BPath}, CTDiff, 1, TSC}
           end,
-  add_item_to_queue_nd(SM, QName, Tuple, 300).
+  add_item_to_queue_nd(SMN, QName, Tuple, 300).
 
 add_item_to_queue_nd(SM, Qname, Item, Max) ->
   Q = share:get(SM, Qname),
+
   NewQ=
   case queue:len(Q) of
     Len when Len >= Max ->
@@ -1359,13 +1377,15 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
     st_data ->
       share:put(SM, Qname, queue:in(Item, NewQ));
     _ ->
-      {R, NP, NT, _, NewTS} = Item,
+      { {R, NP}, NT, _, NewTS} = Item,
 
       %% Role,P - key
-      L = lists:map(fun({Role, P, T, Count, TS}) when P == NP, R == Role, T > 0 ->
-                        {Role, P, (T + NT) / 2, Count + 1, TS};
-                       ({Role, P, 0, Count, TS}) when P == NP, R == Role ->
-                        {Role, P, 0, Count + 1, TS};
+      L = lists:map(fun({{Role, P}, T, Count, _TS}) when P == NP, R == Role, T > 0 ->
+                        {{Role, P}, (T + NT) / 2, Count + 1, NewTS};
+                       ({{Role, P}, 0.0, Count, _TS}) when P == NP, R == Role ->
+                        {{Role, P}, 0.0, Count + 1, NewTS };
+                       %({Key, T, Count, _TS}) ->
+                       % {Key, T, Count, NewTS };
                        (Other) -> Other
                     end, queue:to_list(NewQ)),
       QQ =
@@ -1374,9 +1394,5 @@ add_item_to_queue_nd(SM, Qname, Item, Max) ->
         false -> queue:from_list(L)
       end,
 
-      % FIXME: just modify TS -> NewTS with Role,P key in the map above
-      NUQ = lists:map(fun({Role, P, T, Count, _}) when R == Role -> {Role, P, T, Count, NewTS};
-                         (Tuple) -> Tuple
-                      end, queue:to_list(QQ)),
-      share:put(SM, Qname, queue:from_list(NUQ))
+      share:put(SM, Qname, QQ)
   end.
