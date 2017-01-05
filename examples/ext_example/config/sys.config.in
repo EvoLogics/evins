@@ -1,0 +1,4 @@
+[{evins, [
+    {fabric_config, "path/etc/fsm.conf"}
+]}
+].
