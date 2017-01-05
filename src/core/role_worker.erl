@@ -140,7 +140,15 @@ cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
 
 connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) ->
   process_flag(trap_exit, true),
-  PortID = open_port(Port,PortSettings),
+  PortID = 
+  case Port of
+    {Type, _} when Type == spawn; Type == spawn_driver; Type == spawn_executable; Type == fd ->
+      open_port(Port,PortSettings);
+    {Application, Executable} when is_atom(Application), is_atom(Executable) ->
+      Path = code:priv_dir(Application) ++ "/" ++ atom_to_list(Executable),
+      io:format("Path: ~p, PortSettings: ~p~n", [Path, PortSettings]),
+      open_port({spawn, Path}, PortSettings)
+  end,
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
   {ok, cast_connected(State#ifstate{port = PortID})};
 

@@ -61,6 +61,7 @@ check_port_name({spawn, Command}) when is_list(Command); is_binary(Command) -> o
 check_port_name({spawn_driver, Command}) when is_list(Command); is_binary(Command) -> ok;
 check_port_name({spawn_executable, FileName}) when is_list(FileName) -> ok;
 check_port_name({fd, In, Out}) when is_number(In), is_number(Out) -> ok;
+check_port_name({Application, Executable}) when is_atom(Application), is_atom(Executable) -> ok;
 check_port_name(X) -> {error, {badPort, X}}.
 
 check_list_term({role,Role,iface,{cowboy,Address,Port}})
