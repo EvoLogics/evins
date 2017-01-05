@@ -1,19 +1,18 @@
 PROJECT = evins
-core = $(subst src/,,$(wildcard src/core/*.erl))
-COMPILE_FIRST = $(core:.erl=)
 
-DEPS = cowboy jsx parse_trans
-dep_jsx = pkg://jsx 2.8.0
-dep_cowboy = pkg://cowboy 1.0.4
-dep_cowlib = pkg://cowlib 1.3.0
-dep_ranch = pkg://ranch 1.2.1
-dep_parse_trans = pkg://parse_trans master
+DEPS = cowboy jsx parse_trans edown
+dep_jsx = git https://github.com/talentdeficit/jsx 2.8.0
+dep_cowboy = git https://github.com/extend/cowboy 1.0.4
+dep_cowlib = git https://github.com/extend/cowlib 1.3.0
+dep_ranch = git https://github.com/extend/ranch 1.2.1
+dep_parse_trans = git https://github.com/uwiger/parse_trans
+dep_edown = git https://github.com/uwiger/edown.git 0.8
 
 CT_SUITES = share
 
-rel: 
+rel:: ebin/$(PROJECT).app
 
-ebin/$(PROJECT).app: src/$(PROJECT).app.src
+ebin/$(PROJECT).app:: src/$(PROJECT).app.src
 
 src/$(PROJECT).app.src: .FORCE
 	@export V=$$(git describe --tags --dirty=-d) && \
