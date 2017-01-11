@@ -16,7 +16,7 @@
 
 ERLANG_MK_FILENAME := $(realpath $(lastword $(MAKEFILE_LIST)))
 
-ERLANG_MK_VERSION = 2016.12.08-2-g1361da6
+ERLANG_MK_VERSION = 2016.12.08-6-g26530a4
 
 # Make 3.81 and 3.82 are deprecated.
 
@@ -6403,7 +6403,7 @@ endif
 RELX ?= $(ERLANG_MK_TMP)/relx
 RELX_CONFIG ?= $(CURDIR)/relx.config
 
-RELX_URL ?= https://github.com/erlware/relx/releases/download/v3.19.0/relx
+RELX_URL ?= https://github.com/okebkal/relx/releases/download/v3.22.0-i/relx
 RELX_OPTS ?=
 RELX_OUTPUT_DIR ?= _rel
 
