@@ -12,9 +12,7 @@ CT_SUITES = share
 
 rel:: deps ebin/$(PROJECT).app
 
-ebin/$(PROJECT).app:: src/$(PROJECT).app.src
-
-src/$(PROJECT).app.src: .FORCE
+ebin/$(PROJECT).app:: 
 	@export V=$$(git describe --tags --dirty=-d) && \
 	sed -e "s/tbd/$$V/" src/$(PROJECT).app.in > src/$(PROJECT).app.src
 
