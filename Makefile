@@ -10,14 +10,6 @@ dep_edown = git https://github.com/uwiger/edown.git 0.8
 
 CT_SUITES = share
 
-rel:: deps ebin/$(PROJECT).app
-
-ebin/$(PROJECT).app:: 
-	@export V=$$(git describe --tags --dirty=-d) && \
-	sed -e "s/tbd/$$V/" src/$(PROJECT).app.in > src/$(PROJECT).app.src
-
-.PHONY: .FORCE
-
 include erlang.mk
 
 
