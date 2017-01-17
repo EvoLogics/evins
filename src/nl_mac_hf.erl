@@ -1393,6 +1393,6 @@ add_item_to_queue_nd(SM, Qname, {NKey, NT, _, NewTS} = Item, Max) ->
                        (Other) -> Other
                     end, LQ));
       false ->
-        queue_limited_push(Item, Q, Max)
+        queue_limited_push(Q, Item, Max)
     end,
   share:put(SM, Qname, QQ).
