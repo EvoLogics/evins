@@ -1,6 +1,6 @@
 {application,evins,
              [{description,"EvoLogics intelligent Networking Software framework"},
-              {vsn,"tbd"},
+              {vsn,"0.3.0"},
               {id,"git"},
               {modules,[]},
               {registered,[]},
