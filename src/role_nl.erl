@@ -83,9 +83,13 @@ try_send(L, Cfg) ->
     case L of
       <<"?\n">>  -> get_help();
       _ ->
-        case re:run(L, "^(NL,send,|NL,set,protocol,)(.*)", [dotall, {capture, [1, 2], binary}]) of
+        case re:run(L, "^(NL,send,|NL,set,protocol,|NL,set,routing,|NL,set,address,|NL,clear,stats,data|NL,reset,state)(.*)", [dotall, {capture, [1, 2], binary}]) of
           {match, [<<"NL,send,">>, P]}  -> nl_send_extract(P, Cfg);
           {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
+          {match, [<<"NL,set,routing,">>, P]}  -> nl_set_routing(P, Cfg);
+          {match, [<<"NL,set,address,">>, P]}  -> nl_set_address(P, Cfg);
+          {match, [<<"NL,clear,stats,data">>, P]}  -> nl_clear(P, Cfg);
+          {match, [<<"NL,reset,state">>, _P]}  -> nl_reset_state();
           nomatch ->
             case re:run(L,"^(NL,get,)(.*?)[\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
               {match, [<<"NL,get,">>, P, L1]} -> [ param_extract(P) | split(L1, Cfg)];
@@ -106,6 +110,26 @@ try
         [{rcv_ul, {set, protocol, AProtocolID} }];
       false -> [{nl, error}]
     end
+  catch error: _Reason -> [{nl, error}]
+  end.
+
+nl_reset_state() ->
+  [{rcv_ul, {reset, state} }].
+
+nl_set_routing(P, _Cfg) ->
+try
+    {match, [BRouting]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
+    LRouting = string:tokens(binary_to_list(BRouting), ","),
+    IRouting = lists:map(fun(X)-> S = string:tokens(X, "->"), [list_to_integer(X1) || X1 <- S] end, LRouting),
+    TRouting = [case X of [A1, A2] -> {A1, A2}; [A1] -> A1 end|| X <- IRouting],
+    [{rcv_ul, {set, routing, TRouting} }]
+  catch error: _Reason -> [{nl, error}]
+  end.
+
+nl_set_address(P, _Cfg) ->
+try
+    {match, [BAddr]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
+    [{rcv_ul, {set, address, binary_to_integer(BAddr)} }]
   catch error: _Reason -> [{nl, error}]
   end.
 
@@ -149,12 +173,16 @@ nl_recv_extract(P, _Cfg) ->
 get_help() ->
   [{rcv_ul, {get, help} }].
 
+nl_clear(_P, _) ->
+ [{rcv_ul, {clear, stats, data} }].
+
 param_extract(P) ->
   case binary_to_atom(P, utf8) of
     protocols ->
       {rcv_ul, {get, protocols}};
     _ ->
-    case re:run(P,"(routing|neighbours|states|state|protocol,|protocol|stats,)(.*)", [dotall, {capture, [1, 2], binary}]) of
+    case re:run(P,"(routing|neighbours|states|state|address|protocol,|protocol|stats,)(.*)", [dotall, {capture, [1, 2], binary}]) of
+      {match, [<<"address">>, _Name]} -> {rcv_ul, {get, address}};
       {match, [<<"routing">>, _Name]} -> {rcv_ul, {get, routing}};
       {match, [<<"neighbours">>, _Name]} -> {rcv_ul, {get, neighbours}};
       

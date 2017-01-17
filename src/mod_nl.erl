@@ -257,6 +257,7 @@ set_routing(Routing_addrs, NL_Protocol, Default) ->
       io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a default value will be set 255 broadcast ~n",[]),
       Default;
     _ when (Routing_addrs =/= []) ->
-      [TupleRouting] = Routing_addrs, [{?BITS_ADDRESS_MAX, ?BITS_ADDRESS_MAX} | tuple_to_list(TupleRouting)];
+      [TupleRouting] = Routing_addrs,
+      [{?BITS_ADDRESS_MAX, ?BITS_ADDRESS_MAX} | tuple_to_list(TupleRouting)];
     _ -> Default
   end.
