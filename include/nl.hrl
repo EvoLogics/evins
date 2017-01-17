@@ -146,11 +146,14 @@
 			 "NL,delivered,<Src>,<Dst>\t\t\t- Message was successfully delivered to destination node\n",
 			 "\n\n\n",
 			 "==================================== Set commands =====================================\n",
+			 "NL,set,address,<Addr>\t\t\t\t- set local address\n",
  			 "NL,set,protocol,<Protocol_Name>\t\t\t- set current routing protocol\n",
+ 			 "NL,set,routing,[<LA1>-><LA2>],[<LA3>-><LA4>],...,[<Default LA>]\t- set routing only for static routing\n",
 			 "\n\n\n",
 			 "==================================== Information commands =====================================\n",
+			 "NL,get,address\t\t\t\t\t- get local address\n",
 			 "NL,get,protocols\t\t\t\t- Get description of all protocols\n",
-			 "NL,get,protocol\t\t\t\t- Get current routing protocol\n",
+			 "NL,get,protocol\t\t\t\t\t- Get current routing protocol\n",
 			 "NL,get,protocol,<Protocol_name>\t\t\t- Get description of specific protocol\n",
 			 "NL,get,neighbours\t\t\t\t- Get current  neighbours\n",
 			 "NL,get,routing\t\t\t\t\t- Get current routing table\n",
@@ -171,6 +174,12 @@
 			 "NL,get,stats,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time\n
 			 \t\t\tAnswer:
 			 \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
+			 "\n\n\n",
+			 "========================= Clear commands ========================\n",
+			 "NL,clear,stats,data\t\t\t\t-clear the data statistics\n"
+			 "\n\n\n",
+			 "========================= Reset commands ========================\n",
+			 "NL,reset,state\t\t\t\t\t-revert fsm state to idle state\n"
 			]).
 
 -define(STATE_DESCR,

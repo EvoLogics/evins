@@ -138,7 +138,8 @@ stop(_SM)      -> ok.
 handle_event(MM, SM, Term) ->
   ?TRACE(?ID, "handle_event ~120p~n", [Term]),
   Local_address = share:get(SM, local_address),
-  Protocol    = share:get(SM, protocol_config, share:get(SM, np)),
+  NProtocol = share:get(SM, np),
+  Protocol    = share:get(SM, {protocol_config, NProtocol}),
   case Term of
     {timeout, Event} ->
       ?INFO(?ID, "timeout ~140p~n", [Event]),
@@ -147,6 +148,10 @@ handle_event(MM, SM, Term) ->
           nl_mac_hf:process_path_life(SM, Tuple);
         {neighbour_life, Addr} ->
           %% TODO: if neighbour does not exist any more, delete from routing table
+          Neighbours_channel = share:get(SM, neighbours_channel),
+          El = lists:keyfind(Addr, 1, Neighbours_channel),
+          Updated_neighbours_channel = lists:delete(El, Neighbours_channel),
+          share:put(SM, neighbours_channel, Updated_neighbours_channel),
           share:update_with(SM, current_neighbours, fun(L) -> lists:delete(Addr, L) end);
         {relay_wv, Tuple = {send, {Flag, _}, _}} ->
           [SMN, PTuple] = nl_mac_hf:process_relay(SM, Tuple),
@@ -266,6 +271,14 @@ handle_event(MM, SM, Term) ->
     {nl,error} ->
       fsm:cast(SM, nl, {send, {nl, error}}),
       SM;
+    {rcv_ul, {reset, state} } ->
+      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+      SM#sm{state = idle};
+    {rcv_ul, {clear, stats, data} } ->
+      share:clean(SM, st_data),
+      share:put(SM, st_data, queue:new()),
+      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+      SM;
     {rcv_ul, {get, protocol}} ->
       AProtocolID =
       case P = share:get(SM, np) of
@@ -280,6 +293,17 @@ handle_event(MM, SM, Term) ->
       SM;
     {rcv_ul, {get, Command}} ->
       nl_mac_hf:process_command(SM, false, Command),
+      SM;
+    {rcv_ul, {set, address, Addr} } ->
+      share:put(SM, local_address, Addr),
+      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+      SM;
+    {rcv_ul, {set, routing, Routing} } when NProtocol =:= staticr ->
+      share:put(SM, routing_table, Routing),
+      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+      SM;
+    {rcv_ul, {set, routing, _} } ->
+      fsm:cast(SM, nl, {send, {sync, {nl, error} } }),
       SM;
     {rcv_ul, {set, protocol, AProtocolID} } ->
       share:put(SM, np, AProtocolID),

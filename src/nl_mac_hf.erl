@@ -703,18 +703,31 @@ parse_path(SM, {_, ListPath}, {ISrc, IDst}) ->
      end
   end.
 
-add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {_IRssi, _IIntegrity}) ->
+add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {IRssi, IIntegrity}) ->
   ?INFO(?ID, "+++ Flag ~p, NLSrcAT ~p, RealSrc ~p~n", [Flag, NLSrcAT, RealSrc]),
+  Neighbours_channel = share:get(SM, neighbours_channel),
   SM1 = fsm:set_timeout(SM, {s, share:get(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
   analyse(SM1, st_neighbours, NLSrcAT, {RealSrc, Real_dst}),
-  Add_uniq = fun(Neighbours) ->
-                 case lists:member(NLSrcAT, Neighbours) of
-                   true -> Neighbours;
-                   false -> [NLSrcAT | Neighbours]
-                 end
-             end,
-  share:update_with(SM1, current_neighbours, Add_uniq, []).
+  Add_neighbours =
+  fun(Neighbours) ->
+       case lists:member(NLSrcAT, Neighbours) of
+         _ when Neighbours_channel == nothing ->
+            share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity}]),
+            [NLSrcAT];
+         true ->
+            El = {_, ETSrssi, ETSintegrity} = lists:keyfind(NLSrcAT, 1, Neighbours_channel),
+            NewRssi = (IRssi + ETSrssi) / 2,
+            NewIntegrity = (ETSintegrity + IIntegrity) / 2,
+            Updated_neighbours_channel = lists:delete(El, Neighbours_channel),
+            share:put(SM1, neighbours_channel, [ {NLSrcAT, NewRssi, NewIntegrity} | Updated_neighbours_channel]),
+            Neighbours;
+         false ->
+            share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity} | Neighbours_channel]),
+            [NLSrcAT | Neighbours]
+       end
+    end,
 
+  share:update_with(SM1, current_neighbours, Add_neighbours, []).
 %%-------------------------------------------------- Process NL functions -------------------------------------------
 get_aver_value(0, Val2) ->
   round(Val2);
@@ -1059,11 +1072,16 @@ neighbours_to_list(SM,Neigbours, mac) ->
 neighbours_to_list(_,Neigbours, nl) ->
   Neigbours.
 
-neighbours_to_bin(SM, Type) ->
-  F = fun(X) when Type =:= mac -> integer_to_binary(addr_nl2mac(SM, X));
-         (X) when Type =:= nl  -> integer_to_binary(X)
+neighbours_to_bin(SM) ->
+  F = fun(X) ->
+        {Addr, Rssi, Integrity} = X,
+        Baddr = convert_type_to_bin(Addr),
+        Brssi = convert_type_to_bin(Rssi),
+        Bintegrity = convert_type_to_bin(Integrity),
+        list_to_binary([Baddr, ":", Brssi, ":", Bintegrity])
       end,
-  list_to_binary(lists:join(",", [F(X) || X <- share:get(SM, current_neighbours)])).
+
+  list_to_binary(lists:join(",", [F(X) || X <- share:get(SM, neighbours_channel)])).
 
 routing_to_bin(SM) ->
   Routing_table = share:get(SM, routing_table),
@@ -1200,6 +1218,8 @@ process_command(SM, Debug, Command) ->
     state ->
       States = list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")"]),
       [States, state];
+    address ->
+      [share:get(SM, local_address), address];
     neighbours ->
       [share:get(SM, current_neighbours), neighbours];
     routing ->
@@ -1226,7 +1246,7 @@ process_command(SM, Debug, Command) ->
         {protocol, Name} ->
           {nl, protocol, get_protocol_info(SM, Name)};
         neighbours ->
-          {nl, neighbours, neighbours_to_bin(SM, nl)};
+          {nl, neighbours, neighbours_to_bin(SM)};
         routing ->
           {nl, routing, routing_to_bin(SM)};
         state ->
@@ -1234,6 +1254,9 @@ process_command(SM, Debug, Command) ->
         states ->
           L = list_to_binary(Req),
           {nl, states, L};
+        address ->
+          L = integer_to_binary(Req),
+          {nl, address, L};
         _ ->
           {nl, error}
       end
@@ -1393,6 +1416,6 @@ add_item_to_queue_nd(SM, Qname, {NKey, NT, _, NewTS} = Item, Max) ->
                        (Other) -> Other
                     end, LQ));
       false ->
-        queue_limited_push(Item, Q, Max)
+        queue_limited_push(Q, Item, Max)
     end,
   share:put(SM, Qname, QQ).
