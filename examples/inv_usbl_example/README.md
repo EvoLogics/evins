@@ -7,7 +7,7 @@ make
 # Run:
 
 ```bash
-CODE_LOADING_MODE=interactive _rel/ext_example/bin/ext_example console
+CODE_LOADING_MODE=interactive _rel/inv_usbl_example/bin/inv_usbl_example console
 ```
 
   in another terminal window run:

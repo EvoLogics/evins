@@ -1,4 +1,4 @@
-PROJECT = ext_example
+PROJECT = inv_usbl_example
 DEPS = evins
 dep_evins = git https://github.com/okebkal/evins
 
