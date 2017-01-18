@@ -43,7 +43,8 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event=Event}, {});
     {connected} ->
       SM;
-    {async, _, {recvims, _, _, _, _, _, _, _, _, Payl}} ->
+    {async, _, {recvpbm, _, Dst, _, _, _, _, _, Payl}} ->
+    %{async, _, {recvims , _, _, _, _, _, _, _, _, Payl}} ->
       io:format("<<< fsm_inv_usbl_gen : {Bearing, Elevation, Roll, Pitch, Yaw} = ~p~n", [extractPBKM(Payl)]),
       SM;
     {async, {deliveredim, Dst}} ->
@@ -51,7 +52,7 @@ handle_event(MM, SM, Term) ->
     {sync,"?T", Distance} ->
       Timeout = share:get(SM, gen_timeout),
       {IDistance, _} = string:to_integer(Distance),
-      D = (IDistance / 100000) * 1500 * 10,
+      D = (IDistance / 1000000) * 1500 * 10,
       share:put(SM, distance, round(D) ),
       SM1 = fsm:set_timeout(SM, {s, Timeout}, sendim_timout),
       fsm:clear_timeout(SM1, answer_timeout);
