@@ -18,7 +18,8 @@
                  ]},
 
                 {sendpbkm,
-                  [{sendend, sendpbkm},
+                  [{recvim, sendpbkm},
+		  {sendend, sendpbkm},
                   {wait_sendend, sendpbkm},
                   {recvangles, sendpbkm},
                   {sendangles, idle}]},
@@ -131,13 +132,13 @@ extractPBKM(Payl) ->
   <<"L", DBearing:12, DElevation:12, DRoll:12, DPitch:12, DDYaw:12, _/bitstring>> = Payl,
   {DBearing / 10, DElevation / 10, DRoll / 10, DPitch / 10, DDYaw / 10}.
 
-event_params(SM, Term, Event) ->
+event_params(SM, _Term, Event) ->
   if SM#sm.event_params =:= [] ->
-       [Term, SM];
+       [[], SM];
      true ->
        EventP = hd(tuple_to_list(SM#sm.event_params)),
        if EventP =:= Event -> [SM#sm.event_params, SM#sm{event_params = []}];
-          true -> [Term, SM]
+          true -> [[], SM]
        end
   end.
 
