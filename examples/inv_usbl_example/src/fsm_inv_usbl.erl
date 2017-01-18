@@ -50,7 +50,8 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event = sendend}, {sendend, Dst});
     {async, {sendend, Dst, "imack", _, _}} ->
       fsm:run_event(MM, SM#sm{event = sendend}, {sendend, Dst});
-    {async,  {pid, Pid}, {recvim, _, Dst, Local_addr, ack, _, _, _, _, _}} ->
+    {async,  {pid, Pid}, {recvim, _, Dst, Local_addr, ack, _, _, _, _, Payl}} ->
+      io:format(">>> fsm_inv_usbl :  recvim Distance = ~p~n", [extractIM(Payl)]),
       fsm:run_event(MM, SM#sm{event = recvim}, {recvim, Pid, Dst});
     {async, {usblangles, _CTime,_MTime, _Raddr, LBearing, LElevation, _Bearing, _Elevation, Roll, Pitch, Yaw, _Rssi, _Integrity, _Accuracy}} ->
       DBearing = wrapAroundDeg( (LBearing * 180) / math:pi() ),
@@ -124,8 +125,7 @@ createPBKM(DBearing, DElevation, DRoll, DPitch, DDYaw) ->
 
 checkSentMsg(SM, AT) ->
   {at, _,"*SENDPBM",_, B} = AT,
-  ?TRACE(?ID, "{Bearing, Elevation, Roll, Pitch, Yaw} = ~p~n", [extractPBKM(B)]),
-  io:format("{Bearing, Elevation, Roll, Pitch, Yaw} = ~p~n", [extractPBKM(B)]).
+  ?TRACE(?ID, "{Bearing, Elevation, Roll, Pitch, Yaw} = ~p~n", [extractPBKM(B)]).
 
 extractPBKM(Payl) ->
   <<"L", DBearing:12, DElevation:12, DRoll:12, DPitch:12, DDYaw:12, _/bitstring>> = Payl,
@@ -140,3 +140,9 @@ event_params(SM, Term, Event) ->
           true -> [Term, SM]
        end
   end.
+
+extractIM(<<"N">>) ->
+  nothing;
+extractIM(Payl) ->
+  <<"D", Distance:16>> = Payl,
+  Distance / 10.
