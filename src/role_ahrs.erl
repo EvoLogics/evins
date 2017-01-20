@@ -42,7 +42,7 @@ to_term(Tail, Chunk, Cfg) ->
 split(L, Cfg) ->
   case re:split(L,"\n",[{parts,2}]) of
     [Sentense,Rest] ->
-      case re:run(Sentense,"^AHRS,([^,]+),([^,]+),([^,]+),([^,]+)",[dotall,{capture,[1,2,3,4],binary}]) of
+      case re:run(Sentense,"^AHRS,enu,([^,]+),([^,]+),([^,]+),([^,]+)",[dotall,{capture,[1,2,3,4],binary}]) of
         {match, [_T,BRoll,BPitch,BYaw]} -> %% NED
           [Roll,Pitch,Yaw] = [binary_to_float(V) || V <- [BRoll,BPitch,BYaw]],
           [{nmea, {tnthpr,Yaw,"N",Pitch,"N",Roll,"N"}} | split(Rest, Cfg)];
