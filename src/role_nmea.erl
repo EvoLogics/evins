@@ -522,7 +522,7 @@ extract_evorcp(Params) ->
 %% S status OK/NOK
 %% Err error code cc_
 %% CS coordinate system: Local frame (LF)/ ENU / GEOD
-%% FS filter status: M measured, F filtered
+%% FS filter status: M measured, R reconstructed, F filtered
 %% X,Y,Z coordinates
 %% Acc accuracy in meters
 %% Pr pressure in dBar (blank, if not available)
@@ -545,7 +545,8 @@ extract_evossb(Params) ->
          end,
     FS = case BFS of
            <<"M">> -> measured;
-           <<"F">> -> filtered
+           <<"F">> -> filtered;
+           <<"R">> -> reconstructed
          end,
     Err = binary_to_list(BErr),
     {nmea, {evossb, UTC, TID, S, Err, CS, FS, X, Y, Z, Acc, Pr, Vel}}
@@ -559,7 +560,7 @@ extract_evossb(Params) ->
 %% S status OK/NOK
 %% Err error code cc_
 %% CS coordinate system: Local frame (LF)/ ENU / GEOD
-%% FS filter status: M measured, F filtered
+%% FS filter status: M measured, F filtered, R reconstructed
 %% B,E bearing and elevation angles
 %% Acc accuracy in meters
 %% Pr pressure in dBar (blank, if not available)
@@ -582,7 +583,8 @@ extract_evossa(Params) ->
          end,
     FS = case BFS of
            <<"M">> -> measured;
-           <<"F">> -> filtered
+           <<"F">> -> filtered;
+           <<"R">> -> reconstructed
          end,
     Err = binary_to_list(BErr),
     {nmea, {evossa, UTC, TID, S, Err, CS, FS, B, E, Acc, Pr, Vel}}
@@ -988,7 +990,8 @@ build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
         end,
   SFS = case FS of
           measured -> <<"M">>;
-          filtered -> <<"F">>
+          filtered -> <<"F">>;
+          reconstructed -> <<"R">>
         end,
   flatten(["PEVOSSB",SUTC,
            safe_fmt(["~B","~s","~s","~s","~s",Fmt,Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
@@ -1009,7 +1012,8 @@ build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
         end,
   SFS = case FS of
           measured -> <<"M">>;
-          filtered -> <<"F">>
+          filtered -> <<"F">>;
+          reconstructed -> <<"R">>
         end,
   flatten(["PEVOSSA",SUTC,
            safe_fmt(["~B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
