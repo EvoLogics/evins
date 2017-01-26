@@ -194,7 +194,8 @@ handle_event(MM, SM, Term) ->
           end,
           fsm:run_event(MM, SM#sm{event=timeout_path,  state=wpath}, {});
         {send_wv_dbl, {Flag,[_,Real_src, PAdditional]}, {nl, send, Real_dst, Data}} ->
-          Params = {Flag,[nl_mac_hf:increase_pkgid(SM), Real_dst, PAdditional]},
+          PkgID = nl_mac_hf:increase_pkgid(SM, Real_src, Real_dst),
+          Params = {Flag,[PkgID, Real_dst, PAdditional]},
           fsm:run_event(MM, SM#sm{state = idle, event=send_path}, {send_path, Params, {nl, send, Real_src, Data}});
         _ ->
           fsm:run_event(MM, SM#sm{event=Event}, {})
@@ -330,9 +331,7 @@ init_flood(SM) ->
   {H, M, Ms} = erlang:timestamp(),
   LA = share:get(SM, local_address),
   rand:seed(exsplus, {H * LA, M * LA, Ms}),
-  share:put(SM, [{packet_id, 0},
-                 {packet_id, 0},
-                 {path_exists, false},
+  share:put(SM, [{path_exists, false},
                  {list_current_wvp, []},
                  {s_total_sent, 1},
                  {r_total_sent, 1},
@@ -485,7 +484,7 @@ handle_wack(_MM, SM, Term) ->
            nothing
       end,
       SM1#sm{event = relay_wv, event_params = {relay_wv, {send, Params, Tuple}}};
-    {dst_reached,{ack, [Packet_id,_, PAdditional]} ,{async,{nl, recv, Real_dst, Real_src, Payl}}} ->
+    {dst_reached, {ack, [Packet_id,_, PAdditional]} ,{async,{nl, recv, Real_dst, Real_src, Payl}}} ->
       case share:get(SM, current_pkg) of
         {nl, send, _, TIDst, Payload} ->
           Count_hops = nl_mac_hf:extract_ack(SM, Payl),
@@ -567,8 +566,9 @@ process_send(SM, Tuple) ->
   NP = share:get(SM, np),
   Protocol    = share:get(SM, protocol_config, NP),
   Local_address = share:get(SM, local_address),
-  PkgID = nl_mac_hf:increase_pkgid(SM),
   {nl, send, TransmitLen, Dst, Data} = Tuple,
+
+  PkgID = nl_mac_hf:increase_pkgid(SM, Local_address, Dst),
 
   if Dst =:= Local_address ->
     error;
@@ -724,7 +724,7 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
   case PPkg_id of
     _ when Flag =:= dst_reached ->
       [SMN, nothing];
-    old_id-> [SMN, nothing];
+    %old_id-> [SMN, nothing];
     processed ->
       [SMN, [rcv_processed, RecvNLDst, RProcTuple, RDstTuple]];
     not_processed ->

@@ -35,7 +35,7 @@
 %% Convert types functions
 -export([convert_to_binary/1, convert_type_to_bin/1, convert_t/2, convert_la/3, count_flag_bits/1]).
 %% DETS functions
--export([init_dets/1, fill_dets/1]).
+-export([init_dets/1]).
 %% handle events
 -export([event_params/3, clear_spec_timeout/2]).
 %% Math functions
@@ -62,7 +62,7 @@
 %% Only MAC functions
 -export([process_rcv_payload/3, process_send_payload/2, process_retransmit/3]).
 %% Other functions
--export([bin_to_num/1, increase_pkgid/1, add_item_to_queue/4, analyse/4]).
+-export([bin_to_num/1, increase_pkgid/3, add_item_to_queue/4, analyse/4]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
 count_flag_bits (F) ->
   count_flag_bits_helper(F, 0).
@@ -232,7 +232,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
                  %fsm:cast(SM, nl, {send, AT}),
-                 fill_dets(SM),
+                 fill_dets(SM, IPacket_id, MAC_real_src, MAC_real_dst),
                  fsm:set_event(SM1, eps)
             end
        end
@@ -675,7 +675,8 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src
     _ -> analyse(SM1, paths, NPath, {Real_src, Real_dst})
   end,
 
-  SDParams = {data, [increase_pkgid(SM), share:get(SM, local_address), PAdditional]},
+  PkgID = increase_pkgid(SM, Real_src, Real_dst),
+  SDParams = {data, [PkgID, share:get(SM, local_address), PAdditional]},
   SDTuple = {nl, send, IDst, fill_msg(path_data, {CurrentLen, Data, NPath})},
 
   case check_path(SM1, Real_src, Real_dst, NPath) of
@@ -910,64 +911,35 @@ update_route_table(SM, NRouting_table) ->
   ?INFO(?ID, "+++ Updated routing table ~w ~n", [Routing_table]),
   share:put(SMN2, routing_table, Routing_table).
 
-process_pkg_id(SM, ATParams, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
-  %{ATSrc, ATDst} = ATParams,
+% check if same package was received from other src dst,
+% if yes  -> share:put(SM, queue_ids, NewQ), processed
+% if no -> share:put(SM, queue_ids, queue:in(NTuple, NewQ)), not_processed
+process_pkg_id(SM, _ATParams, Tuple = {RemotePkgID, RecvNLSrc, RecvNLDst, _}) ->
   Local_address = share:get(SM, local_address),
-  LocalPkgID = share:get(SM, packet_id),
+  LocalPkgID = share:get(SM, {packet_id, RecvNLSrc, RecvNLDst}),
   Max_pkg_id = share:get(SM, max_pkg_id),
+  
   MoreRecent = sequence_more_recent(RemotePkgID, LocalPkgID, Max_pkg_id),
-  PkgIDOld =
-  if MoreRecent -> share:put(SM, packet_id, RemotePkgID), false;
-    true -> true
-  end,
+  
   %% not to relay packets with older ids
-  case PkgIDOld of
-    true when ((RecvNLDst =/= Local_address) and
-              (RecvNLSrc =/= Local_address)) -> old_id;
+  case MoreRecent of
+    %true when ((RecvNLDst =/= Local_address) and
+    %          (RecvNLSrc =/= Local_address)) -> old_id;
     true when (RecvNLSrc =:= Local_address) -> processed;
     _ ->
       Queue_ids = share:get(SM, queue_ids),
-      NewQ =
-      case queue:len(Queue_ids) of
-        Len when Len >= 10 ->
-          {_, Queue_out} = queue:out(Queue_ids),
-          Queue_out;
-        _ ->
-          Queue_ids
-      end,
-      NTuple = {ATParams, Tuple},
+      %io:format("!!!!!!!!!!!!!!!!!!!!!! la ~p   : Tuple ~p~n", [Local_address, Tuple]),
 
-      case queue:member(NTuple, NewQ) of
+      case queue:member(Tuple, Queue_ids) of
         true  ->
-          share:put(SM, queue_ids, NewQ),
+          share:put(SM, queue_ids, Queue_ids),
           processed;
         false ->
-          % check if same package was received from other src dst,
-          % if yes  -> share:put(SM, queue_ids, NewQ), processed
-          % if no -> share:put(SM, queue_ids, queue:in(NTuple, NewQ)), not_processed
-          Skey = searchKey(NTuple, NewQ, not_found),
-          if Skey == found ->
-            share:put(SM, queue_ids, NewQ),
-            processed;
-          true ->
-            share:put(SM, queue_ids, queue:in(NTuple, NewQ)),
-            not_processed
-          end
+          NewQ = queue_limited_push(Queue_ids, Tuple, 10),
+          share:put(SM, queue_ids, NewQ),
+          not_processed
       end
   end.
-
-searchKey(_, _, found) ->
-  found;
-searchKey(_, {[],[]}, not_found) ->
-  not_found;
-searchKey({ATParams, Tuple}, Q, not_found) ->
-  {{value, { _, CTuple}}, Q1} = queue:out(Q),
-  if CTuple =:= Tuple ->
-    searchKey({ATParams, Tuple}, Q1, found);
-  true ->
-    searchKey({ATParams, Tuple}, Q1, not_found)
-  end.
-
 %%--------------------------------------------------  RTT functions -------------------------------------------
 getRTT(SM, RTTTuple) ->
   case share:get(SM, RTTTuple) of
@@ -1009,9 +981,11 @@ smooth_RTT(SM, Flag, RTTTuple={_,_,Dst}) ->
        ?TRACE(?ID, "Smooth_RTT for Src ~p and Dst ~p is ~120p~n", [LA, Dst, Val])
   end.
 %%--------------------------------------------------  Other functions -------------------------------------------
+sequence_more_recent(_, nothing, _) ->
+  false;
 sequence_more_recent(S1, S2, Max) ->
-  if ((( S1 >= S2 ) and ( S1 - S2 =< Max / 2 )) or (( S2 >= S1 ) and ( S2 - S1  > Max / 2 ))) -> true;
-    true -> false
+  if ((( S1 >= S2 ) and ( S1 - S2 =< Max / 2 )) or (( S2 >= S1 ) and ( S2 - S1  > Max / 2 ))) -> false;
+    true -> true
   end.
 
 bin_to_num(Bin) when is_binary(Bin) ->
@@ -1026,46 +1000,69 @@ bin_to_num(N) when is_list(N) ->
     {F, _Rest} -> F
   end.
 
-increase_pkgid(SM) ->
+increase_pkgid(SM, Src, Dst) ->
   Max_pkg_id = share:get(SM, max_pkg_id),
-  PkgID = case share:get(SM, packet_id) of
-            Prev_id when Prev_id >= Max_pkg_id -> 1;
+  PkgID = case share:get(SM, {packet_id, Src, Dst}) of
+            nothing -> 0;
+            Prev_id when Prev_id >= Max_pkg_id -> 0;
             (Prev_id) -> Prev_id + 1
           end,
+  
   ?TRACE(?ID, "Increase Pkg, Current Pkg id ~p~n", [PkgID]),
-  share:put(SM, packet_id, PkgID),
-  PkgID - 1.
+  share:put(SM, {packet_id, Src, Dst}, PkgID),
+  io:format("*********************************** increase_pkgid LA ~p:     ~p~n", [share:get(SM, local_address), share:get(SM, {packet_id, Src, Dst})]),
+
+  PkgID.
 
 init_dets(SM) ->
   LA  = share:get(SM, local_address),
   Ref = SM#sm.dets_share,
   NL_protocol = share:get(SM, nl_protocol),
-  B = dets:lookup(Ref, NL_protocol),
-  SM1=
-  case B of
-    []  -> share:put(SM, packet_id, 0);
-    [{NL_protocol, PkgID}] ->
-      dets:insert(Ref, {NL_protocol, PkgID + 1}),
-      share:put(SM, packet_id, PkgID + 1);
-    _ -> dets:insert(Ref, {NL_protocol, 0}),
-         share:put(SM, packet_id, 0)
+  
+  case B = dets:lookup(Ref, NL_protocol) of
+    [{NL_protocol, ListIds}] ->
+      [ share:put(SM, {packet_id, S, D}, ID) || {ID, S, D} <- ListIds];
+    _ ->
+      nothing
   end,
-  B1 = dets:lookup(Ref, NL_protocol),
-  ?INFO(?ID, "Init dets LA ~p ~p~n", [LA, B1]),
-  SM1#sm{dets_share = Ref}.
 
-fill_dets(SM) ->
+  io:format("*********************************** init_dets LA ~p:   ~p~n", [share:get(SM, local_address), B]),
+
+  ?INFO(?ID, "Init dets LA ~p ~p~n", [LA, B]),
+  SM#sm{dets_share = Ref}.
+
+fill_dets(SM, Packet_id, Src, Dst) ->
   LA  = share:get(SM, local_address),
   Ref = SM#sm.dets_share,
   NL_protocol = share:get(SM, nl_protocol),
-  Packet_id = share:get(SM, packet_id),
-  dets:insert(Ref, {NL_protocol, Packet_id}),
-  B = dets:lookup(Ref, NL_protocol),
-  ?INFO(?ID, "Fill_dets LA ~p ~p~n", [LA, B] ),
-  SM#sm{dets_share = Ref}.
 
-% split_bin_comma(Bin) when is_binary(Bin) ->
-%   binary:split(Bin, <<",">>,[global]).
+  case dets:lookup(Ref, NL_protocol) of
+    [] ->
+      dets:insert(Ref, {NL_protocol, [{Packet_id, Src, Dst}]});
+    [{NL_protocol, ListIds}] ->
+      Member = lists:filtermap(fun({ID, S, D}) when S == Src, D == Dst ->
+                                 {true, ID};
+                                (_S) -> false
+                               end, ListIds),
+      LIds = 
+      case Member of
+        [] -> [{Packet_id, Src, Dst} | ListIds];
+        _  -> ListIds
+      end,
+
+      NewListIds = lists:map(fun({_, S, D}) when S == Src, D == Dst -> {Packet_id, S, D}; (T) -> T end, LIds),
+      [ share:put(SM, {packet_id, S, D}, ID) || {ID, S, D} <- NewListIds],
+      dets:insert(Ref, {NL_protocol, NewListIds});
+    _ -> nothing
+  end,
+
+  Ref1 = SM#sm.dets_share,
+  B = dets:lookup(Ref1, NL_protocol),
+  ?INFO(?ID, "Fill_dets LA ~p ~p~n", [LA, B] ),
+
+  io:format("*********************************** fill_dets LA ~p: ~p~n", [share:get(SM, local_address), B]),
+
+  SM#sm{dets_share = Ref1}.
 
 neighbours_to_list(SM,Neigbours, mac) ->
   [addr_nl2mac(SM,X) || X <- Neigbours];

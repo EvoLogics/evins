@@ -196,10 +196,6 @@ handle_event(MM, SM, Term) ->
     {sync, _Req, Answer} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
       fsm:cast(SMAT, alh, {send, {sync, Answer} });
-      % TODO:
-      %[fsm:clear_timeout(__, answer_timeout),
-      % fsm:cast(__, alh, {send, {sync, Answer}})
-      %] (SM);
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
