@@ -215,7 +215,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
 
        ?TRACE(?ID, "Route_addr ~p, MAC_addrm ~p, MAC_real_src ~p, MAC_real_dst ~p~n", [Route_addr, MAC_addr, MAC_real_src, MAC_real_dst]),
        if ((MAC_addr =:= error) or (MAC_real_src =:= error) or (MAC_real_dst =:= error)
-           or ((MAC_real_dst =:= ?BITS_ADDRESS_MAX) and Protocol#pr_conf.br_na)) ->
+           or ((MAC_real_dst =:= ?ADDRESS_MAX) and Protocol#pr_conf.br_na)) ->
             error;
           true ->
             NLarp = set_dst_addr(NL, MAC_addr),
@@ -231,7 +231,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                                 {ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}}]),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
-                 %fsm:cast(SM, nl, {send, AT}),
+                 fsm:cast(SM, nl, {send, AT}),
                  fill_dets(SM, IPacket_id, MAC_real_src, MAC_real_dst),
                  fsm:set_event(SM1, eps)
             end
@@ -265,8 +265,8 @@ create_payload_nl_flag(Flag, PkgID, Src, Dst, Data) ->
   % 6 bits DST
   % rest bits reserved for later (+ 1)
   CBitsFlag = count_flag_bits(?FLAG_MAX),
-  CBitsPkgID = count_flag_bits(?BITS_PKG_ID_MAX),
-  CBitsAddr = count_flag_bits(?BITS_ADDRESS_MAX),
+  CBitsPkgID = count_flag_bits(?PKG_ID_MAX),
+  CBitsAddr = count_flag_bits(?ADDRESS_MAX),
 
   FlagNum = ?FLAG2NUM(Flag),
   BFlag = <<FlagNum:CBitsFlag>>,
@@ -302,8 +302,8 @@ create_payload_mac_flag(Flag, Data) ->
 
 extract_payload_nl_flag(Payl) ->
   CBitsFlag = count_flag_bits(?FLAG_MAX),
-  CBitsPkgID = count_flag_bits(?BITS_PKG_ID_MAX),
-  CBitsAddr = count_flag_bits(?BITS_ADDRESS_MAX),
+  CBitsPkgID = count_flag_bits(?PKG_ID_MAX),
+  CBitsAddr = count_flag_bits(?ADDRESS_MAX),
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
   <<BFlag:CBitsFlag, BPkgID:CBitsPkgID, BSrc:CBitsAddr, BDst:CBitsAddr, Rest/bitstring>> = Payl,
   if Data_bin =:= false ->
@@ -360,7 +360,7 @@ create_path_data(Path, TransmitLen, Data) ->
   LenPath = length(Path),
   CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
   TypeNum = ?TYPEMSG2NUM(path_data),
 
   BLenData = <<TransmitLen:CBitsMaxLenData>>,
@@ -374,7 +374,7 @@ create_path_data(Path, TransmitLen, Data) ->
 
 extract_path_data(SM, Payl) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
   CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
 
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
@@ -398,15 +398,15 @@ extract_path_data(SM, Payl) ->
   end.
 
 decode_header(neighbours, Neighbours) ->
-  W = count_flag_bits(?BITS_LEN_NEIGBOURS),
+  W = count_flag_bits(?MAX_LEN_NEIGBOURS),
   [N || <<N:W>> <= Neighbours];
 
 decode_header(path, Paths) ->
-  W = count_flag_bits(?BITS_LEN_PATH),
+  W = count_flag_bits(?MAX_LEN_PATH),
   [P || <<P:W>> <= Paths];
 
 decode_header(add, AddInfos) ->
-  W = count_flag_bits(?BITS_ADD),
+  W = count_flag_bits(?ADD_INFO_MAX),
   [N || <<N:W>> <= AddInfos].
 
 extract_header(Id, LenWidth, FieldWidth, Input) ->
@@ -416,15 +416,15 @@ extract_header(Id, LenWidth, FieldWidth, Input) ->
   {decode_header(Id, BField), Rest}.
 
 code_header(neighbours, Neighbours) ->
-  W = count_flag_bits(?BITS_LEN_NEIGBOURS),
+  W = count_flag_bits(?MAX_LEN_NEIGBOURS),
   << <<N:W>> || N <- Neighbours>>;
 
 code_header(path, Paths) ->
-  W = count_flag_bits(?BITS_LEN_PATH),
+  W = count_flag_bits(?MAX_LEN_PATH),
   << <<N:W>> || N <- Paths>>;
 
 code_header(add, AddInfos) ->
-  W = count_flag_bits(?BITS_ADD),
+  W = count_flag_bits(?ADD_INFO_MAX),
   Saturated_integrities = lists:map(fun(S) when S > 255 -> 255; (S) -> S end, AddInfos),
   << <<N:W>> || N <- Saturated_integrities>>.
 
@@ -448,7 +448,7 @@ parse_path_data(SM, Payl) ->
 %   6b            REST till / 8
 %   Counthops     ADD
 create_ack(CountHops) ->
-  CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
   BCountHops = <<CountHops:CBitsLenPath>>,
   Data_bin = is_binary(BCountHops) =:= false or ( (bit_size(BCountHops) rem 8) =/= 0),
   if Data_bin =:= false ->
@@ -459,7 +459,7 @@ create_ack(CountHops) ->
    end.
 
 extract_ack(SM, Payl) ->
-   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+   CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
    <<CountHops:CBitsLenPath, _Rest/bitstring>> = Payl,
    ?TRACE(?ID, "extract_ack CountHops ~p ~n", [CountHops]),
    CountHops.
@@ -470,7 +470,7 @@ extract_ack(SM, Payl) ->
 create_neighbours(Neighbours) ->
   LenNeighbours = length(Neighbours),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
+  CBitsLenNeigbours = count_flag_bits(?MAX_LEN_NEIGBOURS),
   TypeNum = ?TYPEMSG2NUM(neighbours),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
@@ -490,8 +490,8 @@ create_neighbours_path(Neighbours, Path) ->
   LenNeighbours = length(Neighbours),
   LenPath = length(Path),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
-  CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+  CBitsLenNeigbours = count_flag_bits(?MAX_LEN_NEIGBOURS),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
   TypeNum = ?TYPEMSG2NUM(neighbours_path),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
@@ -516,8 +516,8 @@ create_neighbours_path(Neighbours, Path) ->
 extract_neighbours_path(SM, Payl) ->
   try
     CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-    CBitsLenNeigbours = count_flag_bits(?BITS_LEN_NEIGBOURS),
-    CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+    CBitsLenNeigbours = count_flag_bits(?MAX_LEN_NEIGBOURS),
+    CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
 
     <<BType:CBitsTypeMsg, NeighboursRest/bitstring>> = Payl,
 
@@ -543,8 +543,8 @@ create_path_addit(Path, Additional) ->
   LenPath = length(Path),
   LenAdd = length(Additional),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
-  CBitsLenAdd = count_flag_bits(?BITS_LEN_ADD),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
+  CBitsLenAdd = count_flag_bits(?LEN_ADD),
   TypeNum = ?TYPEMSG2NUM(path_addit),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
@@ -567,9 +567,9 @@ create_path_addit(Path, Additional) ->
 
 extract_path_addit(SM, Payl) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
-  CBitsLenAdd = count_flag_bits(?BITS_LEN_ADD),
-  CBitsAdd = count_flag_bits(?BITS_ADD),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
+  CBitsLenAdd = count_flag_bits(?LEN_ADD),
+  CBitsAdd = count_flag_bits(?ADD_INFO_MAX),
 
   <<BType:CBitsTypeMsg, PathRest/bitstring>> = Payl,
   {Path, AddRest} = extract_header(path, CBitsLenPath, CBitsLenPath, PathRest),
@@ -626,15 +626,15 @@ get_routing_addr(SM, Flag, AddrSrc) ->
   Protocol = share:get(SM, protocol_config, NProtocol),
   case required_routing(Flag, Protocol, NProtocol) of
     true -> find_in_routing_table(share:get(SM, routing_table), AddrSrc);
-    false -> ?BITS_ADDRESS_MAX
+    false -> ?ADDRESS_MAX
   end.
 
-find_in_routing_table(?BITS_ADDRESS_MAX, _) -> ?BITS_ADDRESS_MAX;
+find_in_routing_table(?ADDRESS_MAX, _) -> ?ADDRESS_MAX;
 find_in_routing_table([], _) -> no_routing_table;
 find_in_routing_table(Routing_table, AddrSrc) ->
   case lists:keyfind(AddrSrc, 1, Routing_table) of
     {_, To} -> To;
-    false -> ?BITS_ADDRESS_MAX
+    false -> ?ADDRESS_MAX
   end.
 
 convert_la(SM, Type, Format) ->
@@ -671,7 +671,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src
   NPath = [MAC_addr | BPath],
 
   case get_routing_addr(SM, path, Real_dst) of
-    ?BITS_ADDRESS_MAX -> nothing;
+    ?ADDRESS_MAX -> nothing;
     _ -> analyse(SM1, paths, NPath, {Real_src, Real_dst})
   end,
 
@@ -858,7 +858,7 @@ process_route_table_helper(SM, FromAddr, NListPath) ->
       end
   end.
 process_route_table(SM, [],_, Routing_table) ->
-  [SM, lists:reverse([?BITS_ADDRESS_MAX | Routing_table]) ];
+  [SM, lists:reverse([?ADDRESS_MAX | Routing_table]) ];
 process_route_table(SM, [H | T], NLFrom, Routing_table) ->
   SM1 = fsm:set_timeout(SM, {s, share:get(SM, path_life)}, {path_life, {H, NLFrom}}),
   process_route_table(SM1, T, NLFrom, [ {H, NLFrom} | Routing_table]).
@@ -884,7 +884,7 @@ save_path(SM, {Flag,_} = Params, Tuple) ->
 
 update_route_table(SM, NRouting_table) ->
   ORouting_table = share:get(SM, routing_table),
-  LRouting_table = if ORouting_table =:= ?BITS_ADDRESS_MAX -> [?BITS_ADDRESS_MAX]; true -> ORouting_table end,
+  LRouting_table = if ORouting_table =:= ?ADDRESS_MAX -> [?ADDRESS_MAX]; true -> ORouting_table end,
   SMN1 =
   lists:foldr(
      fun(X, SMTmp) ->
@@ -1090,8 +1090,8 @@ routing_to_bin(SM) ->
   Routing_table = share:get(SM, routing_table),
   Local_address = share:get(SM, local_address),
   case Routing_table of
-    ?BITS_ADDRESS_MAX ->
-      list_to_binary(["default->",integer_to_binary(?BITS_ADDRESS_MAX)]);
+    ?ADDRESS_MAX ->
+      list_to_binary(["default->",integer_to_binary(?ADDRESS_MAX)]);
     _ ->
       Path = lists:filtermap(fun({From, To}) when From =/= Local_address ->
                                  {true, [integer_to_binary(From),"->",integer_to_binary(To)]};

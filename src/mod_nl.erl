@@ -134,7 +134,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
 
   Blacklist                       = set_blacklist(Bll_addrs, []),
-  Routing_table                   = set_routing(Routing_addrs, NL_Protocol, ?BITS_ADDRESS_MAX),
+  Routing_table                   = set_routing(Routing_addrs, NL_Protocol, ?ADDRESS_MAX),
   Probability                     = set_params(Prob_set, {0.4, 0.9}),
 
   Max_hops        = set_params(Max_hops_Set, 8),
@@ -163,7 +163,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {min_rtt, RTT},
                       {path_life, Path_life},
                       {neighbour_life, Neighbour_life},
-                      {max_pkg_id, ?BITS_ADDRESS_MAX},
+                      {max_pkg_id, ?PKG_ID_MAX},
                       {rtt, RTT + RTT/2},
                       {send_wv_dbl_tmo, Tmo_dbl_wv},
                       {probability, Probability}]),
@@ -258,6 +258,6 @@ set_routing(Routing_addrs, NL_Protocol, Default) ->
       Default;
     _ when (Routing_addrs =/= []) ->
       [TupleRouting] = Routing_addrs,
-      [{?BITS_ADDRESS_MAX, ?BITS_ADDRESS_MAX} | tuple_to_list(TupleRouting)];
+      [{?ADDRESS_MAX, ?ADDRESS_MAX} | tuple_to_list(TupleRouting)];
     _ -> Default
   end.

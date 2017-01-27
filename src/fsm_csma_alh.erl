@@ -161,10 +161,6 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
-   % {rcv_ul, {other, Msg}} ->
-   %   try_send_at_command(SM, {at, binary_to_list(Msg), ""});
-   % {rcv_ul, {command, C}} ->
-   %   try_send_at_command(SM, {at, binary_to_list(C), ""});
     {rcv_ul, {at, _, _, _, _}} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;

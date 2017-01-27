@@ -50,12 +50,12 @@
 %---------------------------------------------
 -define(FLAG_MAX, 5).
 -define(TYPE_MSG_MAX, 5).
--define(BITS_PKG_ID_MAX, 255).
--define(BITS_ADDRESS_MAX, 63).
--define(BITS_LEN_PATH, 63).
--define(BITS_LEN_NEIGBOURS, 63).
--define(BITS_LEN_ADD, 3).
--define(BITS_ADD, 255).
+-define(PKG_ID_MAX, 255).
+-define(ADDRESS_MAX, 63).
+-define(MAX_LEN_PATH, 63).
+-define(MAX_LEN_NEIGBOURS, 63).
+-define(LEN_ADD, 3).
+-define(ADD_INFO_MAX, 255).
 -define(MAX_DATA_LEN, 64).
 
 -define(LIST_ALL_PROTOCOLS, [staticr,
@@ -218,8 +218,8 @@
 			      {7, 7},
 			      {8, 8},
 			      {9, 9},
-			      {255, ?BITS_ADDRESS_MAX},
-			      {?BITS_ADDRESS_MAX, 255}
+			      {255, ?ADDRESS_MAX},
+			      {?ADDRESS_MAX, 255}
 			     ]).
 
 -define(FLAG2NUM(F),
