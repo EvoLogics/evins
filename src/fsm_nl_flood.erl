@@ -709,8 +709,11 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
     _ -> <<"">>
   end,
 
-  PPkg_id   = nl_mac_hf:process_pkg_id(SM, {NLSrcAT, NLDstAT}, {RemotePkgID, RecvNLSrc, RecvNLDst, PTail}),
+  PPkg_id   = nl_mac_hf:process_pkg_id(SM, {Flag, RemotePkgID, RecvNLSrc, RecvNLDst, PTail}),
   ?TRACE(?ID, "process_pkg_id ~p~n",[PPkg_id]),
+
+  %LocalPkgID = share:get(SM, {packet_id, RecvNLSrc, RecvNLDst}),
+  %io:format("!!!!!!!!!!!!!!!!!!!!!! ~p : la ~p   :  ~p -> ~p     flag ~p  localID ~p remoteID ~p~n", [PPkg_id, Local_address, RecvNLSrc, RecvNLDst, Flag, LocalPkgID, RemotePkgID]),
 
   RParams   = {Flag, [RemotePkgID, RecvNLSrc, [IRssi, IIntegrity] ]},
   RAsyncTuple = {async, {nl, recv, RecvNLSrc, RecvNLDst, Tail}},
