@@ -165,20 +165,18 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
-      share:put(SM, {retransmit_count, Msg}, 0),
       share:put(SM, current_msg, Msg),
-      SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
-      SM2 = nl_mac_hf:process_send_payload(SM1, Msg),
-      fsm:run_event(MM, SM2#sm{event = rcv_ul}, {rcv_ul, Msg});
+      share:put(SM, {retransmit_count, Msg}, 0),
+      SM1 = nl_mac_hf:process_send_payload(SM, Msg),
+      fsm:run_event(MM, SM1#sm{event = rcv_ul}, {rcv_ul, Msg});
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
     {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, Payload}} ->
       ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [Tuple]),
-      Current_msg = share:get(SM, current_msg),
-      SM1 = nl_mac_hf:process_rcv_payload(SM, Current_msg, Payload),
+      SM1 = nl_mac_hf:process_rcv_payload(SM, Payload),
       [H | T] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
-      fsm:cast(SM, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
+      fsm:cast(SM1, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
       fsm:run_event(MM, SM1, {});
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
@@ -231,6 +229,7 @@ handle_write_alh(_MM, #sm{event = backoff_timeout} = SM, Term) ->
       SM1#sm{event = internal};
     Msg ->
      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
+     share:clean(SM, current_msg),
      fsm:set_event(fsm:send_at_command(SM, Msg), data_sent)
    end;
 handle_write_alh(_MM, SM, Term = {rcv_ul, Msg}) ->
@@ -238,6 +237,7 @@ handle_write_alh(_MM, SM, Term = {rcv_ul, Msg}) ->
   SM1 = fsm:clear_timeout(SM, backoff_timeout),
   change_backoff(SM1, decrement),
   ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
+  share:clean(SM, current_msg),
   fsm:set_event(fsm:send_at_command(SM, Msg), data_sent).
 
 -spec handle_alarm(any(), any(), any()) -> no_return().

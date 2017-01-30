@@ -60,7 +60,7 @@
 %% command functions
 -export([process_command/3, save_stat_time/3, update_states_list/1, save_stat_total/2]).
 %% Only MAC functions
--export([process_rcv_payload/3, process_send_payload/2, process_retransmit/3]).
+-export([process_rcv_payload/2, process_send_payload/2, process_retransmit/3]).
 %% Other functions
 -export([bin_to_num/1, increase_pkgid/3, add_item_to_queue/4, analyse/4]).
 %%--------------------------------------------------- Convert types functions -----------------------------------------------
@@ -129,6 +129,14 @@ clear_spec_timeout(SM, Spec) ->
                end, SM#sm.timeouts),
   SM#sm{timeouts = TRefList}.
 
+get_params_spec_timeout(SM, Spec) ->
+  lists:filtermap(
+   fun({E, _TRef}) ->
+     case E of
+       {Spec, P} -> {true, P};
+       _  -> false
+     end
+  end, SM#sm.timeouts).
 %%--------------------------------------------------- Math functions -----------------------------------------------
 rand_float(SM, Random_interval) ->
   {Start, End} = share:get(SM, Random_interval),
@@ -251,36 +259,40 @@ nl2at (SM, Tuple) when is_tuple(Tuple)->
   ETSPID =  list_to_binary(["p", integer_to_binary(share:get(SM, pid))]),
   case Tuple of
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  ->
-      NewData = create_payload_nl_flag(Flag, BPacket_id, MAC_real_src, MAC_real_dst, Data),
+      %% TODO: TTL generated on NL layer is always 0, MAC layer inreases it, due to retransmissions
+      NewData = create_payload_nl_flag(Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
       {at,"*SENDIM", ETSPID, byte_size(NewData), IDst, noack, NewData};
     _ ->
       error
   end.
 
 %%------------------------- Extract functions ----------------------------------
-create_payload_nl_flag(Flag, PkgID, Src, Dst, Data) ->
+create_payload_nl_flag(Flag, PkgID, TTL, Src, Dst, Data) ->
   % 3 first bits Flag (if max Flag vbalue is 5)
-  % 8 bits PkgID
+  % 6 bits PkgID
+  % 2 bits TTL
   % 6 bits SRC
   % 6 bits DST
   % rest bits reserved for later (+ 1)
   CBitsFlag = count_flag_bits(?FLAG_MAX),
   CBitsPkgID = count_flag_bits(?PKG_ID_MAX),
+  CBitsTTL = count_flag_bits(?TTL),
   CBitsAddr = count_flag_bits(?ADDRESS_MAX),
 
   FlagNum = ?FLAG2NUM(Flag),
   BFlag = <<FlagNum:CBitsFlag>>,
 
   BPkgID = <<PkgID:CBitsPkgID>>,
+  BTTL = <<TTL:CBitsTTL>>,
   BSrc = <<Src:CBitsAddr>>,
   BDst = <<Dst:CBitsAddr>>,
 
-  TmpData = <<BFlag/bitstring, BPkgID/bitstring, BSrc/bitstring, BDst/bitstring, Data/binary>>,
+  TmpData = <<BFlag/bitstring, BPkgID/bitstring, BTTL/bitstring, BSrc/bitstring, BDst/bitstring, Data/binary>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
 
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<BFlag/bitstring, BPkgID/bitstring, BSrc/bitstring, BDst/bitstring, 0:Add, Data/binary>>;
+    <<BFlag/bitstring, BPkgID/bitstring, BTTL/bitstring, BSrc/bitstring, BDst/bitstring, 0:Add, Data/binary>>;
   true ->
     TmpData
   end.
@@ -303,15 +315,17 @@ create_payload_mac_flag(Flag, Data) ->
 extract_payload_nl_flag(Payl) ->
   CBitsFlag = count_flag_bits(?FLAG_MAX),
   CBitsPkgID = count_flag_bits(?PKG_ID_MAX),
+  CBitsTTL = count_flag_bits(?TTL),
   CBitsAddr = count_flag_bits(?ADDRESS_MAX),
+
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
-  <<BFlag:CBitsFlag, BPkgID:CBitsPkgID, BSrc:CBitsAddr, BDst:CBitsAddr, Rest/bitstring>> = Payl,
+  <<BFlag:CBitsFlag, BPkgID:CBitsPkgID, BTTL:CBitsTTL, BSrc:CBitsAddr, BDst:CBitsAddr, Rest/bitstring>> = Payl,
   if Data_bin =:= false ->
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
-    [BFlag, BPkgID, BSrc, BDst, Data];
+    [BFlag, BPkgID, BTTL, BSrc, BDst, Data];
   true ->
-    [BFlag, BPkgID, BSrc, BDst, Rest]
+    [BFlag, BPkgID, BTTL, BSrc, BDst, Rest]
   end.
 
 extract_payload_mac_flag(Payl) ->
@@ -1112,87 +1126,71 @@ add_item_to_queue(SM, Qname, Item, Max) ->
   share:put(SM, Qname, queue:in(Item, NewQ)).
 
 %%--------------------------------------------------  Only MAC functions -------------------------------------------
-process_rcv_payload(SM, nothing, _Payload) ->
+process_rcv_payload(SM, <<"t">>) ->
   SM;
-process_rcv_payload(SM, CurrentMsg, RcvPayload) ->
-  PP = parse_payload(SM, RcvPayload),
-  [PFlag, SM1, HRcvPayload] =
-  case PP of
-    [relay, Payload] ->
-      [relay, SM, Payload];
-    [reverse, Payload] ->
-      [reverse, SM, Payload];
-    [ack, Payload] ->
-      [ack, SM, Payload];
-    [dst, Payload] ->
-      [dst, clear_spec_timeout(SM, retransmit), Payload]
-  end,
-
-  {at, _PID, _, _, _, CurrentPayload} = CurrentMsg,
-  [_CRole, HCurrentPayload] = parse_payload(SM, CurrentPayload),
-  check_payload(SM1, PFlag, HRcvPayload, HCurrentPayload).
-
-parse_payload(SM, Payload) ->
-  try
-    [Flag, PkgID, Dst, Src, _Data] = extract_payload_nl_flag(Payload),
-    ?TRACE(?ID, "parse_payload Flag ~p PkgID ~p Dst ~p Src ~p~n",
-          [num2flag(Flag, nl), PkgID, Dst, Src]),
-    [check_dst(Flag), {PkgID, Dst, Src}]
-  catch error: Reason ->
-    ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
-    [relay, Payload]
-  end.
-
-check_payload(SM, _, <<"t">>, _) ->
-  SM;
-check_payload(SM, Flag, HRcvPayload, {PkgID, Dst, Src}) ->
-  HCurrentPayload = {PkgID, Dst, Src},
-  RevCurrentPayload = {PkgID, Src, Dst},
-  ExactTheSame = (HCurrentPayload == HRcvPayload),
-  IfDstReached = (Flag == dst),
-  AckReversed = (( Flag == ack ) and (RevCurrentPayload == HRcvPayload)),
-
-  if (ExactTheSame or IfDstReached or AckReversed) ->
-       share:clean(SM, current_msg),
-       clear_spec_timeout(SM, retransmit);
-    true ->
-       SM
-  end;
-check_payload(SM, _, _, _) ->
-  SM.
-
-check_dst(Flag) ->
-  case num2flag(Flag, nl) of
-    dst_reached -> dst;
-    ack -> ack;
-    path -> reverse;
-    path_addit -> reverse;
-    _ -> relay
-  end.
-
-process_send_payload(SM, Msg) ->
-  {at, _PID, _, _, _, Payload} = Msg,
-  share:clean(SM, data_to_sent),
-  case parse_payload(SM, Payload) of
-    [Flag, _P] when Flag == reverse; Flag == relay; Flag =:= ack ->
-      SM1 = clear_spec_timeout(SM, retransmit),
-      Tmo_retransmit = rand_float(SM, tmo_retransmit),
-      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, Msg});
-    [dst, _P] ->
+process_rcv_payload(SM, RcvPayload) ->
+  % data stored to retransmit
+  StoredRetransmit = get_params_spec_timeout(SM, retransmit),
+  case StoredRetransmit of
+    [] ->
       SM;
     _ ->
-      SM
+      [{at, _PID, _, _, _, StoredRetransmitPayload}] = StoredRetransmit,
+      [BRetrFlag, RetrPkgID, RetrTTL, RetrSrc, RetrDst, _RetrData] = extract_payload_nl_flag(StoredRetransmitPayload),
+      % data received, has to be processed to clear retransmit
+      [BRecvFlag, RecvPkgID, RecvTTL, RecvSrc, RecvDst, _RecvData] = extract_payload_nl_flag(RcvPayload),
+
+      RetrFlag = num2flag(BRetrFlag, nl),
+      RecvFlag = num2flag(BRecvFlag, nl),
+
+      ?TRACE(?ID, "<<<<<<<<<<<<<<<<<<< LA ~p    Flag ~p PkgID ~p RetrTTL ~p Dst ~p Src ~p~n",
+              [share:get(SM, local_address), RetrFlag, RetrPkgID, RetrTTL, RetrSrc, RetrDst]),
+
+      ?TRACE(?ID, ">>>>>>>>>>>>>>>>>>> LA ~p    Flag ~p PkgID ~p RetrTTL ~p Dst ~p Src ~p~n",
+              [share:get(SM, local_address), RecvFlag, RecvPkgID, RecvTTL, RecvSrc, RecvDst]),
+
+      Pkg_id = sequence_more_recent(RetrPkgID, RecvPkgID, ?PKG_ID_MAX),
+      case RetrFlag of
+        _ when RecvFlag == dst_reached ->
+          clear_spec_timeout(SM, retransmit);
+        Flag when Flag =/= dst_reached,
+                  RecvFlag == Flag, Pkg_id == new, RetrSrc == RecvSrc, RetrDst == RecvDst ->
+          clear_spec_timeout(SM, retransmit);
+        Flag when Flag =/= dst_reached, Flag =/= ack, Flag =/= path, RecvFlag == ack, RetrSrc == RecvDst, RetrDst == RecvSrc;
+                  Flag =/= dst_reached, Flag =/= ack, Flag =/= path, RecvFlag == dst_reached;
+                  Flag =/= dst_reached, Flag =/= ack, Flag =/= path, RecvFlag == path, RetrSrc == RecvDst, RetrDst == RecvSrc ->
+          clear_spec_timeout(SM, retransmit);
+        dst_reached ->
+          clear_spec_timeout(SM, retransmit);
+        _ ->
+          SM
+      end
+  end.
+
+sequence_more_recent(S1, S2, Max) ->
+  if ( (S1 == S2) or (( S1 >= S2 ) and ( S1 - S2 =< Max / 2 )) or (( S2 >= S1 ) and ( S2 - S1  > Max / 2 ))) -> new;
+    true -> old
+  end.
+
+process_send_payload(SM, {at, _PID, _, _, _, <<"t">>}) ->
+  SM;
+process_send_payload(SM, Msg = {at, _PID, _, _, _, Payload}) ->
+  SM1 = clear_spec_timeout(SM, retransmit),
+  [Flag, _PkgID, _TTL, _Src, _Dst, _Data] = extract_payload_nl_flag(Payload),
+  case Flag of
+    dst_reached ->
+      SM1;
+    _ ->
+      % TODO : INCREASE TTL
+      Tmo_retransmit = rand_float(SM1, tmo_retransmit),
+      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, Msg})
   end.
 
 process_retransmit(SM, Msg, Ev) ->
   Retransmit_count = share:get(SM, retransmit_count, Msg),
   Max_retransmit_count = share:get(SM, max_retransmit_count),
   ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
-
   case Retransmit_count of
-    nothing -> 
-      share:put(SM, retransmit_count, Msg, 0),
-      [SM#sm{event = Ev}, {Ev, Msg}];
     _ when Retransmit_count < Max_retransmit_count - 1 ->
       share:put(SM, retransmit_count, Msg, Retransmit_count + 1),
       SM1 = process_send_payload(SM, Msg),

@@ -28,8 +28,8 @@
 
 
 %--------------- MAIN HEADER -----------------
-% 	3b			8b			6b			6b			1b
-%		Flag 		PKGID 	SRC 		DST 		ADD
+% 	3b			6b			2b 			6b			6b			1b
+%		Flag 		PKGID 	TTL			SRC 		DST 		ADD
 %---------------------------------------------
 %--------------- PROTOCOL HEADER -----------------
 %-------> data
@@ -50,7 +50,8 @@
 %---------------------------------------------
 -define(FLAG_MAX, 5).
 -define(TYPE_MSG_MAX, 5).
--define(PKG_ID_MAX, 255).
+-define(TTL, 3).
+-define(PKG_ID_MAX, 63).
 -define(ADDRESS_MAX, 63).
 -define(MAX_LEN_PATH, 63).
 -define(MAX_LEN_NEIGBOURS, 63).
