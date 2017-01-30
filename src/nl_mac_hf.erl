@@ -1046,7 +1046,7 @@ increase_pkgid(SM, Src, Dst) ->
 init_dets(SM) ->
   LA  = share:get(SM, local_address),
   Ref = SM#sm.dets_share,
-  NL_protocol = share:get(SM, nl_protocol),
+  NL_protocol = share:get(SM, np),
   
   case B = dets:lookup(Ref, NL_protocol) of
     [{NL_protocol, ListIds}] ->
@@ -1062,7 +1062,7 @@ init_dets(SM) ->
 fill_dets(SM, Packet_id, Src, Dst) ->
   LA  = share:get(SM, local_address),
   Ref = SM#sm.dets_share,
-  NL_protocol = share:get(SM, nl_protocol),
+  NL_protocol = share:get(SM, np),
 
   case dets:lookup(Ref, NL_protocol) of
     [] ->
