@@ -660,7 +660,7 @@ process_recv(SM, L) ->
        case lists:member(NLSrcAT, Blacklist) of
          false ->
            %!!!!!!
-           fsm:cast(SM, nl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
+           %fsm:cast(SM, nl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
            case IDst of
               255 ->
                 Params = [NLSrcAT, NLDstAT, IRssi, IIntegrity],
@@ -692,7 +692,7 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
   Protocol    = share:get(SM, protocol_config, share:get(SM, np)),
 
   [NLSrcAT, NLDstAT, IRssi, IIntegrity] = RcvParams,
-  [BFlag, Pkg_id, Real_src, Real_dst, Tail] = DataParams,
+  [BFlag, Pkg_id, TTL, Real_src, Real_dst, Tail] = DataParams,
 
   Flag = nl_mac_hf:num2flag(BFlag, nl),
   RemotePkgID = Pkg_id,
@@ -709,11 +709,11 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
     _ -> <<"">>
   end,
 
-  PPkg_id   = nl_mac_hf:process_pkg_id(SM, {Flag, RemotePkgID, RecvNLSrc, RecvNLDst, PTail}),
+  PPkg_id   = nl_mac_hf:process_pkg_id(SM, TTL, {Flag, TTL, RemotePkgID, RecvNLSrc, RecvNLDst, PTail}),
   ?TRACE(?ID, "process_pkg_id ~p~n",[PPkg_id]),
 
-  %LocalPkgID = share:get(SM, {packet_id, RecvNLSrc, RecvNLDst}),
-  %io:format("!!!!!!!!!!!!!!!!!!!!!! ~p : la ~p   :  ~p -> ~p     flag ~p  localID ~p remoteID ~p~n", [PPkg_id, Local_address, RecvNLSrc, RecvNLDst, Flag, LocalPkgID, RemotePkgID]),
+  LocalPkgID = share:get(SM, {packet_id, RecvNLSrc, RecvNLDst}),
+  ?TRACE(?ID, " ~p : la ~p   :  ~p -> ~p     flag ~p  localID ~p remoteID ~p~n", [PPkg_id, Local_address, RecvNLSrc, RecvNLDst, Flag, LocalPkgID, RemotePkgID]),
 
   RParams   = {Flag, [RemotePkgID, RecvNLSrc, [IRssi, IIntegrity] ]},
   RAsyncTuple = {async, {nl, recv, RecvNLSrc, RecvNLDst, Tail}},

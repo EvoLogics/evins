@@ -54,7 +54,7 @@
 %% Parse NL functions
 -export([prepare_send_path/3, parse_path/3, save_path/3]).
 %% Process NL functions
--export([add_neighbours/5, process_pkg_id/2, process_relay/2, process_path_life/2, routing_to_bin/1, check_dubl_in_path/2]).
+-export([add_neighbours/5, process_pkg_id/3, process_relay/2, process_path_life/2, routing_to_bin/1, check_dubl_in_path/2]).
 %% RTT functions
 -export([getRTT/2, smooth_RTT/3]).
 %% command functions
@@ -239,7 +239,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                                 {ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}}]),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
-                 fsm:cast(SM, nl, {send, AT}),
+                 %fsm:cast(SM, nl, {send, AT}),
                  fill_dets(SM, IPacket_id, MAC_real_src, MAC_real_dst),
                  fsm:set_event(SM1, eps)
             end
@@ -928,39 +928,38 @@ update_route_table(SM, NRouting_table) ->
 % check if same package was received from other src dst,
 % if yes  -> share:put(SM, queue_ids, NewQ), processed
 % if no -> share:put(SM, queue_ids, queue:in(NTuple, NewQ)), not_processed
-process_pkg_id(SM, Tuple) ->
- % Local_address = share:get(SM, local_address),
-  %LocalPkgID = share:get(SM, {packet_id, RecvNLSrc, RecvNLDst}),
+process_pkg_id(SM, TTL, Tuple) ->
+  % Local_address = share:get(SM, local_address),
+  % LocalPkgID = share:get(SM, {packet_id, RecvNLSrc, RecvNLDst}),
   
-  %Max_pkg_id = share:get(SM, max_pkg_id),
-  %MoreRecent = sequence_more_recent(RemotePkgID, LocalPkgID, Max_pkg_id),
-  
-  %% not to relay packets with older ids
-  % case MoreRecent of
-  %   true when (RecvNLSrc =:= Local_address) -> processed;
-  %   _ ->
-  %     Queue_ids = share:get(SM, queue_ids),
-  %     case queue:member(Tuple, Queue_ids) of
-  %       true  ->
-  %         share:put(SM, queue_ids, Queue_ids),
-  %         processed;
-  %       false ->
-  %         NewQ = queue_limited_push(Queue_ids, Tuple, 10),
-  %         share:put(SM, queue_ids, NewQ),
-  %         not_processed
-  %     end
-  % end.
-
   Queue_ids = share:get(SM, queue_ids),
-  case queue:member(Tuple, Queue_ids) of
-    true  ->
-      share:put(SM, queue_ids, Queue_ids),
-      processed;
-    false ->
-      NewQ = queue_limited_push(Queue_ids, Tuple, 10),
+  Member = queue:member(Tuple, Queue_ids),
+  [StoredTTL, NQueue_ids] = searchKey(Member, Queue_ids, Tuple, queue:new(), nothing),
+
+  case StoredTTL of
+    nothing ->
+      NewQ = queue_limited_push(NQueue_ids, Tuple, 10),
       share:put(SM, queue_ids, NewQ),
-      not_processed
+      not_processed;
+    _ when TTL > StoredTTL ->
+      share:put(SM, queue_ids, NQueue_ids),
+      not_processed;
+    _  ->
+      share:put(SM, queue_ids, NQueue_ids),
+      processed
   end.
+
+searchKey(_, {[],[]}, _Tuple, NQ, TTL) ->
+  [TTL, NQ];
+searchKey(Member, Q, {Flag, _CurrentTTL, ID, S, D, Data} = Tuple, NQ, TTL) ->
+  {{value, CTuple}, Q1} = queue:out(Q),
+  case CTuple of
+    {Flag, StoredTTL, ID, S, D, Data} ->
+      searchKey(Member, Q1, Tuple, queue:in(Tuple, NQ), StoredTTL);
+    _ ->
+      searchKey(Member, Q1, Tuple, queue:in(CTuple, NQ), TTL)
+  end.
+
 %%--------------------------------------------------  RTT functions -------------------------------------------
 getRTT(SM, RTTTuple) ->
   case share:get(SM, RTTTuple) of
@@ -1177,11 +1176,11 @@ process_send_payload(SM, {at, _PID, _, _, _, <<"t">>}) ->
 process_send_payload(SM, Msg = {at, _PID, _, _, _, Payload}) ->
   SM1 = clear_spec_timeout(SM, retransmit),
   [Flag, _PkgID, _TTL, _Src, _Dst, _Data] = extract_payload_nl_flag(Payload),
-  case Flag of
+
+  case num2flag(Flag, nl) of
     dst_reached ->
       SM1;
     _ ->
-      % TODO : INCREASE TTL
       Tmo_retransmit = rand_float(SM1, tmo_retransmit),
       fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, Msg})
   end.
@@ -1192,11 +1191,23 @@ process_retransmit(SM, Msg, Ev) ->
   ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
   case Retransmit_count of
     _ when Retransmit_count < Max_retransmit_count - 1 ->
-      share:put(SM, retransmit_count, Msg, Retransmit_count + 1),
-      SM1 = process_send_payload(SM, Msg),
-      [SM1#sm{event = Ev}, {Ev, Msg}];
+      % TODO : INCREASE TTL
+      {at, PID, Type, ATDst, FlagAck, Payload} = Msg,
+      [Flag, PkgID, TTL, Src, Dst, Data] = extract_payload_nl_flag(Payload),
+      NewMsg = create_payload_nl_flag(num2flag(Flag, nl), PkgID, increaseTTL(TTL), Src, Dst, Data),
+      AT = {at, PID, Type, ATDst, FlagAck, NewMsg},
+      share:put(SM, retransmit_count, AT, Retransmit_count + 1),
+      SM1 = process_send_payload(SM, AT),
+      [SM1#sm{event = Ev}, {Ev, AT}];
     _ ->
       [SM, {}]
+  end.
+
+increaseTTL(CurrentTTL) ->
+  if(CurrentTTL < ?TTL) ->
+      CurrentTTL + 1;
+  true ->
+    ?TTL
   end.
 %%--------------------------------------------------  command functions -------------------------------------------
 process_command(SM, Debug, Command) ->
