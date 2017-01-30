@@ -113,9 +113,10 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Addr_set      = [Addrs          || {local_addr, Addrs} <- ArgS],
   Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
   Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
-  Max_address_set   = [Addrs          || {max_address, Addrs} <- ArgS],
+  Max_address_set   = [Addrs      || {max_address, Addrs} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
   Max_hops_Set  = [Hops           || {max_hops, Hops} <- ArgS],
+  Pkg_life_Set  = [Time           || {pkg_life, Time} <- ArgS],
 
   Tmo_wv            = [Time || {tmo_wv, Time} <- ArgS],
   Tmo_wack          = [Time || {tmo_wack, Time} <- ArgS],
@@ -128,6 +129,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
+  Pkg_life        = set_params(Pkg_life_Set, 180), % in sek
 
   {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {0.3, 0.9}),
   {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {0.3, 0.9}),
@@ -166,7 +168,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {max_pkg_id, ?PKG_ID_MAX},
                       {rtt, RTT + RTT/2},
                       {send_wv_dbl_tmo, Tmo_dbl_wv},
-                      {probability, Probability}]),
+                      {probability, Probability},
+                      {pkg_life, Pkg_life}]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
   ?TRACE(Mod_ID, "Routing Table ~p ~n", [Routing_table]),
@@ -179,6 +182,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ?TRACE(Mod_ID, "Wait Tmo_path ~p ~n", [WTmo_path]),
   ?TRACE(Mod_ID, "Path_life ~p ~n", [Path_life]),
   ?TRACE(Mod_ID, "Neighbour_life ~p ~n", [Neighbour_life]),
+  ?TRACE(Mod_ID, "Pkg_life ~p ~n", [Pkg_life]),
 
   NL_Protocol.
 

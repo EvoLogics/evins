@@ -39,7 +39,7 @@
 %% handle events
 -export([event_params/3, clear_spec_timeout/2]).
 %% Math functions
--export([rand_float/2, lerp/3]).
+-export([rand_float/2, lerp/3, deleteQKey/3]).
 %% Addressing functions
 -export([init_nl_addrs/1, get_dst_addr/1, set_dst_addr/2]).
 -export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1]).
@@ -926,38 +926,47 @@ update_route_table(SM, NRouting_table) ->
   share:put(SMN2, routing_table, Routing_table).
 
 % check if same package was received from other src dst,
-% if yes  -> share:put(SM, queue_ids, NewQ), processed
-% if no -> share:put(SM, queue_ids, queue:in(NTuple, NewQ)), not_processed
 process_pkg_id(SM, TTL, Tuple) ->
-  % Local_address = share:get(SM, local_address),
-  % LocalPkgID = share:get(SM, {packet_id, RecvNLSrc, RecvNLDst}),
-  
   Queue_ids = share:get(SM, queue_ids),
-  Member = queue:member(Tuple, Queue_ids),
-  [StoredTTL, NQueue_ids] = searchKey(Member, Queue_ids, Tuple, queue:new(), nothing),
+  [SMN, StoredTTL, NQueue_ids] = searchQKey(SM, Queue_ids, Tuple, queue:new(), nothing),
 
+  % if StoredTTL == nothing, it is a new package and does not exist in the queue
   case StoredTTL of
     nothing ->
       NewQ = queue_limited_push(NQueue_ids, Tuple, 10),
-      share:put(SM, queue_ids, NewQ),
-      not_processed;
+      share:put(SMN, queue_ids, NewQ),
+      [SMN, not_processed];
     _ when TTL > StoredTTL ->
-      share:put(SM, queue_ids, NQueue_ids),
-      not_processed;
+      share:put(SMN, queue_ids, NQueue_ids),
+      [SMN, not_processed];
     _  ->
-      share:put(SM, queue_ids, NQueue_ids),
-      processed
+      share:put(SMN, queue_ids, NQueue_ids),
+      [SMN, processed]
   end.
 
-searchKey(_, {[],[]}, _Tuple, NQ, TTL) ->
-  [TTL, NQ];
-searchKey(Member, Q, {Flag, _CurrentTTL, ID, S, D, Data} = Tuple, NQ, TTL) ->
+deleteQKey({[],[]}, _Tuple, NQ) ->
+  NQ;
+deleteQKey(Q, Tuple, NQ) ->
+  {{value, CTuple}, Q1} = queue:out(Q),
+  case CTuple of
+    Tuple ->
+      deleteQKey(Q1, Tuple, NQ);
+    _ ->
+      deleteQKey(Q1, Tuple, queue:in(CTuple, NQ))
+  end.
+
+searchQKey(SM, {[],[]}, _Tuple, NQ, TTL) ->
+  [SM, TTL, NQ];
+searchQKey(SM, Q, {Flag, _CurrentTTL, ID, S, D, Data} = Tuple, NQ, TTL) ->
+  Pkg_life = share:get(SM, pkg_life),
   {{value, CTuple}, Q1} = queue:out(Q),
   case CTuple of
     {Flag, StoredTTL, ID, S, D, Data} ->
-      searchKey(Member, Q1, Tuple, queue:in(Tuple, NQ), StoredTTL);
+      SMN = fsm:set_timeout(SM, {s, Pkg_life}, {drop_pkg, CTuple}),
+      searchQKey(SMN, Q1, Tuple, queue:in(Tuple, NQ), StoredTTL);
     _ ->
-      searchKey(Member, Q1, Tuple, queue:in(CTuple, NQ), TTL)
+      SMN = fsm:set_timeout(SM, {s, Pkg_life}, {drop_pkg, Tuple}),
+      searchQKey(SMN, Q1, Tuple, queue:in(CTuple, NQ), TTL)
   end.
 
 %%--------------------------------------------------  RTT functions -------------------------------------------

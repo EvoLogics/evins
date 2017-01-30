@@ -144,6 +144,11 @@ handle_event(MM, SM, Term) ->
     {timeout, Event} ->
       ?INFO(?ID, "timeout ~140p~n", [Event]),
       case Event of
+        {drop_pkg, Tuple} ->
+          Q = share:get(SM, queue_ids),
+          NQ = nl_mac_hf:deleteQKey(Q, Tuple, queue:new()),
+          share:put(SM, queue_ids, NQ),
+          SM;
         {path_life, Tuple} ->
           nl_mac_hf:process_path_life(SM, Tuple);
         {neighbour_life, Addr} ->
@@ -687,9 +692,9 @@ parse_rcv(SM, RcvParams, PayloadTail) ->
     [SM, nothing]
   end.
 
-process_rcv_wv(SM, RcvParams, DataParams) ->
-  Local_address = share:get(SM, local_address),
-  Protocol    = share:get(SM, protocol_config, share:get(SM, np)),
+process_rcv_wv(SMT, RcvParams, DataParams) ->
+  Local_address = share:get(SMT, local_address),
+  Protocol    = share:get(SMT, protocol_config, share:get(SMT, np)),
 
   [NLSrcAT, NLDstAT, IRssi, IIntegrity] = RcvParams,
   [BFlag, Pkg_id, TTL, Real_src, Real_dst, Tail] = DataParams,
@@ -697,19 +702,19 @@ process_rcv_wv(SM, RcvParams, DataParams) ->
   Flag = nl_mac_hf:num2flag(BFlag, nl),
   RemotePkgID = Pkg_id,
 
-  RecvNLSrc = nl_mac_hf:addr_mac2nl(SM, Real_src),
-  RecvNLDst = nl_mac_hf:addr_mac2nl(SM, Real_dst),
+  RecvNLSrc = nl_mac_hf:addr_mac2nl(SMT, Real_src),
+  RecvNLDst = nl_mac_hf:addr_mac2nl(SMT, Real_dst),
 
   PTail =
   case Flag of
     data when Protocol#pr_conf.lo; Protocol#pr_conf.pf ->
-      {_, Data, _P} = nl_mac_hf:parse_path_data(SM, Tail),
+      {_, Data, _P} = nl_mac_hf:parse_path_data(SMT, Tail),
       Data;
     data -> Tail;
     _ -> <<"">>
   end,
 
-  PPkg_id   = nl_mac_hf:process_pkg_id(SM, TTL, {Flag, TTL, RemotePkgID, RecvNLSrc, RecvNLDst, PTail}),
+  [SM, PPkg_id]   = nl_mac_hf:process_pkg_id(SMT, TTL, {Flag, TTL, RemotePkgID, RecvNLSrc, RecvNLDst, PTail}),
   ?TRACE(?ID, "process_pkg_id ~p~n",[PPkg_id]),
 
   LocalPkgID = share:get(SM, {packet_id, RecvNLSrc, RecvNLDst}),
