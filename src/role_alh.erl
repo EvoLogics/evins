@@ -82,7 +82,9 @@ patter_matcher(L, Pattern, Count_el) ->
 split(L, Cfg) ->
   case re:run(L, "\r\n") of
     {match, [{_, _}]} ->
-    case patter_matcher(L, "^(RECVIM,p|RECVIM,|RECVIMS,p|RECVIMS,)(.*)", 2) of
+    case patter_matcher(L, "^(RECV,p|RECV,|RECVIM,p|RECVIM,|RECVIMS,p|RECVIMS,)(.*)", 2) of
+      {match, [<<"RECV,p">>, P]}    -> recv_extract(L, P, pid);
+      {match, [<<"RECV,">>, P]}     -> recv_extract(L, P, nopid);
       {match, [<<"RECVIM,p">>, P]}  -> recvim_extract(L, P, pid);
       {match, [<<"RECVIM,">>, P]}   -> recvim_extract(L, P, nopid);
       {match, [<<"RECVIMS,p">>, P]} -> recvims_extract(L, P, pid);
@@ -90,10 +92,10 @@ split(L, Cfg) ->
       nomatch ->
       case patter_matcher(L, "^(DELIVEREDIM,|FAILEDIM,|OK|BUSY|ERROR)(.*?)[\r\n]+(.*)", 3) of
         {match, [<<"DELIVEREDIM,">>, P, L1]}  -> [deliveredim_extract(P)	| split(L1, Cfg)];
-        {match, [<<"FAILEDIM,">>, P, L1]} -> [failedim_extract(P)	| split(L1, Cfg)];
-        {match, [<<"OK">>, P, L1]}    -> [ok_extract(P)		| split(L1, Cfg)];
-        {match, [<<"BUSY">>, P, L1]}  -> [busy_extract(P)		| split(L1, Cfg)];
-        {match, [<<"ERROR">>, P, L1]} -> [error_extract(P)		| split(L1, Cfg)];
+        {match, [<<"FAILEDIM,">>, P, L1]}     -> [failedim_extract(P)	| split(L1, Cfg)];
+        {match, [<<"OK">>, P, L1]}            -> [ok_extract(P)		| split(L1, Cfg)];
+        {match, [<<"BUSY">>, P, L1]}          -> [busy_extract(P)		| split(L1, Cfg)];
+        {match, [<<"ERROR">>, P, L1]}         -> [error_extract(P)		| split(L1, Cfg)];
         nomatch	->
         case patter_matcher(L,"(.*?)[\r\n]+(.*)", 2) of
           {match, [P, L1]} ->
@@ -105,10 +107,12 @@ split(L, Cfg) ->
     case re:run(L, "\n") of
       {match, [{_, _}]} ->
       %% Temporary only instant messages can be used!
-        case patter_matcher(L, "^(AT[*]SENDIM,p|AT[*]SENDIM,|AT[*]SENDIMS,p|AT[*]SENDIMS,)(.*)", 2) of
+        case patter_matcher(L, "^(AT[*]SEND,p|AT[*]SEND,|AT[*]SENDIM,p|AT[*]SENDIM,|AT[*]SENDIMS,p|AT[*]SENDIMS,)(.*)", 2) of
+          {match, [<<"AT*SEND,p">>, P]}   -> send_extract(L, P, Cfg, pid);
+          {match, [<<"AT*SEND,">>, P]}    -> send_extract(L, P, Cfg, nopid);
           {match, [<<"AT*SENDIM,p">>, P]}	-> sendim_extract(L, P, Cfg, pid);
-          {match, [<<"AT*SENDIM,">>, P]} -> sendim_extract(L, P, Cfg, nopid);
-          {match, [<<"AT*SENDIMS,p">>, P]} -> sendims_extract(L, P, Cfg, pid);
+          {match, [<<"AT*SENDIM,">>, P]}  -> sendim_extract(L, P, Cfg, nopid);
+          {match, [<<"AT*SENDIMS,p">>, P]}-> sendims_extract(L, P, Cfg, pid);
           {match, [<<"AT*SENDIMS,">>, P]}	-> sendims_extract(L, P, Cfg, nopid);
           nomatch ->
             case patter_matcher(L, "^(AT)(.*?)[\n]+(.*)", 3) of
@@ -122,6 +126,45 @@ split(L, Cfg) ->
         end;
       nomatch -> [{more, L}]
     end
+  end.
+
+send_extract(L, P, Cfg, IfPid) ->
+  try
+    [Params, BPid] =
+    if IfPid =:= nopid ->
+      {match, T} = patter_matcher(P, "([^,]*),([^,]*),(.*)", 3),
+      [T, nopid];
+    true ->
+      {match, [PPid | T]} = patter_matcher(P, "([^,]*),([^,]*),([^,]*),(.*)", 4),
+      [T, PPid]
+    end,
+
+    [BLen, BDst, PayloadTail] = Params,
+    PLLen = byte_size(PayloadTail),
+    Len = binary_to_integer(BLen),
+    IDst = binary_to_integer(BDst),
+
+    OPLLen = PLLen - 1,
+    if Len  =< PLLen ->
+      {match, [Payload, Tail1]} =
+      patter_matcher(PayloadTail, "^(.{" ++ integer_to_list(OPLLen) ++ "})\n(.*)", 2),
+      Tuple =
+      if IfPid =:= nopid ->
+        {at, "*SEND", IDst, Payload};
+      true ->
+        {at, {pid, binary_to_integer(BPid)}, "*SEND", IDst, Payload}
+      end,
+      if Len =/= OPLLen ->
+        [{sync, "*SEND", {error, ?ERROR_WRONG}}];
+      true ->
+        [{rcv_ul, Tuple } | split(Tail1,Cfg)] end;
+    true ->
+      case re:run(PayloadTail,"\n") of
+        {match, [{_,_}]} -> [{sync, "*SEND", {error, ?ERROR_WRONG}}];
+        _ -> [{more, L}]
+      end
+    end
+  catch error: _Reason -> [{sync, "*SEND", {error, ?ERROR_WRONG}}]
   end.
 
 sendim_extract(L, P, Cfg, IfPid) ->
@@ -197,6 +240,40 @@ sendims_extract(L, P, Cfg, IfPid) ->
         end
       end
   catch error: _Reason -> [{sync, "*SENDIMS", {error, ?ERROR_WRONG}}]
+  end.
+recv_extract(L, P, IfPid) ->
+  try
+    [BPid, Params] =
+    if IfPid =:= nopid ->
+      RecvStr = "([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
+      {match, T} = patter_matcher(P, RecvStr, 9),
+      [nopid, T];
+    true ->
+      RecvStrPid = "([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
+      {match, [H | T]} = patter_matcher(P, RecvStrPid, 10),
+      [H, T]
+    end,
+    [BLen, BSrc, BDst, BFlag, BDuration, BRssi, BIntegrity, BVelocity, PayloadTail] = Params,
+    Len = binary_to_integer(BLen),
+    PLLen = byte_size(PayloadTail),
+    TFlag = binary_to_atom(BFlag, utf8),
+    if
+      Len + 2 =< PLLen ->
+      {match, [Payload, _Tail1]} =
+      patter_matcher(PayloadTail, "^(.{" ++ integer_to_list(Len) ++ "})\r\n(.*)", 2),
+      if IfPid =:= nopid ->
+        [{async, {recv, Len, bin_to_num(BSrc), bin_to_num(BDst), TFlag,
+        bin_to_num(BDuration), bin_to_num(BRssi), bin_to_num(BIntegrity),
+        bin_to_num(BVelocity), Payload}}];
+      true ->
+        [{async, {pid, binary_to_integer(BPid)},
+        {recv, Len, bin_to_num(BSrc), bin_to_num(BDst), TFlag,
+        bin_to_num(BDuration), bin_to_num(BRssi), bin_to_num(BIntegrity),
+        bin_to_num(BVelocity), Payload}}]
+      end;
+    true -> [{more, L}]
+    end
+  catch error: _Reason -> [{sync, "*RECVIM", {error, ?ERROR_WRONG}}]
   end.
 
 recvim_extract(L, P, IfPid) ->
