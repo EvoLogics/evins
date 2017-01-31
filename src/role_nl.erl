@@ -147,7 +147,7 @@ nl_send_extract(P, Cfg) ->
         binary_to_integer(BTransmitLen)
     end,
 
-    true = PLLen < 60,
+    %true = PLLen < 50,
     {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(TransmitLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
     Tuple = {nl, send, TransmitLen, IDst, Payload},
     [{rcv_ul, Tuple} | split(Tail1,Cfg)]

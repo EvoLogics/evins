@@ -59,6 +59,8 @@
 -define(ADD_INFO_MAX, 255).
 -define(MAX_DATA_LEN, 64).
 
+-define(MAX_IM_LEN, 50).
+
 -define(LIST_ALL_PROTOCOLS, [staticr,
 			     staticrack,
 			     sncfloodr,

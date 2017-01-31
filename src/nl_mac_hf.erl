@@ -42,7 +42,7 @@
 -export([rand_float/2, lerp/3, deleteQKey/3]).
 %% Addressing functions
 -export([init_nl_addrs/1, get_dst_addr/1, set_dst_addr/2]).
--export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, num2flag/2, flag2num/1]).
+-export([addr_nl2mac/2, addr_mac2nl/2, get_routing_addr/3, find_in_routing_table/2, num2flag/2, flag2num/1]).
 %% NL header functions
 -export([parse_path_data/2]).
 %% Extract functions
@@ -235,7 +235,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  CurrentRTT = {rtt, Local_address, Real_dst},
                  ?TRACE(?ID, "CurrentRTT sending AT command ~p~n", [CurrentRTT]),
                  share:put(SM, [{{last_nl_sent_time, CurrentRTT}, erlang:monotonic_time(micro_seconds)},
-                                {last_nl_sent, {Flag, Real_src, NLarp}},
+                                {last_nl_sent, {send, {Flag, [IPacket_id, Real_src, []]}, NL}},
                                 {ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}}]),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
@@ -258,10 +258,13 @@ mac2at(Flag, Tuple) when is_tuple(Tuple)->
 nl2at (SM, Tuple) when is_tuple(Tuple)->
   ETSPID =  list_to_binary(["p", integer_to_binary(share:get(SM, pid))]),
   case Tuple of
-    {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  ->
+    {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  when byte_size(Data) < ?MAX_IM_LEN ->
       %% TODO: TTL generated on NL layer is always 0, MAC layer inreases it, due to retransmissions
       NewData = create_payload_nl_flag(Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
       {at,"*SENDIM", ETSPID, byte_size(NewData), IDst, noack, NewData};
+    {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}} ->
+      NewData = create_payload_nl_flag(Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
+      {at,"*SEND", ETSPID, byte_size(NewData), IDst, NewData};
     _ ->
       error
   end.
@@ -643,12 +646,32 @@ get_routing_addr(SM, Flag, AddrSrc) ->
     false -> ?ADDRESS_MAX
   end.
 
+% TODO: check
 find_in_routing_table(?ADDRESS_MAX, _) -> ?ADDRESS_MAX;
 find_in_routing_table([], _) -> no_routing_table;
 find_in_routing_table(Routing_table, AddrSrc) ->
-  case lists:keyfind(AddrSrc, 1, Routing_table) of
-    {_, To} -> To;
-    false -> ?ADDRESS_MAX
+  Res =
+  lists:filtermap(fun(X) ->
+    case X  of
+      {AddrSrc, To} -> {true, To};
+      _ -> false
+  end end, Routing_table),
+
+  Addr =
+  case Res of
+    [] ->
+      [DefaultAddr] =
+      lists:filtermap(fun(X) ->
+        if is_tuple(X) == false -> {true, X};
+          true -> false
+        end end, Routing_table),
+      DefaultAddr;
+    [To] -> To
+  end,
+
+  case Addr of
+    [] -> ?ADDRESS_MAX;
+    _ -> Addr
   end.
 
 convert_la(SM, Type, Format) ->
