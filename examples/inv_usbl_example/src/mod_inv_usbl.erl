@@ -35,7 +35,21 @@
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
   fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
-register_fsms(_Mod_ID, Role_IDs, _Share, _ArgS) ->
+register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
+  parse_conf(Mod_ID, ArgS, Share),
   Roles = fsm_worker:role_info(Role_IDs, [at]),
-  %#sm{roles = Roles, module = fsm_inv_usbl}.
   [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_inv_usbl}].
+
+parse_conf(_Mod_ID, ArgS, Share) ->
+  ADelay_Set   = [P || {answer_delay, P} <- ArgS],
+
+  ADelay     = set_params(ADelay_Set, 1000),
+  
+  ShareID = #sm{share = Share},
+  share:put(ShareID, [{answer_delay, ADelay}]).
+
+set_params(Param, Default) ->
+  case Param of
+    []     -> Default;
+    [Value]-> Value
+  end.

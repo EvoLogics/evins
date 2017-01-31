@@ -23,11 +23,7 @@
                 {alarm,[]}
                ]).
 
-start_link(SM) ->
-  [
-   env:put(__,got_sync,true),
-   fsm:start_link(__)
-  ] (SM).
+start_link(SM) -> fsm:start_link(SM).
 init(SM)       -> SM.
 trans()        -> ?TRANS.
 final()        -> [].
@@ -45,7 +41,7 @@ handle_event(MM, SM, Term) ->
       SM;
     {async, _, {recvpbm, _, Dst, _, _, _, _, _, Payl}} ->
     %{async, _, {recvims , _, _, _, _, _, _, _, _, Payl}} ->
-      io:format("<<< fsm_inv_usbl_gen : {Bearing, Elevation, Roll, Pitch, Yaw} = ~p~n", [extractPBKM(Payl)]),
+      io:format("RAngles: ~p~n", [extractAM(Payl)]),
       SM;
     {async, {deliveredim, Dst}} ->
       fsm:run_event(MM, SM#sm{event = get_distance}, {get_distance, Dst});
@@ -103,10 +99,15 @@ createIM(SM) ->
     nothing ->
       <<"N">>;
     _ ->
-      <<"D", D:16>>
+      <<"D", D:16/little-unsigned-integer>>
   end,
   {at, {pid, Pid}, "*SENDIM", Dst, ack, Data}.
 
-extractPBKM(Payl) ->
-  <<"L", DBearing:12, DElevation:12, DRoll:12, DPitch:12, DDYaw:12, _/bitstring>> = Payl,
-  {DBearing / 10, DElevation / 10, DRoll / 10, DPitch / 10, DDYaw / 10}.
+
+extractAM(Payload) ->
+  <<"L", Bearing:12/little-unsigned-integer,
+    Elevation:12/little-unsigned-integer,
+    Roll:12/little-unsigned-integer,
+    Pitch:12/little-unsigned-integer,
+    Yaw:12/little-unsigned-integer, _/bitstring>> = Payload,
+  lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]).
