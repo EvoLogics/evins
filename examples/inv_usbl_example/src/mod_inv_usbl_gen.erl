@@ -41,18 +41,17 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_inv_usbl_gen}].
 
 parse_conf(_Mod_ID, ArgS, Share) ->
-  Timeout_Set   = [P || {gen_timeout, P} <- ArgS],
-  Addr_Set      = [P || {dst, P} <- ArgS],
-  Pid_Set       = [P || {pid, P} <- ArgS],
+  QDelay = [P || {query_delay, P} <- ArgS],
+  ADelay = [P || {answer_delay, P} <- ArgS],
+  Mode   = [P || {mode, P} <- ArgS],
+  Addr   = [P || {dst, P} <- ArgS],
+  Pid    = [P || {pid, P} <- ArgS],
 
-  Timeout     = set_params(Timeout_Set, 1),
-  Addr        = set_params(Addr_Set, 1),
-  Pid        = set_params(Pid_Set, 0),
-  
-  ShareID = #sm{share = Share},
-  share:put(ShareID, [{gen_timeout, Timeout},
-                      {dst, Addr},
-                      {pid, Pid}]).
+  share:put(#sm{share = Share}, [{query_delay, set_params(QDelay, 1000)},
+                                 {answer_delay, set_params(ADelay, 500)},
+                                 {mode, set_params(Mode, im)},
+                                 {dst, set_params(Addr, 1)},
+                                 {pid, set_params(Pid, 0)}]).
 
 set_params(Param, Default) ->
   case Param of
