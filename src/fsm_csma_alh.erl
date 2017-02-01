@@ -29,6 +29,7 @@
 -behaviour(fsm).
 
 -include("fsm.hrl").
+-include("nl.hrl").
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1, handle_event/3, stop/1]).
@@ -171,13 +172,20 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM1#sm{event = rcv_ul}, {rcv_ul, Msg});
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
-    {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, Payload}} ->
-      ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [Tuple]),
-      SM1 = nl_mac_hf:process_rcv_payload(SM, Payload),
-      [H | T] = tuple_to_list(Tuple),
+    {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
+      ?TRACE(?ID, "MAC_AT_RECV ~p~n", [Tuple]),
+      [H |_] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
-      fsm:cast(SM1, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
-      fsm:run_event(MM, SM1, {});
+
+      [SMN, ParsedRecv] = process_recv(SM, Tuple),
+      case ParsedRecv of
+        {_, _, STuple} ->
+          SMsg = list_to_tuple([H | [BPid | tuple_to_list(STuple) ]]),
+          fsm:cast(SMN, alh, {send, {async, SMsg} }),
+          fsm:run_event(MM, SMN, {});
+        _ ->
+          SM
+      end;
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       Ev = process_async(SM, Tuple),
@@ -230,7 +238,7 @@ handle_write_alh(_MM, #sm{event = backoff_timeout} = SM, Term) ->
     Msg ->
      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
      share:clean(SM, current_msg),
-     fsm:set_event(fsm:send_at_command(SM, Msg), data_sent)
+     fsm:set_event(nl_mac_hf:send_mac(SM, at, data, Msg), data_sent)
    end;
 handle_write_alh(_MM, SM, Term = {rcv_ul, Msg}) ->
   ?TRACE(?ID, "~120p~n", [Term]),
@@ -238,7 +246,7 @@ handle_write_alh(_MM, SM, Term = {rcv_ul, Msg}) ->
   change_backoff(SM1, decrement),
   ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
   share:clean(SM, current_msg),
-  fsm:set_event(fsm:send_at_command(SM, Msg), data_sent).
+  fsm:set_event(nl_mac_hf:send_mac(SM, at, data, Msg), data_sent).
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
@@ -274,6 +282,24 @@ change_backoff(SM, Type) ->
   Val = math:pow(2, share:get(SM, current_step)),
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
   Val.
+
+process_recv(SM, T) ->
+  ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [T]),
+  {recvim, Len, P1, P2, P3, P4, P5, P6, P7, Payl} = T,
+  [BPid, BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
+  CurrentPid = ?PROTOCOL_MAC_PID(share:get(SM, macp)),
+  if CurrentPid == BPid ->
+    Flag = nl_mac_hf:num2flag(BFlag, mac),
+    ShortTuple = {Len - LenAdd, P1, P2, P3, P4, P5, P6, P7, Data},
+    SM1 = nl_mac_hf:process_rcv_payload(SM, Data),
+    [SM1, {BPid, Flag, ShortTuple}];
+  true ->
+    [SM, nothing]
+  end.
+
+  %[H | T] = tuple_to_list(Tuple),
+  %BPid = <<"p", (integer_to_binary(NPid))/binary>>,
+  %fsm:cast(SM1, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
 
 process_async(_SM, Tuple) ->
   case Tuple of

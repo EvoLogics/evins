@@ -91,13 +91,17 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   true -> nothing
   end,
 
-  lists:foldr(fun(X, _)-> [PIDTmp, ParamsTmp, SMTmp] = conf_fsm(X), conf_protocol(CurrentProtocol, Share, X, PIDTmp, ParamsTmp, SMTmp) end, [], ?LIST_ALL_PROTOCOLS),
+  lists:foldr(
+    fun(X, _)->
+      [ParamsTmp, SMTmp] = conf_fsm(X),
+      conf_protocol(CurrentProtocol, Share, X, ParamsTmp, SMTmp)
+    end, [], ?LIST_ALL_PROTOCOLS),
 
   Module = conf_fsm(CurrentProtocol),
   if Module =:= error ->
     ?ERROR(Mod_ID, "!!! No NL protocol ID!~n", []);
   true ->
-    [_, _, SMN] = Module,
+    [_, SMN] = Module,
     ShareID = #sm{share = Share},
     La = share:get(ShareID, local_address),  
     DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
@@ -151,7 +155,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
 
   ShareID = #sm{share = Share},
-  share:put(ShareID, [{nl_protocol, NL_Protocol},
+  share:put(ShareID, [{pid, 0}, % TODO: maybe we should use this PID (outgo intreface)
+                      {nl_protocol, NL_Protocol},
                       {routing_table, Routing_table},
                       {local_address, Addr},
                       {max_address, Max_address},
@@ -201,10 +206,10 @@ conf_fsm(Protocol) ->
   [{_, Decr}] = lists:filter(fun({PN, _})-> PN =:= Protocol end, ?PROTOCOL_CONF),
   Decr.
 
-conf_protocol(CurrentProtocol, Share, Protocol, Pid, Params, SMName) ->
+conf_protocol(CurrentProtocol, Share, Protocol, Params, SMName) ->
   ShareID = #sm{share = Share},
   if (CurrentProtocol =:= Protocol) ->
-      share:put(ShareID, [{pid, Pid}, {np,  Protocol}]);
+      share:put(ShareID, nlp, Protocol);
     true -> nothing
   end,
   parse_pr_params(Share, Params, Protocol),

@@ -106,6 +106,8 @@ parse_conf(ArgS, Share) ->
       share:put(ShareID, u, U);
     _  -> nothing
   end,
+
+  share:put(ShareID, macp, Protocol),
   io:format("!!! Name of current protocol ~p~n", [Protocol]),
   Protocol.
 

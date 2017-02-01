@@ -168,7 +168,7 @@ send_cts(SM, Interface, MACP, Timestamp, USEC, Dur) ->
   send_mac(SM, Interface, cts, Tuple).
 
 send_mac(SM, _Interface, Flag, MACP) ->
-  AT = mac2at(Flag, MACP),
+  AT = mac2at(SM, Flag, MACP),
   fsm:send_at_command(SM, AT).
 
 send_ack(SM,  {send_ack, {_, [Packet_id, _, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src, _}}}, Count_hops) ->
@@ -211,7 +211,7 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, rec
 
 send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL) ->
   Real_dst = get_dst_addr(NL),
-  Protocol = share:get(SM, protocol_config, share:get(SM, np)),
+  Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
   if Real_dst =:= wrong_format -> error;
      true ->
        Route_addr = get_routing_addr(SM, Flag, Real_dst),
@@ -246,10 +246,10 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
        end
   end.
 
-mac2at(Flag, Tuple) when is_tuple(Tuple)->
+mac2at(SM, Flag, Tuple) when is_tuple(Tuple)->
   case Tuple of
     {at, PID, SENDFLAG, IDst, TFlag, Data} ->
-      NewData = create_payload_mac_flag(Flag, Data),
+      NewData = create_payload_mac_flag(SM, Flag, Data),
       {at, PID, SENDFLAG, IDst, TFlag, NewData};
     _ ->
       error
@@ -257,30 +257,36 @@ mac2at(Flag, Tuple) when is_tuple(Tuple)->
 
 nl2at (SM, Tuple) when is_tuple(Tuple)->
   ETSPID =  list_to_binary(["p", integer_to_binary(share:get(SM, pid))]),
+  NLPPid = ?PROTOCOL_NL_PID(share:get(SM, nlp)),
   case Tuple of
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  when byte_size(Data) < ?MAX_IM_LEN ->
       %% TODO: TTL generated on NL layer is always 0, MAC layer inreases it, due to retransmissions
-      NewData = create_payload_nl_flag(Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
+      NewData = create_payload_nl_flag(SM, NLPPid, Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
       {at,"*SENDIM", ETSPID, byte_size(NewData), IDst, noack, NewData};
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}} ->
-      NewData = create_payload_nl_flag(Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
+      NewData = create_payload_nl_flag(SM, NLPPid, Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
       {at,"*SEND", ETSPID, byte_size(NewData), IDst, NewData};
     _ ->
       error
   end.
 
 %%------------------------- Extract functions ----------------------------------
-create_payload_nl_flag(Flag, PkgID, TTL, Src, Dst, Data) ->
-  % 3 first bits Flag (if max Flag vbalue is 5)
+create_payload_nl_flag(SM, NLPPid, Flag, PkgID, TTL, Src, Dst, Data) ->
+  % 6 bits NL_Protocol_PID
+  % 3 bits Flag
   % 6 bits PkgID
   % 2 bits TTL
   % 6 bits SRC
   % 6 bits DST
-  % rest bits reserved for later (+ 1)
+  % rest bits reserved for later (+ 3)
+  CBitsNLPid = count_flag_bits(?NL_PID_MAX),
   CBitsFlag = count_flag_bits(?FLAG_MAX),
   CBitsPkgID = count_flag_bits(?PKG_ID_MAX),
   CBitsTTL = count_flag_bits(?TTL),
   CBitsAddr = count_flag_bits(?ADDRESS_MAX),
+
+  ?TRACE(?ID, "!!!!!!!!!!!!!!!!!!!!!!~p  ~p~n", [NLPPid, share:get(SM, local_address)]),
+  BPid = <<NLPPid:CBitsNLPid>>,
 
   FlagNum = ?FLAG2NUM(Flag),
   BFlag = <<FlagNum:CBitsFlag>>,
@@ -290,58 +296,78 @@ create_payload_nl_flag(Flag, PkgID, TTL, Src, Dst, Data) ->
   BSrc = <<Src:CBitsAddr>>,
   BDst = <<Dst:CBitsAddr>>,
 
-  TmpData = <<BFlag/bitstring, BPkgID/bitstring, BTTL/bitstring, BSrc/bitstring, BDst/bitstring, Data/binary>>,
+  TmpData = <<BPid/bitstring, BFlag/bitstring, BPkgID/bitstring, BTTL/bitstring, BSrc/bitstring, BDst/bitstring, Data/binary>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
 
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<BFlag/bitstring, BPkgID/bitstring, BTTL/bitstring, BSrc/bitstring, BDst/bitstring, 0:Add, Data/binary>>;
+    <<BPid/bitstring, BFlag/bitstring, BPkgID/bitstring, BTTL/bitstring, BSrc/bitstring, BDst/bitstring, 0:Add, Data/binary>>;
   true ->
     TmpData
   end.
 
-create_payload_mac_flag(Flag, Data) ->
-  % 3 first bits Flag (if max Flag vbalue is 5)
-  % rest bits reserved for later (+5)
-  C = count_flag_bits(?FLAG_MAX),
+create_payload_mac_flag(SM, Flag, Data) ->
+  % 4 bits NL_MAC_PID
+  % 3 bits Flag
+  % rest bits reserved for later (+1)
+  CBitsMACPid = count_flag_bits(?MAC_PID_MAX),
+  CBitsFlag = count_flag_bits(?FLAG_MAX),
+
+  CurrentPid = ?PROTOCOL_MAC_PID(share:get(SM, macp)),
+  BPid = <<CurrentPid:CBitsMACPid>>,
   FlagNum = ?FLAG2NUM(Flag),
-  BFlag = <<FlagNum:C>>,
-  TmpData = <<BFlag/bitstring, Data/binary>>,
+  
+  BFlag = <<FlagNum:CBitsFlag>>,
+  TmpData = <<BPid/bitstring, BFlag/bitstring, Data/binary>>,
+  
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<BFlag/bitstring, 0:Add, Data/binary>>;
+    <<BPid/bitstring, BFlag/bitstring, 0:Add, Data/binary>>;
   true ->
     TmpData
   end.
 
 extract_payload_nl_flag(Payl) ->
+  % 6 bits NL_Protocol_PID
+  % 3 bits Flag
+  % 6 bits PkgID
+  % 2 bits TTL
+  % 6 bits SRC
+  % 6 bits DST
+  % rest bits reserved for later (+ 3)
+  CBitsNLPid = count_flag_bits(?NL_PID_MAX),
   CBitsFlag = count_flag_bits(?FLAG_MAX),
   CBitsPkgID = count_flag_bits(?PKG_ID_MAX),
   CBitsTTL = count_flag_bits(?TTL),
   CBitsAddr = count_flag_bits(?ADDRESS_MAX),
 
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
-  <<BFlag:CBitsFlag, BPkgID:CBitsPkgID, BTTL:CBitsTTL, BSrc:CBitsAddr, BDst:CBitsAddr, Rest/bitstring>> = Payl,
+  <<BNLPid:CBitsNLPid, BFlag:CBitsFlag, BPkgID:CBitsPkgID, BTTL:CBitsTTL, BSrc:CBitsAddr, BDst:CBitsAddr, Rest/bitstring>> = Payl,
   if Data_bin =:= false ->
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
-    [BFlag, BPkgID, BTTL, BSrc, BDst, Data];
+    [BNLPid, BFlag, BPkgID, BTTL, BSrc, BDst, Data];
   true ->
-    [BFlag, BPkgID, BTTL, BSrc, BDst, Rest]
+    [BNLPid, BFlag, BPkgID, BTTL, BSrc, BDst, Rest]
   end.
 
 extract_payload_mac_flag(Payl) ->
-  C = count_flag_bits(?FLAG_MAX),
+  % 4 bits NL_MAC_PID
+  % 3 bits Flag
+  % rest bits reserved for later (+1)
+  CBitsMACPid = count_flag_bits(?MAC_PID_MAX),
+  CBitsFlag = count_flag_bits(?FLAG_MAX),
+  
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
   if Data_bin =:= false ->
-    <<BFlag:C, Rest/bitstring>> = Payl,
+    <<BPid:CBitsMACPid, BFlag:CBitsFlag, Rest/bitstring>> = Payl,
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
-    [BFlag, Data, round((Add + C) / 8)];
+    [BPid, BFlag, Data, round((Add + CBitsFlag + BPid) / 8)];
   true ->
-    <<BFlag:C, Data/binary>> = Payl,
-    [BFlag, Data, round(C / 8)]
+    <<BPid:CBitsMACPid, BFlag:CBitsFlag, Data/binary>> = Payl,
+    [BPid, BFlag, Data, round( (CBitsFlag + BPid) / 8)]
   end.
 
 check_dubl_in_path(Path, MAC_addr) ->
@@ -639,7 +665,7 @@ required_routing(path,#pr_conf{lo = LO, dbl = DBL},_) when LO; DBL -> true;
 required_routing(_,_,_) -> false.
 
 get_routing_addr(SM, Flag, AddrSrc) ->
-  NProtocol = share:get(SM, np),
+  NProtocol = share:get(SM, nlp),
   Protocol = share:get(SM, protocol_config, NProtocol),
   case required_routing(Flag, Protocol, NProtocol) of
     true -> find_in_routing_table(share:get(SM, routing_table), AddrSrc);
@@ -775,7 +801,7 @@ get_aver_value(Val1, Val2) ->
 process_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
   {Flag, [_, ISrc, PAdditional]} = Params,
   MAC_addr = convert_la(SM, integer, mac),
-  Protocol = share:get(SM, protocol_config, share:get(SM, np)), 
+  Protocol = share:get(SM, protocol_config, share:get(SM, nlp)), 
   case Flag of
     data when (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) ->
       CheckedTuple = parse_path_data(SM, Payload),
@@ -905,7 +931,7 @@ process_path_life(SM, Tuple) ->
 
 % FIXME: better to store protocol_config at env
 save_path(SM, {Flag,_} = Params, Tuple) ->
-  Protocol = share:get(SM, protocol_config, share:get(SM, np)),
+  Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
   case Flag of
     data when Protocol#pr_conf.ry_only and Protocol#pr_conf.pf ->
       {async,{nl,recv, Real_src, Real_dst, Payload}} = Tuple,
@@ -1069,7 +1095,7 @@ increase_pkgid(SM, Src, Dst) ->
 init_dets(SM) ->
   LA  = share:get(SM, local_address),
   Ref = SM#sm.dets_share,
-  NL_protocol = share:get(SM, np),
+  NL_protocol = share:get(SM, nlp),
   
   case B = dets:lookup(Ref, NL_protocol) of
     [{NL_protocol, ListIds}] ->
@@ -1085,7 +1111,7 @@ init_dets(SM) ->
 fill_dets(SM, Packet_id, Src, Dst) ->
   LA  = share:get(SM, local_address),
   Ref = SM#sm.dets_share,
-  NL_protocol = share:get(SM, np),
+  NL_protocol = share:get(SM, nlp),
 
   case dets:lookup(Ref, NL_protocol) of
     [] ->
@@ -1167,9 +1193,9 @@ process_rcv_payload(SM, RcvPayload) ->
       SM;
     _ ->
       [{at, _PID, _, _, _, StoredRetransmitPayload}] = StoredRetransmit,
-      [BRetrFlag, RetrPkgID, RetrTTL, RetrSrc, RetrDst, _RetrData] = extract_payload_nl_flag(StoredRetransmitPayload),
+      [_BPid, BRetrFlag, RetrPkgID, RetrTTL, RetrSrc, RetrDst, _RetrData] = extract_payload_nl_flag(StoredRetransmitPayload),
       % data received, has to be processed to clear retransmit
-      [BRecvFlag, RecvPkgID, RecvTTL, RecvSrc, RecvDst, _RecvData] = extract_payload_nl_flag(RcvPayload),
+      [_BPid, BRecvFlag, RecvPkgID, RecvTTL, RecvSrc, RecvDst, _RecvData] = extract_payload_nl_flag(RcvPayload),
 
       RetrFlag = num2flag(BRetrFlag, nl),
       RecvFlag = num2flag(BRecvFlag, nl),
@@ -1207,7 +1233,7 @@ process_send_payload(SM, {at, _PID, _, _, _, <<"t">>}) ->
   SM;
 process_send_payload(SM, Msg = {at, _PID, _, _, _, Payload}) ->
   SM1 = clear_spec_timeout(SM, retransmit),
-  [Flag, _PkgID, _TTL, _Src, _Dst, _Data] = extract_payload_nl_flag(Payload),
+  [_BPid, Flag, _PkgID, _TTL, _Src, _Dst, _Data] = extract_payload_nl_flag(Payload),
 
   case num2flag(Flag, nl) of
     dst_reached ->
@@ -1225,8 +1251,8 @@ process_retransmit(SM, Msg, Ev) ->
     _ when Retransmit_count < Max_retransmit_count - 1 ->
       % TODO : INCREASE TTL
       {at, PID, Type, ATDst, FlagAck, Payload} = Msg,
-      [Flag, PkgID, TTL, Src, Dst, Data] = extract_payload_nl_flag(Payload),
-      NewMsg = create_payload_nl_flag(num2flag(Flag, nl), PkgID, increaseTTL(TTL), Src, Dst, Data),
+      [BPid, Flag, PkgID, TTL, Src, Dst, Data] = extract_payload_nl_flag(Payload),
+      NewMsg = create_payload_nl_flag(SM, BPid, num2flag(Flag, nl), PkgID, increaseTTL(TTL), Src, Dst, Data),
       AT = {at, PID, Type, ATDst, FlagAck, NewMsg},
       share:put(SM, retransmit_count, AT, Retransmit_count + 1),
       SM1 = process_send_payload(SM, AT),
@@ -1243,13 +1269,13 @@ increaseTTL(CurrentTTL) ->
   end.
 %%--------------------------------------------------  command functions -------------------------------------------
 process_command(SM, Debug, Command) ->
-  Protocol   = share:get(SM, protocol_config, share:get(SM, np)),
+  Protocol   = share:get(SM, protocol_config, share:get(SM, nlp)),
   [Req, Asw] =
   case Command of
     protocols ->
       [?PROTOCOL_DESCR, protocols];
     {protocol, _} ->
-      [share:get(SM, np), protocol_info];
+      [share:get(SM, nlp), protocol_info];
     {statistics, paths} when Protocol#pr_conf.pf ->
       [share:get(SM, paths), paths];
     {statistics, neighbours} ->

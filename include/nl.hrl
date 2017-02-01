@@ -27,19 +27,24 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-%--------------- MAIN HEADER -----------------
-% 	3b			6b			2b 			6b			6b			1b
-%		Flag 		PKGID 	TTL			SRC 		DST 		ADD
+%--------------- MAIN MAC HEADER -----------------
+% 	4b						3b			1b
+%		NL_MAC_PID		Flag 		ADD
+%---------------------------------------------
+
+%--------------- MAIN NL HEADER -----------------
+% 	6b								3b			6b			2b 			6b			6b			3b
+%		NL_Protocol_PID		Flag 		PKGID 	TTL			SRC 		DST 		ADD
 %---------------------------------------------
 %--------------- PROTOCOL HEADER -----------------
 %-------> data
-%	3b				6b
+%		3b				6b
 %		TYPEMSG 	MAX_DATA_LEN
 %-------> neighbours
 % 	3b				6b 								LenNeighbours * 6b		REST till / 8
 %		TYPEMSG 	LenNeighbours 		Neighbours 						ADD
 %-------> path_data
-% 	3b				6b				6b			LenPath * 6b   REST till / 8
+% 	3b				6b						6b			LenPath * 6b   REST till / 8
 %		TYPEMSG 	MAX_DATA_LEN	LenPath 	Path 					 ADD
 %-------> neighbour_path
 % 	3b				6b 								LenNeighbours * 6b		6b				LenPath * 6b 			REST till / 8
@@ -48,6 +53,10 @@
 % 	3b				6b 				LenPath * 6b 	 	2b 				LenAdd * 8b 			REST till / 8
 %		TYPEMSG 	LenPath 	Path 					 	LenAdd 		Addtional Info 		ADD
 %---------------------------------------------
+
+-define(NL_PID_MAX, 63).
+-define(MAC_PID_MAX, 16).
+
 -define(FLAG_MAX, 5).
 -define(TYPE_MSG_MAX, 5).
 -define(TTL, 3).
@@ -94,22 +103,51 @@
 			  lo,		% low overhead
 			  rm]).		% route maintenance
 
+
+-define(PROTOCOL_NL_PID(P),
+	case P of
+		staticr					-> 0;
+		staticrack			-> 1;
+		sncfloodr 			-> 2;
+		sncfloodrack 		-> 3;
+		dpfloodr 				-> 4;
+		dpfloodrack 		-> 5;
+		icrpr 					-> 6;
+		sncfloodpfr 		-> 7;
+		sncfloodpfrack 	-> 8;
+		dblfloodpfr 		-> 9;
+		dblfloodpfrack 	-> 10;
+		evoicrppfr 			-> 11;
+		evoicrppfrack 	-> 12;
+		loarpr 					-> 13;
+		loarprack 			-> 14
+	end).
+
+-define(PROTOCOL_MAC_PID(P),
+	case P of
+		mac_burst  -> 0;
+    csma_alh   -> 1;
+    cut_lohi   -> 2;
+    aut_lohi   -> 3;
+    dacap      -> 4
+	end).
+
 -define(PROTOCOL_CONF, [
-			{staticr,	[0, {stat, ry_only},             	fsm_nl_flood]},	% Simple static routing
-			{staticrack, 	[1, {stat, ry_only, br_na, ack},  	fsm_nl_flood]},	% Simple static routing with acknowledgement
-			{sncfloodr,  	[2, {ry_only},              	fsm_nl_flood]},	% Sequence number controlled flooding
-			{sncfloodrack, 	[3, {ry_only, br_na, ack},  	fsm_nl_flood]},	% Sequence number controlled flooding with acknowledgement
-			{dpfloodr,		[4, {ry_only, prob},    fsm_nl_flood]},	% Dynamic Probabilistic Flooding
-			{dpfloodrack,	[5, {ry_only, prob, br_na, ack},fsm_nl_flood]},	% Dynamic Probabilistic Flooding with acknowledgement
-			{icrpr,		[5, {ry_only, pf, br_na, ack},  fsm_nl_flood]},	% Information Carrying Routing Protocol
-			{sncfloodpfr,	[7, {pf, brp, br_na},           fsm_nl_flood]},	% Pathfind and relay, based on sequence number controlled flooding
-			{sncfloodpfrack,[7, {pf, brp, br_na, ack},      fsm_nl_flood]},	% Pathfind and relay, based on sequence number controlled flooding with acknowledgement
-			{dblfloodpfr,	[7, {pf, dbl, br_na},       	fsm_nl_flood]},	% Double flooding path finder
-			{dblfloodpfrack,[7, {pf, dbl, br_na, ack},  	fsm_nl_flood]},	% Double flooding path finder with acknowledgement
-			{evoicrppfr,	[7, {pf, br_na, lo, evo},       fsm_nl_flood]},	% Evologics Information Carrying routing protocol
-			{evoicrppfrack, [6, {pf, br_na, lo, evo, ack},  fsm_nl_flood]},	% Evologics Information Carrying routing protocol with acknowledgement
-			{loarpr,	[7, {pf, br_na, lo, rm},	fsm_nl_flood]},	% Low overhead routing protocol
-			{loarprack,	[7, {pf, br_na, lo, rm, ack},	fsm_nl_flood]}	% Low overhead routing protocol with acknowledgement
+			{staticr,	[{stat, ry_only}, fsm_nl_flood]},	% Simple static routing
+			{staticrack, [{stat, ry_only, br_na, ack}, fsm_nl_flood]},	% Simple static routing with acknowledgement
+			{sncfloodr, [{ry_only}, fsm_nl_flood]},	% Sequence number controlled flooding
+			{sncfloodrack, [{ry_only, br_na, ack}, fsm_nl_flood]},	% Sequence number controlled flooding with acknowledgement
+			{dpfloodr, [{ry_only, prob},    fsm_nl_flood]},	% Dynamic Probabilistic Flooding
+			{dpfloodrack, [{ry_only, prob, br_na, ack},fsm_nl_flood]},	% Dynamic Probabilistic Flooding with acknowledgement
+			{icrpr, [{ry_only, pf, br_na, ack},  fsm_nl_flood]},	% Information Carrying Routing Protocol
+			{sncfloodpfr, [{pf, brp, br_na}, fsm_nl_flood]},	% Pathfind and relay, based on sequence number controlled flooding
+			{sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_nl_flood]},	% Pathfind and relay, based on sequence number controlled flooding with acknowledgement
+			{dblfloodpfr, [{pf, dbl, br_na}, fsm_nl_flood]},	% Double flooding path finder
+			{dblfloodpfrack,[{pf, dbl, br_na, ack}, fsm_nl_flood]},	% Double flooding path finder with acknowledgement
+			{evoicrppfr, [{pf, br_na, lo, evo}, fsm_nl_flood]},	% Evologics Information Carrying routing protocol
+			{evoicrppfrack, [{pf, br_na, lo, evo, ack}, fsm_nl_flood]},	% Evologics Information Carrying routing protocol with acknowledgement
+			{loarpr, [{pf, br_na, lo, rm}, fsm_nl_flood]},	% Low overhead routing protocol
+			{loarprack, [{pf, br_na, lo, rm, ack}, fsm_nl_flood]}	% Low overhead routing protocol with acknowledgement
 		       ]).
 
 -define(PROTOCOL_DESCR, ["\n",

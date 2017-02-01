@@ -29,6 +29,7 @@
 -behaviour(fsm).
 
 -include("fsm.hrl").
+-include("nl.hrl").
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
@@ -181,11 +182,16 @@ handle_event(MM, SM, Term) ->
       ?TRACE(?ID, "MAC_AT_RECV ~p~n", [Tuple]),
       [H |_] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
-      [SMN, {Flag, STuple}] = parse_ll_msg(SM, T),
-      SMsg = list_to_tuple([H | [BPid | tuple_to_list(STuple) ]]),
-      fsm:cast(SMN, alh, {send, {async, SMsg} }),
-      SMN1 = process_rcv_flag(SMN, Flag),
-      fsm:run_event(MM, SMN1, {});
+      [SMN, ParsedRecv] = parse_ll_msg(SM, T),
+      case ParsedRecv of
+        {_BPid, Flag, STuple} ->
+          SMsg = list_to_tuple([H | [BPid | tuple_to_list(STuple) ]]),
+          fsm:cast(SMN, alh, {send, {async, SMsg} }),
+          SMN1 = process_rcv_flag(SMN, Flag),
+          fsm:run_event(MM, SMN1, {});
+        _ ->
+          SM
+      end;
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       SMN = process_ct(SM, Tuple),
@@ -256,10 +262,10 @@ handle_transmit_data(_MM, SM, Term) ->
     SendT ->
       ?TRACE(?ID, "MAC_AT_SEND ~p~n", [SendT]),
       share:clean(SM, current_msg),
-      nl_mac_hf:send_mac(SM, at, data, SendT),
-      CR_Time = share:get(SM, cr_time),
+      SMS = nl_mac_hf:send_mac(SM, at, data, SendT),
+      CR_Time = share:get(SMS, cr_time),
       R = CR_Time * rand:uniform(),
-      SM1 = fsm:set_timeout(SM#sm{event = eps}, {ms, CR_Time + R}, dp_ends),
+      SM1 = fsm:set_timeout(SMS#sm{event = eps}, {ms, CR_Time + R}, dp_ends),
       nl_mac_hf:process_send_payload(SM1, SendT)
   end.
 
@@ -313,16 +319,22 @@ process_async(SM, Msg) ->
   case Msg of
     T={recvim, _, _, _, _, _, _, _, _, _} ->
       process_recv(SM, T);
-    _ -> [SM, nothing]
+    _ ->
+      [SM, nothing]
   end.
 
 process_recv(SM, T) ->
   {recvim, Len, P1, P2, P3, P4, P5, P6, P7, Payl} = T,
-    [BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
-    Flag = nl_mac_hf:num2flag(BFlag, mac),
-    ShortTuple = {Len - LenAdd, P1, P2, P3, P4, P5, P6, P7, Data},
-    SM1 = nl_mac_hf:process_rcv_payload(SM, Data),
-    [SM1, {Flag, ShortTuple}].
+    [BPid, BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
+    CurrentPid = ?PROTOCOL_MAC_PID(share:get(SM, macp)),
+    if CurrentPid == BPid ->
+      Flag = nl_mac_hf:num2flag(BFlag, mac),
+      ShortTuple = {Len - LenAdd, P1, P2, P3, P4, P5, P6, P7, Data},
+      SM1 = nl_mac_hf:process_rcv_payload(SM, Data),
+      [SM1, {BPid, Flag, ShortTuple}];
+  true ->
+    [SM, nothing]
+  end.
 
 process_rcv_flag(SM, Flag) ->
   CR_Time = share:get(SM, cr_time),
