@@ -157,8 +157,9 @@ extractAM(Payload) ->
     Yaw:12/little-unsigned-integer, _/bitstring>> = Payload,
   lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]).
 
-extractIM(<<"N">>) ->
-  nothing;
 extractIM(Payload) ->
-  <<"D", Distance:16/little-unsigned-integer>> = Payload,
-  Distance / 10.
+  case Payload of
+    <<"D", Distance:16/little-unsigned-integer>> ->
+      Distance / 10;
+    _ -> nothing
+  end.

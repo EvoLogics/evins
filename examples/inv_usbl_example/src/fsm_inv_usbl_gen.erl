@@ -148,12 +148,13 @@ createIM(SM) ->
   end.
 
 
-extractAM(<<"N">>) ->
-  nothing;
 extractAM(Payload) ->
-  <<"L", Bearing:12/little-unsigned-integer,
-         Elevation:12/little-unsigned-integer,
-         Roll:12/little-unsigned-integer,
-         Pitch:12/little-unsigned-integer,
-         Yaw:12/little-unsigned-integer, _/bitstring>> = Payload,
-  lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]).
+  case Payload of
+    <<"L", Bearing:12/little-unsigned-integer,
+           Elevation:12/little-unsigned-integer,
+           Roll:12/little-unsigned-integer,
+           Pitch:12/little-unsigned-integer,
+           Yaw:12/little-unsigned-integer, _/bitstring>> ->
+      lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]);
+    _ -> nothing
+  end.
