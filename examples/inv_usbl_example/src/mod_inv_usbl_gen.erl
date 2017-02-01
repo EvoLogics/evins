@@ -42,12 +42,14 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
 
 parse_conf(_Mod_ID, ArgS, Share) ->
   QDelay = [P || {query_delay, P} <- ArgS],
+  QTimeout = [P || {query_timeout, P} <- ArgS],
   ADelay = [P || {answer_delay, P} <- ArgS],
   Mode   = [P || {mode, P} <- ArgS],
   Addr   = [P || {dst, P} <- ArgS],
   Pid    = [P || {pid, P} <- ArgS],
 
   share:put(#sm{share = Share}, [{query_delay, set_params(QDelay, 1000)},
+                                 {query_timeout, set_params(QTimeout, 5000)},
                                  {answer_delay, set_params(ADelay, 500)},
                                  {mode, set_params(Mode, im)},
                                  {dst, set_params(Addr, 1)},

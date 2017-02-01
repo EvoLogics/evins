@@ -38,7 +38,10 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event=answer_timeout}, {});
 
     {timeout, query_timeout} ->
-      fsm:run_event(MM, SM#sm{event = send_at_command}, createIM(SM));
+      TM = share:get(SM, query_timeout),
+      [fsm:set_timeout(__, {ms, TM}, query_timeout),
+       fsm:run_event(MM, __#sm{event = send_at_command}, createIM(SM))
+      ](SM);
 
     %% ------ IM logic -------
     {async, _, {recvpbm, _, RAddr, LAddr, _, _, _, _, Payload}} ->
@@ -50,7 +53,9 @@ handle_event(MM, SM, Term) ->
 
     {async, {failedim, RAddr}} ->
       TM = share:get(SM, query_delay),
-      fsm:set_timeout(SM, {ms, TM}, query_timeout);
+      [fsm:clear_timeout(__, query_timeout),
+       fsm:set_timeout(__, {ms, TM}, query_timeout)
+      ](SM);
 
     {sync, "?T", PTimeStr} ->
       Delay = share:get(SM, query_delay),
@@ -58,6 +63,7 @@ handle_event(MM, SM, Term) ->
       Dist = PTime * 1500.0e-6,
       io:format("LDistance: ~p~n", [Dist]),
       [share:put(__, distance, Dist),
+       fsm:clear_timeout(__, query_timeout),
        fsm:set_timeout(__, {ms, Delay}, query_timeout),
        fsm:clear_timeout(__, answer_timeout),
        fsm:run_event(MM, __#sm{event=sync_answer}, {})
@@ -76,6 +82,7 @@ handle_event(MM, SM, Term) ->
       Dist = PTime * 1500.0e-6,
       io:format("LDistance: ~p~n", [Dist]),
       [share:put(__, distance, Dist),
+       fsm:clear_timeout(__, query_timeout),
        fsm:set_timeout(__, {ms, Delay}, query_timeout)
       ](SM);
 
