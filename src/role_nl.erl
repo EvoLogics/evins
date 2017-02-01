@@ -83,11 +83,15 @@ try_send(L, Cfg) ->
     case L of
       <<"?\n">>  -> get_help();
       _ ->
-        case re:run(L, "^(NL,send,|NL,set,protocol,|NL,set,routing,|NL,set,address,|NL,clear,stats,data|NL,reset,state)(.*)", [dotall, {capture, [1, 2], binary}]) of
+        case re:run(L, 
+          "^(NL,send,|NL,set,protocol,|NL,set,routing,|NL,set,address,|NL,clear,stats,data|NL,reset,state|NL,delete,neighbour,)(.*)",
+          [dotall, {capture, [1, 2], binary}]) of
+
           {match, [<<"NL,send,">>, P]}  -> nl_send_extract(P, Cfg);
           {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
           {match, [<<"NL,set,routing,">>, P]}  -> nl_set_routing(P, Cfg);
           {match, [<<"NL,set,address,">>, P]}  -> nl_set_address(P, Cfg);
+          {match, [<<"NL,delete,neighbour,">>, P]}  -> nl_delete_neighbour(P, Cfg);
           {match, [<<"NL,clear,stats,data">>, P]}  -> nl_clear(P, Cfg);
           {match, [<<"NL,reset,state">>, _P]}  -> nl_reset_state();
           nomatch ->
@@ -101,8 +105,15 @@ try_send(L, Cfg) ->
       [{more, L}]
   end.
 
+nl_delete_neighbour(P, _Cfg) ->
+  try
+    {match, [BAddr]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
+    [{rcv_ul, {delete, neighbour, binary_to_integer(BAddr)} }]
+  catch error: _Reason -> [{nl, error}]
+  end.
+
 nl_set_protocol(P, _Cfg) ->
-try
+  try
     {match, [ProtocolID]} = re:run(P,"([^,]*)\n", [dotall, {capture, [1], binary}]),
     AProtocolID = binary_to_atom(ProtocolID, utf8),
     case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
@@ -117,7 +128,7 @@ nl_reset_state() ->
   [{rcv_ul, {reset, state} }].
 
 nl_set_routing(P, _Cfg) ->
-try
+  try
     {match, [BRouting]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
     LRouting = string:tokens(binary_to_list(BRouting), ","),
     IRouting = lists:map(fun(X)-> S = string:tokens(X, "->"), [list_to_integer(X1) || X1 <- S] end, LRouting),
@@ -127,7 +138,7 @@ try
   end.
 
 nl_set_address(P, _Cfg) ->
-try
+  try
     {match, [BAddr]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
     [{rcv_ul, {set, address, binary_to_integer(BAddr)} }]
   catch error: _Reason -> [{nl, error}]

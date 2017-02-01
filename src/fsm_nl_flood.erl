@@ -298,7 +298,6 @@ handle_event(MM, SM, Term) ->
       end,
       fsm:cast(SM, nl, {send, {sync, {nl, protocol, AProtocolID} } }),
       SM;
-
     {rcv_ul, {get, help}} ->
       fsm:cast(SM, nl, {send, {sync, {nl, help, ?HELP}}  }),
       SM;
@@ -319,6 +318,9 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, {set, protocol, AProtocolID} } ->
       share:put(SM, nlp, AProtocolID),
       fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+      SM;
+    {rcv_ul, Command = {delete, neighbour, _Addr} } ->
+      nl_mac_hf:process_command(SM, false, Command),
       SM;
     {rcv_ul, _Tuple} when SM#sm.state =/= idle ->
       fsm:cast(SM, nl, {send, {sync, {nl, busy}}});

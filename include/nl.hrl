@@ -217,6 +217,7 @@
 			 \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
 			 "\n\n\n",
 			 "========================= Clear commands ========================\n",
+			 "NL,delete,neighbour,<Addr>\t\t\t\t-remove a neighbour from the current neighbour list and updates the routing table\n",
 			 "NL,clear,stats,data\t\t\t\t-clear the data statistics\n"
 			 "\n\n\n",
 			 "========================= Reset commands ========================\n",

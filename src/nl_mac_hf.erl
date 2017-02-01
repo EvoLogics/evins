@@ -1282,6 +1282,8 @@ process_command(SM, Debug, Command) ->
       [share:get(SM, st_neighbours), neighbours];
     {statistics, data} when Protocol#pr_conf.ack ->
       [share:get(SM, st_data), data];
+    {delete, neighbour, _} ->
+      [share:get(SM, current_neighbours), neighbours];
     states ->
       Last_states = share:get(SM, last_states),
       [queue:to_list(Last_states), states];
@@ -1317,6 +1319,9 @@ process_command(SM, Debug, Command) ->
           {nl, protocol, get_protocol_info(SM, Name)};
         neighbours ->
           {nl, neighbours, neighbours_to_bin(SM)};
+        {delete, neighbour, Addr} ->
+          delete_neighbour(SM, Addr),
+          {nl, ok};
         routing ->
           {nl, routing, routing_to_bin(SM)};
         state ->
@@ -1337,6 +1342,39 @@ process_command(SM, Debug, Command) ->
     fsm:cast(SM, nl, {send, {sync, Answer}})
   end,
   SM.
+
+update_neighbours_channel(_SM, _, []) ->
+  nothing;
+update_neighbours_channel(_SM, _, nothing) ->
+  nothing;
+update_neighbours_channel(SM, NLSrcAT, Neighbours_channel) ->
+  El = lists:keyfind(NLSrcAT, 1, Neighbours_channel),
+  Updated_neighbours_channel = lists:delete(El, Neighbours_channel),
+  share:put(SM, neighbours_channel, Updated_neighbours_channel).
+
+delete_neighbour(SM, Addr) ->
+  LNeighbours = neighbours_to_list(SM, share:get(SM, current_neighbours), mac),
+  case lists:member(Addr, LNeighbours) of
+    true ->
+        % delete neighbour from the current neighbour list
+        NewNeigbourList = lists:delete(Addr, LNeighbours),
+        share:put(SM, current_neighbours, NewNeigbourList),
+
+        Neighbours_channel = share:get(SM, neighbours_channel),
+        update_neighbours_channel(SM, Addr, Neighbours_channel),
+
+        %delete neighbour from the routing
+        Routing_table = share:get(SM, routing_table),
+        NRouting_table = lists:filtermap(fun(X) ->
+          case X of
+            {_, Addr} -> false;
+            Addr -> false;
+            _ -> {true, X}
+          end end, Routing_table),
+        share:put(SM, routing_table, NRouting_table),
+    false ->
+      nothing
+  end.
 
 update_states_list(SM) ->
   [{_, Msg}] =
