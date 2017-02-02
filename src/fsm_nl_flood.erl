@@ -264,9 +264,10 @@ handle_event(MM, SM, Term) ->
           {async, {nl,recv, ISrc, IDst, BData}} = Send_tuple,
           {LenData, NData, _} = nl_mac_hf:parse_path_data(SM, BData),
           BroadcastTuple = {async, {nl, recv, LenData, ISrc, IDst, NData}},
-          if Flag =:= data ->
-            fsm:cast(SMN, nl, {send, BroadcastTuple});
-            true -> nothing
+          case Flag of
+            data when ISrc =/= Local_address ->
+              fsm:cast(SMN, nl, {send, BroadcastTuple});
+            _ -> nothing
           end,
           case RyTuple of
             {rcv_processed,_,_} ->

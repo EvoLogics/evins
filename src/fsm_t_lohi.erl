@@ -190,7 +190,7 @@ handle_event(MM, SM, Term) ->
           SMN1 = process_rcv_flag(SMN, Flag),
           fsm:run_event(MM, SMN1, {});
         _ ->
-          SM
+          SMN
       end;
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),

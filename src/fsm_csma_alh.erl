@@ -184,7 +184,7 @@ handle_event(MM, SM, Term) ->
           fsm:cast(SMN, alh, {send, {async, SMsg} }),
           fsm:run_event(MM, SMN, {});
         _ ->
-          SM
+          SMN
       end;
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
