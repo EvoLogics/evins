@@ -37,7 +37,7 @@
 %% DETS functions
 -export([init_dets/1]).
 %% handle events
--export([event_params/3, clear_spec_timeout/2]).
+-export([event_params/3, clear_spec_timeout/2, get_params_spec_timeout/2]).
 %% Math functions
 -export([rand_float/2, lerp/3, deleteQKey/3]).
 %% Addressing functions
@@ -239,7 +239,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                                 {ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}}]),
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
-                 fsm:cast(SM, nl, {send, AT}),
+                 %fsm:cast(SM, nl, {send, AT}),
                  fill_dets(SM, IPacket_id, MAC_real_src, MAC_real_dst),
                  fsm:set_event(SM1, eps)
             end
@@ -256,11 +256,12 @@ mac2at(SM, Flag, Tuple) when is_tuple(Tuple)->
   end.
 
 nl2at (SM, Tuple) when is_tuple(Tuple)->
+  %Queue_ids = share:get(SM, queue_ids),
   ETSPID =  list_to_binary(["p", integer_to_binary(share:get(SM, pid))]),
   NLPPid = ?PROTOCOL_NL_PID(share:get(SM, nlp)),
   case Tuple of
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  when byte_size(Data) < ?MAX_IM_LEN ->
-      %% TODO: TTL generated on NL layer is always 0, MAC layer inreases it, due to retransmissions
+      %% TTL generated on NL layer is always 0, MAC layer inreases it, due to retransmissions
       NewData = create_payload_nl_flag(SM, NLPPid, Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
       {at,"*SENDIM", ETSPID, byte_size(NewData), IDst, noack, NewData};
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}} ->
@@ -271,7 +272,7 @@ nl2at (SM, Tuple) when is_tuple(Tuple)->
   end.
 
 %%------------------------- Extract functions ----------------------------------
-create_payload_nl_flag(SM, NLPPid, Flag, PkgID, TTL, Src, Dst, Data) ->
+create_payload_nl_flag(_SM, NLPPid, Flag, PkgID, TTL, Src, Dst, Data) ->
   % 6 bits NL_Protocol_PID
   % 3 bits Flag
   % 6 bits PkgID
@@ -285,7 +286,6 @@ create_payload_nl_flag(SM, NLPPid, Flag, PkgID, TTL, Src, Dst, Data) ->
   CBitsTTL = count_flag_bits(?TTL),
   CBitsAddr = count_flag_bits(?ADDRESS_MAX),
 
-  ?TRACE(?ID, "!!!!!!!!!!!!!!!!!!!!!!~p  ~p~n", [NLPPid, share:get(SM, local_address)]),
   BPid = <<NLPPid:CBitsNLPid>>,
 
   FlagNum = ?FLAG2NUM(Flag),
@@ -977,7 +977,8 @@ update_route_table(SM, NRouting_table) ->
 % check if same package was received from other src dst,
 process_pkg_id(SM, TTL, Tuple) ->
   Queue_ids = share:get(SM, queue_ids),
-  [SMN, StoredTTL, NQueue_ids] = searchQKey(SM, Queue_ids, Tuple, queue:new(), nothing),
+  Pkg_life = share:get(SM, pkg_life),
+  [SMN, StoredTTL, NQueue_ids] = searchQKey(SM, Queue_ids, Tuple, queue:new(), nothing, Pkg_life),
   % if StoredTTL == nothing, it is a new package and does not exist in the queue
   case StoredTTL of
     nothing ->
@@ -1003,21 +1004,27 @@ deleteQKey(Q, Tuple, NQ) ->
       deleteQKey(Q1, Tuple, queue:in(CTuple, NQ))
   end.
 
-searchQKey(SM, {[],[]}, _Tuple, NQ, TTL) ->
+searchQKey(SM, {[],[]}, _Tuple, NQ, TTL, _Pkg_life) ->
   [SM, TTL, NQ];
-searchQKey(SM, Q, {Flag, CurrentTTL, ID, S, D, Data} = Tuple, NQ, TTL) ->
-  Pkg_life = share:get(SM, pkg_life),
-  {{value, CTuple}, Q1} = queue:out(Q),
+searchQKey(SM, Q, {Flag, CurrentTTL, ID, S, D, Data} = Tuple, NQ, TTL, Pkg_life) ->
+  { {value, CTuple}, Q1 } = queue:out(Q),
   case CTuple of
     {Flag, CurrentTTL, ID, S, D, Data} ->
-      searchQKey(SM, Q1, Tuple, queue:in(CTuple, NQ), CurrentTTL);
-    {Flag, StoredTTL, ID, S, D, Data} ->
+      LimQ = queue_limited_push(NQ, CTuple, 10),
+      searchQKey(SM, Q1, Tuple, LimQ, CurrentTTL, Pkg_life);
+    {Flag, StoredTTL, ID, S, D, Data} when StoredTTL > CurrentTTL ->
+      searchQKey(SM, Q1, Tuple, NQ, StoredTTL, Pkg_life);
+    {Flag, StoredTTL, ID, S, D, Data} when CurrentTTL > StoredTTL, Pkg_life =/= nothing ->
       SMN = fsm:set_timeout(SM, {s, Pkg_life}, {drop_pkg, Tuple}),
-      searchQKey(SMN, Q1, Tuple, queue:in(Tuple, NQ), StoredTTL);
+      LimQ = queue_limited_push(NQ, Tuple, 10),
+      searchQKey(SMN, Q1, Tuple, LimQ, StoredTTL, Pkg_life);
+    {Flag, StoredTTL, ID, S, D, Data} when CurrentTTL > StoredTTL ->
+      LimQ = queue_limited_push(NQ, Tuple, 10),
+      searchQKey(SM, Q1, Tuple, LimQ, StoredTTL, Pkg_life);
     _ ->
-      searchQKey(SM, Q1, Tuple, queue:in(CTuple, NQ), TTL)
+      LimQ = queue_limited_push(NQ, CTuple, 10),
+      searchQKey(SM, Q1, Tuple, LimQ, TTL, Pkg_life)
   end.
-
 %%--------------------------------------------------  RTT functions -------------------------------------------
 getRTT(SM, RTTTuple) ->
   case share:get(SM, RTTTuple) of
@@ -1078,8 +1085,10 @@ bin_to_num(N) when is_list(N) ->
     {F, _Rest} -> F
   end.
 
-increase_pkgid(SM, Src, Dst) ->
+increase_pkgid(SM, MACSrc, MACDst) ->
   Max_pkg_id = share:get(SM, max_pkg_id),
+  Src = addr_mac2nl(SM, MACSrc),
+  Dst = addr_mac2nl(SM, MACDst),
   PkgID = case share:get(SM, {packet_id, Src, Dst}) of
             nothing -> 0;
             Prev_id when Prev_id >= Max_pkg_id -> 0;
@@ -1231,37 +1240,68 @@ sequence_more_recent(S1, S2, Max) ->
 
 process_send_payload(SM, {at, _PID, _, _, _, <<"t">>}) ->
   SM;
-process_send_payload(SM, Msg = {at, _PID, _, _, _, Payload}) ->
+process_send_payload(SM, {at, PID, P1, P2, P3, Payload}) ->
   SM1 = clear_spec_timeout(SM, retransmit),
-  [_BPid, Flag, _PkgID, _TTL, _Src, _Dst, _Data] = extract_payload_nl_flag(Payload),
+  [BPid, Flag, PkgID, TTL, Src, Dst, Data] = extract_payload_nl_flag(Payload),
+  Tuple = {Flag, TTL, PkgID, Src, Dst, Data},
+  Ttl_table = share:get(SM, ttl_table),
+  NewPayload = check_TTL(SM, Ttl_table, BPid, Tuple, Payload),
+  NewMsg = {at, PID, P1, P2, P3, NewPayload},
   case num2flag(Flag, nl) of
     dst_reached ->
       SM1;
-    _ ->
+    _ when NewPayload =/= nothing ->
       Tmo_retransmit = rand_float(SM1, tmo_retransmit),
-      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, Msg})
+      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, NewMsg});
+    _ ->
+      SM1
+  end.
+
+check_TTL(SM, nothing, _BPid, Tuple, Msg) ->
+  Q = queue:new(),
+  share:put(SM, ttl_table, queue:in(Tuple, Q)),
+  Msg;
+check_TTL(SM, Ttl_table, BPid, Tuple = {Flag, CurrentTTL, PkgID, Src, Dst, Data}, Msg) ->
+  [_SMN, StoredTTL, NTtl_table] = searchQKey(SM, Ttl_table, Tuple, queue:new(), nothing, nothing),
+  case StoredTTL of
+    nothing ->
+      share:put(SM, ttl_table, queue:in(Tuple, Ttl_table)),
+      Msg;
+    _ when CurrentTTL == StoredTTL ->
+      nothing;
+    _ when CurrentTTL == 0, StoredTTL < ?TTL - 1->
+      NTuple = {Flag, StoredTTL + 1, PkgID, Src, Dst, Data},
+      [_, _, IncTuple] = searchQKey(SM, Ttl_table, NTuple, queue:new(), nothing, nothing),
+      share:put(SM, ttl_table, IncTuple),
+      create_payload_nl_flag(SM, BPid, num2flag(Flag, nl), PkgID, StoredTTL + 1, Src, Dst, Data);
+    _ when StoredTTL > CurrentTTL, StoredTTL < ?TTL - 1 ->
+      NTuple = {Flag, StoredTTL, PkgID, Src, Dst, Data},
+      [_, _, IncTuple] = searchQKey(SM, Ttl_table, NTuple, queue:new(), nothing, nothing),
+      share:put(SM, ttl_table, IncTuple),
+      create_payload_nl_flag(SM, BPid, num2flag(Flag, nl), PkgID, StoredTTL, Src, Dst, Data);
+    _ when CurrentTTL > StoredTTL, CurrentTTL < ?TTL - 1 ->
+      share:put(SM, ttl_table, NTtl_table),
+      Msg;
+    _ ->
+      nothing
   end.
 
 process_retransmit(SM, Msg, Ev) ->
-  Retransmit_count = share:get(SM, retransmit_count, Msg),
   Max_retransmit_count = share:get(SM, max_retransmit_count),
   {at, PID, Type, ATDst, FlagAck, Payload} = Msg,
   [BPid, Flag, PkgID, TTL, Src, Dst, Data] = extract_payload_nl_flag(Payload),
-
-  ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, Retransmit_count]),
-  case Retransmit_count of
-    _ when Retransmit_count < Max_retransmit_count - 1, Dst =/= ?ADDRESS_MAX->
+  ?TRACE(?ID, "Retransmit Tuple ~p Retransmit_count ~p ~n ", [Msg, TTL]),
+  if TTL < Max_retransmit_count ->
       NewMsg = create_payload_nl_flag(SM, BPid, num2flag(Flag, nl), PkgID, increaseTTL(TTL), Src, Dst, Data),
       AT = {at, PID, Type, ATDst, FlagAck, NewMsg},
-      share:put(SM, retransmit_count, AT, Retransmit_count + 1),
       SM1 = process_send_payload(SM, AT),
       [SM1#sm{event = Ev}, {Ev, AT}];
-    _ ->
+    true ->
       [SM, {}]
   end.
 
 increaseTTL(CurrentTTL) ->
-  if(CurrentTTL < ?TTL) ->
+  if(CurrentTTL < ?TTL - 1) ->
       CurrentTTL + 1;
   true ->
     ?TTL

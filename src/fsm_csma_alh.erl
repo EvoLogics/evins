@@ -167,9 +167,13 @@ handle_event(MM, SM, Term) ->
       SM;
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
       share:put(SM, current_msg, Msg),
-      share:put(SM, {retransmit_count, Msg}, 0),
       SM1 = nl_mac_hf:process_send_payload(SM, Msg),
-      fsm:run_event(MM, SM1#sm{event = rcv_ul}, {rcv_ul, Msg});
+      StoredRetransmit = nl_mac_hf:get_params_spec_timeout(SM1, retransmit),
+      if StoredRetransmit == [] ->
+          SM1;
+      true ->
+        fsm:run_event(MM, SM1#sm{event = rcv_ul}, {rcv_ul, Msg})
+      end;
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       SM;
     {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->

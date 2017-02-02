@@ -166,12 +166,10 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, {at, _, _, _, _}} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } });
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} when State =:= idle; State =:= transmit_data ->
-      share:put(SM, retransmit_count, Msg, 0),
       share:put(SM, current_msg, Msg),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       fsm:run_event(MM, SM1#sm{event = transmit_ct}, {send_tone, Msg});
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
-      share:put(SM, retransmit_count, Msg, 0),
       share:put(SM, current_msg, Msg),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       fsm:cast(SM1, alh,  {send, {sync, "OK"} });
