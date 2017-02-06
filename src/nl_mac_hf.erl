@@ -214,7 +214,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
   Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
   if Real_dst =:= wrong_format -> error;
      true ->
-       Route_addr = get_routing_addr(SM, Flag, Real_dst),
+       Route_addr = get_routing_addr(SM, Flag, addr_nl2mac(SM, Real_dst) ),
        [MAC_addr, MAC_real_src, MAC_real_dst] = addr_nl2mac(SM, [Route_addr, Real_src, Real_dst]),
        if(Route_addr =:= no_routing_table) ->
         ?ERROR(?ID, "~s: Wrong Route_addr:~p, check config file ~n", [?MODULE, Route_addr]);
@@ -668,7 +668,14 @@ get_routing_addr(SM, Flag, AddrSrc) ->
   NProtocol = share:get(SM, nlp),
   Protocol = share:get(SM, protocol_config, NProtocol),
   case required_routing(Flag, Protocol, NProtocol) of
-    true -> find_in_routing_table(share:get(SM, routing_table), AddrSrc);
+    true  ->
+      AddrDst = find_in_routing_table(share:get(SM, routing_table), AddrSrc),
+      case NProtocol of
+        staticr when AddrDst == ?ADDRESS_MAX, AddrSrc =/= ?ADDRESS_MAX ->
+          error;
+        _ ->
+          AddrDst
+      end;
     false -> ?ADDRESS_MAX
   end.
 
@@ -686,18 +693,16 @@ find_in_routing_table(Routing_table, AddrSrc) ->
   Addr =
   case Res of
     [] ->
-      [DefaultAddr] =
       lists:filtermap(fun(X) ->
         if is_tuple(X) == false -> {true, X};
           true -> false
-        end end, Routing_table),
-      DefaultAddr;
-    [To] -> To
+        end end, Routing_table);
+    To -> To
   end,
 
   case Addr of
     [] -> ?ADDRESS_MAX;
-    _ -> Addr
+    [AddrTo] -> AddrTo
   end.
 
 convert_la(SM, Type, Format) ->
@@ -769,6 +774,7 @@ parse_path(SM, {_, ListPath}, {ISrc, IDst}) ->
 
 add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {IRssi, IIntegrity}) ->
   ?INFO(?ID, "+++ Flag ~p, NLSrcAT ~p, RealSrc ~p~n", [Flag, NLSrcAT, RealSrc]),
+
   Neighbours_channel = share:get(SM, neighbours_channel),
   SM1 = fsm:set_timeout(SM, {s, share:get(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
   analyse(SM1, st_neighbours, NLSrcAT, {RealSrc, Real_dst}),
