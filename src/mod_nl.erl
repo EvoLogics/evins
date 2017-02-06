@@ -105,9 +105,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     ShareID = #sm{share = Share},
     La = share:get(ShareID, local_address),  
     DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
-    %Filename = "/tmp/" ++ "share_file_" ++ integer_to_list(La),
     Roles = fsm_worker:role_info(Role_IDs, [alh, nl]),
-    %{ok, Ref} = dets:open_file(DetsName,[{file, Filename}]),
     {ok, Ref} = dets:open_file(DetsName,[]),
     [#sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
@@ -135,8 +133,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Max_address     = set_params(Max_address_set, 20),
   Pkg_life        = set_params(Pkg_life_Set, 180), % in sek
 
-  {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {0.3, 0.9}),
-  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {0.3, 0.9}),
+  {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {0.3, 2}),
+  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {1, 2}),
   {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
 
   Blacklist                       = set_blacklist(Bll_addrs, []),

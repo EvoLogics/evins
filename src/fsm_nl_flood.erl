@@ -353,7 +353,7 @@ handle_event(MM, SM, Term) ->
 init_flood(SM) ->
   {H, M, Ms} = erlang:timestamp(),
   LA = share:get(SM, local_address),
-  rand:seed(exsplus, {H * LA, M * LA, Ms}),
+  rand:seed(exsplus, {H + LA, M + LA, Ms + (H * LA + M * LA)}),
   share:put(SM, [{path_exists, false},
                  {list_current_wvp, []},
                  {s_total_sent, 1},

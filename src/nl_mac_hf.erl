@@ -1404,13 +1404,17 @@ delete_neighbour(SM, Addr) ->
 
         %delete neighbour from the routing
         Routing_table = share:get(SM, routing_table),
-        NRouting_table = lists:filtermap(fun(X) ->
-          case X of
-            {_, Addr} -> false;
-            Addr -> false;
-            _ -> {true, X}
-          end end, Routing_table),
-        share:put(SM, routing_table, NRouting_table);
+        case Routing_table of
+          ?ADDRESS_MAX -> nothing;
+          _ ->
+            NRouting_table = lists:filtermap(fun(X) ->
+              case X of
+                {_, Addr} -> false;
+                Addr -> false;
+                _ -> {true, X}
+              end end, Routing_table),
+            share:put(SM, routing_table, NRouting_table)
+        end;
     false ->
       nothing
   end.
