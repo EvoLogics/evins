@@ -286,6 +286,10 @@ handle_info({inet_async, LSock, Ref, Error}, #ifstate{id = ID, listener=LSock, a
 handle_info({tcp, Socket, Bin}, #ifstate{socket = Socket} = State) ->
   process_bin(Bin, State);
 
+handle_info({tcp, Socket1, Bin}, #ifstate{socket = Socket2} = State) ->
+  error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
+  {noreply, State};
+
 handle_info({PortID,{data,Bin}}, #ifstate{port = PortID} = State) ->
   process_bin(Bin, State);
 
