@@ -45,6 +45,7 @@ stop(_SM)      -> ok.
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT  ~p   ~p ~n", [MM, SM]),
   ?TRACE(?ID, "~p~n", [Term]),
+
   case Term of
     {timeout, answer_timeout} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"ANSWER TIMEOUT">>} } }),
@@ -66,6 +67,9 @@ handle_event(MM, SM, Term) ->
       SM;
     {rcv_ul, Msg = {at, _PID, _, _, _}} ->
       fsm:run_event(MM, SM#sm{event = try_send}, {try_send, Msg});
+    {rcv_ul,{at, _PID, "*SENDIM", _, _, _}} ->
+      fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
+      SM;
     {async, {pid, NPid}, Tuple = {recv, _, _, _, _, _, _, _, _, _Payload}} ->
       [H | T] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,

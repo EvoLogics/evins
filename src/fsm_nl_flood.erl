@@ -140,6 +140,7 @@ handle_event(MM, SM, Term) ->
   Local_address = share:get(SM, local_address),
   NProtocol = share:get(SM, nlp),
   Protocol  = share:get(SM, {protocol_config, NProtocol}),
+
   case Term of
     {timeout, Event} ->
       ?INFO(?ID, "timeout ~140p~n", [Event]),
@@ -278,6 +279,10 @@ handle_event(MM, SM, Term) ->
         _ ->
           SMN
         end;
+    {async, {delivered, _, P2}} ->
+      fsm:cast(SM, nl, {send, {sync, {nl, delivered, Local_address, P2}}});
+    {async, {failed, _, P2}} ->
+      fsm:cast(SM, nl, {send, {sync, {nl, failed, Local_address, P2}}});
     {async, _Tuple} ->
       SM;
     {nl,error} ->
@@ -341,7 +346,7 @@ handle_event(MM, SM, Term) ->
         end;
       true ->
         ?TRACE(?ID, "NO routing available ~p ~p~n", [Routing_table, RAddr]),
-        SM
+        fsm:cast(SM, nl, {send, {nl, error}})
       end;
     {ignore,_} -> SM;
     UUg ->

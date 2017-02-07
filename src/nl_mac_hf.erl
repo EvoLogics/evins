@@ -212,9 +212,11 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, rec
 send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL) ->
   Real_dst = get_dst_addr(NL),
   Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
+
   if Real_dst =:= wrong_format -> error;
      true ->
        Route_addr = get_routing_addr(SM, Flag, addr_nl2mac(SM, Real_dst) ),
+
        [MAC_addr, MAC_real_src, MAC_real_dst] = addr_nl2mac(SM, [Route_addr, Real_src, Real_dst]),
        if(Route_addr =:= no_routing_table) ->
         ?ERROR(?ID, "~s: Wrong Route_addr:~p, check config file ~n", [?MODULE, Route_addr]);
@@ -237,6 +239,7 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
                  share:put(SM, [{{last_nl_sent_time, CurrentRTT}, erlang:monotonic_time(micro_seconds)},
                                 {last_nl_sent, {send, {Flag, [IPacket_id, Real_src, []]}, NL}},
                                 {ack_last_nl_sent, {IPacket_id, Real_src, Real_dst}}]),
+
                  SM1 = fsm:cast(SM, Interface, {send, AT}),
                  %!!!!
                  %fsm:cast(SM, nl, {send, AT}),
@@ -671,7 +674,11 @@ get_routing_addr(SM, Flag, AddrSrc) ->
     true  ->
       AddrDst = find_in_routing_table(share:get(SM, routing_table), AddrSrc),
       case NProtocol of
-        staticr when AddrDst == ?ADDRESS_MAX, AddrSrc =/= ?ADDRESS_MAX ->
+        staticr when AddrDst == ?ADDRESS_MAX,
+                     Flag == dst_reached ->
+          AddrDst;
+        staticr when AddrDst == ?ADDRESS_MAX,
+                     AddrSrc =/= ?ADDRESS_MAX ->
           error;
         _ ->
           AddrDst
@@ -681,6 +688,7 @@ get_routing_addr(SM, Flag, AddrSrc) ->
 
 % TODO: check
 find_in_routing_table(?ADDRESS_MAX, _) -> ?ADDRESS_MAX;
+find_in_routing_table(_, ?ADDRESS_MAX) -> ?ADDRESS_MAX;
 find_in_routing_table([], _) -> no_routing_table;
 find_in_routing_table(Routing_table, AddrSrc) ->
   Res =

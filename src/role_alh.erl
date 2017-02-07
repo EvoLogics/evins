@@ -90,7 +90,9 @@ split(L, Cfg) ->
       {match, [<<"RECVIMS,p">>, P]} -> recvims_extract(L, P, pid);
       {match, [<<"RECVIMS,">>, P]}  -> recvims_extract(L, P, nopid);
       nomatch ->
-      case patter_matcher(L, "^(DELIVEREDIM,|FAILEDIM,|OK|BUSY|ERROR)(.*?)[\r\n]+(.*)", 3) of
+      case patter_matcher(L, "^(DELIVERED,|FAILED,|DELIVEREDIM,|FAILEDIM,|OK|BUSY|ERROR)(.*?)[\r\n]+(.*)", 3) of
+        {match, [<<"DELIVERED,">>, P, L1]}    -> [delivered_extract(P)  | split(L1, Cfg)];
+        {match, [<<"FAILED,">>, P, L1]}       -> [failed_extract(P) | split(L1, Cfg)];
         {match, [<<"DELIVEREDIM,">>, P, L1]}  -> [deliveredim_extract(P)	| split(L1, Cfg)];
         {match, [<<"FAILEDIM,">>, P, L1]}     -> [failedim_extract(P)	| split(L1, Cfg)];
         {match, [<<"OK">>, P, L1]}            -> [ok_extract(P)		| split(L1, Cfg)];
@@ -241,6 +243,7 @@ sendims_extract(L, P, Cfg, IfPid) ->
       end
   catch error: _Reason -> [{sync, "*SENDIMS", {error, ?ERROR_WRONG}}]
   end.
+
 recv_extract(L, P, IfPid) ->
   try
     [BPid, Params] =
@@ -345,6 +348,21 @@ recvims_extract(L,P,IfPid) ->
     end
   catch error: _Reason -> [{sync, "*RECVIMS", {error, ?ERROR_WRONG}}]
   end.
+
+delivered_extract(P)->
+  try
+    {match, [P1, P2]} = patter_matcher(P, "([^,]*),([^,]*)", 2),
+    {async, {delivered, P1, P2}}
+  catch error: _Reason -> {sync, "*SEND", {error, ?ERROR_WRONG}}
+  end.
+
+failed_extract(P)->
+  try
+    {match, [P1, P2]} = patter_matcher(P, "([^,]*),([^,]*)", 2),
+    {async, {failed, P1, P2}}
+  catch error: _Reason -> {sync, "*SEND", {error, ?ERROR_WRONG}}
+  end.
+
 
 deliveredim_extract(P)->
   try
