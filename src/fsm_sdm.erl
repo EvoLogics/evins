@@ -27,7 +27,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 -module(fsm_sdm).
 -behaviour(fsm).
-
+-compile({parse_transform, pipeline}).
 -include("fsm.hrl").
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
@@ -64,6 +64,9 @@ handle_event(_MM, SM, Term) ->
     {sdmcli, {rx, Len, FName}} ->
       fsm:cast(env:put(SM, fname, FName), sdm,
                {send, {sdm, {rx, Len}}});
+
+    {sdmcli, {hook, rx, Len, FName}} ->
+      env:put(SM, hook, {rx, Len, FName});
     
     {sdmcli, Cfg} ->
       fsm:cast(SM,sdm, {send, {sdm, Cfg}}); 
@@ -97,9 +100,19 @@ handle_event(_MM, SM, Term) ->
     {sdm,{busy, Cmd}} ->
       fsm:cast(SM, sdmcli, {send, {sdmcli, {busy, Cmd}}});
     
-    {sdm,{report,Cmd,Len}} ->
-      fsm:cast(SM, sdmcli, {send, {sdmcli, {report, Cmd, Len}}});
-    
+    {sdm,{report,Cmd,RLen}} ->
+      case env:get(SM, hook) of
+        nothing ->
+          fsm:cast(SM, sdmcli, {send, {sdmcli, {report, Cmd, RLen}}});
+        {rx, Len, FName} ->
+          [
+           env:put(__, hook, nothing),
+           env:put(__, fname, FName),
+           fsm:cast(__, sdmcli, {send, {sdmcli, {report, Cmd, RLen}}}),
+           fsm:cast(__, sdmcli, {send, {sdmcli, {hook}}}),
+           fsm:cast(__, sdm, {send, {sdm, {rx, Len}}})
+          ] (SM)
+        end;
     _ ->
       ?INFO(?ID, "Unhandled event: ~150p~n", [Term]),
       SM
