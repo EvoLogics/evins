@@ -90,9 +90,11 @@ split(L, Cfg) ->
       {match, [<<"RECVIMS,p">>, P]} -> recvims_extract(L, P, pid);
       {match, [<<"RECVIMS,">>, P]}  -> recvims_extract(L, P, nopid);
       nomatch ->
-      case patter_matcher(L, "^(DELIVERED,|FAILED,|DELIVEREDIM,|FAILEDIM,|OK|BUSY|ERROR)(.*?)[\r\n]+(.*)", 3) of
+      case patter_matcher(L, "^(DELIVERED,mac,|FAILED,mac,|DELIVERED,|FAILED,|DELIVEREDIM,|FAILEDIM,|OK|BUSY|ERROR)(.*?)[\r\n]+(.*)", 3) of
         {match, [<<"DELIVERED,">>, P, L1]}    -> [delivered_extract(P)  | split(L1, Cfg)];
-        {match, [<<"FAILED,">>, P, L1]}       -> [failed_extract(P) | split(L1, Cfg)];
+        {match, [<<"FAILED,">>, P, L1]}       -> [failed_extract(P) | split(L1, Cfg)];        
+        {match, [<<"DELIVERED,mac,">>, P, L1]}-> [delivered_mac_extract(P)  | split(L1, Cfg)];
+        {match, [<<"FAILED,mac,">>, P, L1]}   -> [failed_mac_extract(P) | split(L1, Cfg)];
         {match, [<<"DELIVEREDIM,">>, P, L1]}  -> [deliveredim_extract(P)	| split(L1, Cfg)];
         {match, [<<"FAILEDIM,">>, P, L1]}     -> [failedim_extract(P)	| split(L1, Cfg)];
         {match, [<<"OK">>, P, L1]}            -> [ok_extract(P)		| split(L1, Cfg)];
@@ -361,6 +363,21 @@ failed_extract(P)->
     {match, [P1, P2]} = patter_matcher(P, "([^,]*),([^,]*)", 2),
     {async, {failed, P1, P2}}
   catch error: _Reason -> {sync, "*SEND", {error, ?ERROR_WRONG}}
+  end.
+
+
+delivered_mac_extract(P)->
+  try
+    {match, [BDst]} = patter_matcher(P, "([^,]*)", 1),
+    {async, {delivered, mac, bin_to_num(BDst)}}
+  catch error: _Reason -> {sync, "*SENDIM", {error, ?ERROR_WRONG}}
+  end.
+
+failed_mac_extract(P)->
+  try
+    {match, [BDst]} = patter_matcher(P, "([^,]*)", 1),
+    {async, {failed, mac, bin_to_num(BDst)}}
+  catch error: _Reason -> {sync, "*SENDIM", {error, ?ERROR_WRONG}}
   end.
 
 

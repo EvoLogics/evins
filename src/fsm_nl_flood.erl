@@ -214,12 +214,7 @@ handle_event(MM, SM, Term) ->
       case share:get(SM, last_nl_sent) of
         %% rcv sync message for NL
         {send, {Flag, [_, Real_src, _]}, _} ->
-          Path_exists = share:get(SM, path_exists),
-          Print_to_NL = ((Local_address=:=Real_src) and Protocol#pr_conf.pf and Path_exists and (Flag =:= data)) or
-                        ((Local_address=:=Real_src) and Protocol#pr_conf.ry_only and (Flag =:= data)) or
-                        ((Local_address=:=Real_src) and Protocol#pr_conf.pf and (Flag =:= neighbours)) or
-                        ((Local_address=:=Real_src) and Protocol#pr_conf.pf and (Flag =:= path_addit)),
-
+          Print_to_NL = if_print_to_nl(SM, Real_src, Flag),
           share:put(SM, path_exists, false),
           SMC =
           case parse_ll_msg(SM, T) of
@@ -239,6 +234,10 @@ handle_event(MM, SM, Term) ->
           SM
       end;
 
+    {async, {delivered, mac, BDst}} ->
+      fsm:cast(SM, nl, {send, {sync, {nl, delivered, Local_address, BDst}}});
+    {async, {failed, mac, BDst}} ->
+      fsm:cast(SM, nl, {send, {sync, {nl, failed, Local_address, BDst}}});
     {async, {pid, _}, Tuple} ->
       [SMN, NT] = parse_ll_msg(SM, {async, Tuple}),
       case NT of
@@ -407,10 +406,10 @@ handle_swv(_MM, SMP, Term) ->
   [Param_Term, SM] = nl_mac_hf:event_params(SMP, Term, relay_wv),
   ?TRACE(?ID, "handle_swv ~120p~n", [Term]),
   case Param_Term of
-    {send, Params = {_, [_, ISrc, _]}, Tuple = {nl, send, Idst, _}} ->
+    {send, Params = {Flag, [_, ISrc, _]}, Tuple = {nl, send, Idst, _}} ->
       SM1 = nl_mac_hf:send_nl_command(SM, alh, Params, Tuple),
       if SM1 =:= error ->
-        fsm:cast(SM, nl, {send, {nl, error}}),
+        print_nl_error(SM, ISrc, Flag),
         SM#sm{event=error, event_params = {error, {ISrc, Idst}}};
       true -> process_send_flag(SM, Params, Tuple)
       end;
@@ -454,7 +453,7 @@ handle_sack(_MM, SM, Term) ->
       end,
       SM2 = nl_mac_hf:send_ack(SM1, Term, 0),
       if SM2 =:= error ->
-           fsm:cast(SM, nl, {send, {nl, error}}),
+           print_nl_error(SM, ISrc, ack),
            SM#sm{event = error, event_params={error,{ISrc,IDst}}};
          true ->
            SM2#sm{event = ack_data_sent}
@@ -466,13 +465,13 @@ handle_spath(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_spath ~120p~n", [Term]),
   Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
   case Term of
-    {send_path, Params={_,[Packet_id, ISrc,_]},{nl, send, IDst, Data}} ->
+    {send_path, Params={Flag, [Packet_id, ISrc,_]},{nl, send, IDst, Data}} ->
       NTerm = {async, {nl, recv, ISrc, IDst, Data}},
       SM1 = nl_mac_hf:send_path(SM, {send_path, Params, NTerm}),
       Local_address = share:get(SM, local_address),
       WTP = if Local_address =:= IDst -> {Packet_id, IDst, ISrc}; true -> {Packet_id, ISrc, IDst} end,
       if SM1 =:= error->
-        fsm:cast(SM, nl, {send, {nl, error}}),
+        print_nl_error(SM, ISrc, Flag),
         SM#sm{event = error, event_params={error, {ISrc, IDst}}};
       true -> fsm:set_timeout(SM1#sm{event=wait_pf}, {s, share:get(SM, wpath_tmo)}, {wpath_timeout,WTP})
       end;
@@ -492,7 +491,7 @@ handle_spath(_MM, SM, Term) ->
       {send_path,_, {async,{nl,recv,ISrc,IDst,_}}} = NTerm,
       SM1 = nl_mac_hf:send_path(SM, NTerm),
       if SM1 =:= error ->
-           fsm:cast(SM, nl, {send, {nl, error}}),
+           print_nl_error(SM, ISrc, path),
            SM#sm{event = error, event_params={error,{ISrc,IDst}}};
          true ->
            SM1#sm{event = path_data_sent}
@@ -912,4 +911,22 @@ process_rcv_flag(SM, Params={Flag,[Packet_id, _Real_src, PAdditional]}, Tuple={a
       SM#sm{event = dst_reached};
     path when Protocol#pr_conf.pf ->
       SM#sm{event = dst_reached}
+  end.
+
+
+if_print_to_nl(SM, Real_src, Flag) ->
+  NProtocol = share:get(SM, nlp),
+  Protocol  = share:get(SM, {protocol_config, NProtocol}),
+  Path_exists   = share:get(SM, path_exists),
+  Local_address = share:get(SM, local_address),
+  ((Local_address=:=Real_src) and Protocol#pr_conf.pf and Path_exists and (Flag =:= data)) or
+  ((Local_address=:=Real_src) and Protocol#pr_conf.ry_only and (Flag =:= data)) or
+  ((Local_address=:=Real_src) and Protocol#pr_conf.pf and (Flag =:= neighbours)) or
+  ((Local_address=:=Real_src) and Protocol#pr_conf.pf and (Flag =:= path_addit)).
+
+print_nl_error(SM, Real_src, Flag) ->
+  Print_to_NL = if_print_to_nl(SM, Real_src, Flag),
+  if Print_to_NL ->
+    fsm:cast(SM, nl, {send, {nl, error}});
+  true -> nothing
   end.
