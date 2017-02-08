@@ -542,6 +542,13 @@ handle_wpath(_MM, SM, Term) ->
   Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
   nl_mac_hf:update_states_list(SM),
   case Term of
+    {relay_wv, Params = {data, [Packet_id, Real_src, _]}, {nl, send, Real_dst, Payload}} ->
+      CheckedTuple = nl_mac_hf:parse_path_data(SM, Payload),
+      {_, Add, Path} = CheckedTuple,
+      NewPayload = nl_mac_hf:fill_msg(path_data, CheckedTuple),
+      SM1 = fsm:clear_timeout(SM, {wpath_timeout, {Packet_id, Real_dst, Real_src}}),
+      [SMN1, _]  = nl_mac_hf:parse_path(SM1, {Add, Path}, {Real_src, Real_dst}),
+      SMN1#sm{event = relay_wv, event_params = {relay_wv, {send, Params, {nl, send, Real_dst, NewPayload}}}};
     {relay_wv, Params = {_, [Packet_id, Real_src, _]}, Tuple = {nl, send, Real_dst, Payload}} ->
       [ListNeighbours, ListPath] = nl_mac_hf:extract_neighbours_path(SM, Payload),
       NPathTuple = {ListNeighbours, ListPath},

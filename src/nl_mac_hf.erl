@@ -374,9 +374,10 @@ extract_payload_mac_flag(Payl) ->
   end.
 
 check_dubl_in_path(Path, MAC_addr) ->
-  case lists:member(MAC_addr, Path) of
-    true  -> Path;
-    false -> [MAC_addr | Path]
+  NP = remove_dubl_in_path(Path),
+  case lists:member(MAC_addr, NP) of
+    true  -> NP;
+    false -> [MAC_addr | NP]
   end.
 
 remove_dubl_in_path([])    -> [];
