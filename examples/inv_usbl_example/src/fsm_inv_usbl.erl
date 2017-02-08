@@ -51,8 +51,11 @@ handle_event(MM, SM, Term) ->
       fsm:set_timeout(SM, {ms, 0.5 * AD - Dur / 1000}, {am_timeout, {Pid, RAddr, TS + AD * 1000}});
 
     % create AM to send by PBM or IMS
-    {async, {usblangles, _, _, RAddr, Bearing, Elevation, _, _, Roll, Pitch, Yaw, _, _, _}} ->
-      AM = createAM(lists:map(fun rad2deg/1, [Bearing, Elevation, Roll, Pitch, Yaw])),
+    {async, {usblangles, _, _, RAddr, Bearing, Elevation, _, _, Roll, Pitch, Yaw, _, _, Acc}} ->
+      AM = case Acc of
+             _ when Acc > 0 -> createAM(lists:map(fun rad2deg/1, [Bearing, Elevation, Roll, Pitch, Yaw]));
+             _ -> <<"N">>
+           end,
       io:format("LAngles: ~p~n", [extractAM(AM)]),
       case find_spec_timeouts(SM, am_timeout) of
         [] ->
