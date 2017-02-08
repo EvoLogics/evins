@@ -210,7 +210,8 @@ handle_event(MM, SM, Term) ->
       ?INFO(?ID, "connected ~n", []),
       SM;
     T={sync, _} ->
-      case NLMsg = share:get(SM, last_nl_sent) of
+      %case NLMsg = share:get(SM, last_nl_sent) of
+      case share:get(SM, last_nl_sent) of
         %% rcv sync message for NL
         {send, {Flag, [_, Real_src, _]}, _} ->
           Path_exists = share:get(SM, path_exists),
@@ -223,9 +224,10 @@ handle_event(MM, SM, Term) ->
           SMC =
           case parse_ll_msg(SM, T) of
             nothing -> SM;
-            [SMN, {sync, {nl, busy}}] ->
-              % TODO: if busy, how much should be transmitted?
-              fsm:set_timeout(SMN#sm{event = eps}, {s, 2}, {relay_wv, NLMsg});
+            [SMN, NT = {sync, {nl, busy}}] ->
+              % !!!!!!!!!!!!!! TODO: if busy, how much should be transmitted?
+              %fsm:set_timeout(SMN#sm{event = eps}, {s, 2}, {relay_wv, NLMsg});
+              fsm:cast(SMN, nl, {send, NT});
             [SMN, NT] when Print_to_NL == true ->
               fsm:cast(SMN, nl, {send, NT});
             _ ->
@@ -279,10 +281,6 @@ handle_event(MM, SM, Term) ->
         _ ->
           SMN
         end;
-    {async, {delivered, _, P2}} ->
-      fsm:cast(SM, nl, {send, {sync, {nl, delivered, Local_address, P2}}});
-    {async, {failed, _, P2}} ->
-      fsm:cast(SM, nl, {send, {sync, {nl, failed, Local_address, P2}}});
     {async, _Tuple} ->
       SM;
     {nl,error} ->
@@ -314,7 +312,8 @@ handle_event(MM, SM, Term) ->
       share:put(SM, local_address, Addr),
       fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
       SM;
-    {rcv_ul, {set, routing, Routing} } when NProtocol =:= staticr ->
+    {rcv_ul, {set, routing, Routing} } when NProtocol =:= staticr;
+                                            NProtocol =:= staticrack ->
       share:put(SM, routing_table, Routing),
       fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
       SM;
@@ -330,6 +329,7 @@ handle_event(MM, SM, Term) ->
       SM;
     {rcv_ul, _Tuple} when SM#sm.state =/= idle ->
       fsm:cast(SM, nl, {send, {sync, {nl, busy}}});
+
     {rcv_ul, Tuple = {nl, send, TransmitLen, _IDst, _Payload}} when TransmitLen < ?MAX_IM_LEN ->
       case process_sendim(SM, Tuple) of
         error  -> fsm:cast(SM, nl, {send, {nl, error}});
@@ -684,9 +684,9 @@ process_async(SM, Msg) ->
       process_recv(SM, [ISrc, IDst, IRssi, IIntegrity, PayloadTail]);
     {recvim,_,ISrc,IDst,_,_,IRssi,IIntegrity,_,PayloadTail} ->
       process_recv(SM, [ISrc, IDst, IRssi, IIntegrity, PayloadTail]);
-    {deliveredim,BDst} ->
+    {deliveredim, BDst} ->
       [SM, {async, {nl, delivered, BDst}}];
-    {failedim,BDst} ->
+    {failedim, BDst} ->
       [SM, {async, {nl, failed, BDst}}];
     _ ->
       [SM, nothing]

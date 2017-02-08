@@ -674,12 +674,17 @@ get_routing_addr(SM, Flag, AddrSrc) ->
   case required_routing(Flag, Protocol, NProtocol) of
     true  ->
       AddrDst = find_in_routing_table(share:get(SM, routing_table), AddrSrc),
+      Static = (NProtocol == staticr) or (NProtocol == staticrack),
+      StaticFlags = (Flag == dst_reached) or (Flag == ack),
+
       case NProtocol of
-        staticr when AddrDst == ?ADDRESS_MAX,
-                     Flag == dst_reached ->
+        _ when  Static,
+                AddrDst == ?ADDRESS_MAX,
+                StaticFlags ->
           AddrDst;
-        staticr when AddrDst == ?ADDRESS_MAX,
-                     AddrSrc =/= ?ADDRESS_MAX ->
+        _ when  Static,
+                AddrDst == ?ADDRESS_MAX,
+                AddrSrc =/= ?ADDRESS_MAX ->
           error;
         _ ->
           AddrDst
