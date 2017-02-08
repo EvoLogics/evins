@@ -6,86 +6,130 @@
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
--export([handle_idle/3, handle_sendim/3, handle_alarm/3]).
+-export([handle_idle/3,handle_waiting_answer/3,handle_alarm/3]).
 
--define(TRANS, [
-                {idle,
-                 [{internal, idle},
-                 {sendim_timout, sendim},
-                 {get_distance, sendim}
-                 ]},
+-define(TRANS, [{idle,
+                 [{init, idle},
+                  {send_at_command, waiting_answer},
+                  {sync_answer, alarm},
+                  {answer_timeout, alarm}]},
 
-                {sendim,
-                  [{im_sent, idle},
-                  {sendim_timout, sendim},
-                  {get_distance, sendim}]},
+                {waiting_answer,
+                 [{send_at_command, waiting_answer},
+                  {sync_answer, waiting_answer},
+                  {empty_queue, idle},
+                  {answer_timeout, alarm}]},
 
                 {alarm,[]}
                ]).
 
-start_link(SM) ->
-  [
-   env:put(__,got_sync,true),
-   fsm:start_link(__)
-  ] (SM).
+start_link(SM) -> fsm:start_link(SM).
 init(SM)       -> SM.
 trans()        -> ?TRANS.
 final()        -> [].
-init_event()   -> internal.
+init_event()   -> init.
 stop(_SM)      -> ok.
 
 handle_event(MM, SM, Term) ->
-  Dst = share:get(SM, dst),
+  RAddr = share:get(SM, dst),
+  LAddr = share:get(SM, local_address),
   case Term of
     {timeout, answer_timeout} ->
+      fsm:run_event(MM, SM#sm{event=answer_timeout}, {});
+
+    {timeout, query_timeout} ->
+      TM = share:get(SM, query_timeout),
+      [fsm:set_timeout(__, {ms, TM}, query_timeout),
+       fsm:run_event(MM, __#sm{event = send_at_command}, createIM(SM))
+      ](SM);
+
+    %% ------ IM logic -------
+    {async, _, {recvpbm, _, RAddr, LAddr, _, _, _, _, Payload}} ->
+      io:format("RAngles: ~p~n", [extractAM(Payload)]),
       SM;
-    {timeout, Event} ->
-      fsm:run_event(MM, SM#sm{event=Event}, {});
-    {connected} ->
-      SM;
-    {async, _, {recvims, _, _, _, _, _, _, _, _, Payl}} ->
-      io:format("<<< fsm_inv_usbl_gen : {Bearing, Elevation, Roll, Pitch, Yaw} = ~p~n", [extractPBKM(Payl)]),
-      SM;
-    {async, {deliveredim, Dst}} ->
-      fsm:run_event(MM, SM#sm{event = get_distance}, {get_distance, Dst});
-    {sync,"?T", Distance} ->
-      Timeout = share:get(SM, gen_timeout),
-      {IDistance, _} = string:to_integer(Distance),
-      D = (IDistance / 100000) * 1500 * 10,
-      share:put(SM, distance, round(D) ),
-      SM1 = fsm:set_timeout(SM, {s, Timeout}, sendim_timout),
-      fsm:clear_timeout(SM1, answer_timeout);
+
+    {async, {deliveredim, RAddr}} ->
+      fsm:run_event(MM, SM#sm{event = send_at_command}, {at, "?T", ""});
+
+    {async, {failedim, RAddr}} ->
+      TM = share:get(SM, query_delay),
+      [fsm:clear_timeout(__, query_timeout),
+       fsm:set_timeout(__, {ms, TM}, query_timeout)
+      ](SM);
+
+    {sync, "?T", PTimeStr} ->
+      Delay = share:get(SM, query_delay),
+      {PTime, _} = string:to_integer(PTimeStr),
+      Dist = PTime * 1500.0e-6,
+      io:format("LDistance: ~p~n", [Dist]),
+      [share:put(__, distance, Dist),
+       fsm:clear_timeout(__, query_timeout),
+       fsm:set_timeout(__, {ms, Delay}, query_timeout),
+       fsm:clear_timeout(__, answer_timeout),
+       fsm:run_event(MM, __#sm{event=sync_answer}, {})
+      ](SM);
+
+    %% ------ IMS logic -------
+    {async, {sendend, RAddr,"ims", STS, _}} ->
+      share:put(SM, sts, STS);
+
+    {async, _, {recvims, _, RAddr, LAddr, TS, _, _, _, _, Payload}} ->
+      io:format("RAngles: ~p~n", [extractAM(Payload)]),
+      Delay = share:get(SM, query_delay),
+      STS = share:get(SM, sts),
+      AD = share:get(SM, answer_delay),
+      PTime = (TS - STS - AD * 1000) / 2,
+      Dist = PTime * 1500.0e-6,
+      io:format("LDistance: ~p~n", [Dist]),
+      [share:put(__, distance, Dist),
+       fsm:clear_timeout(__, query_timeout),
+       fsm:set_timeout(__, {ms, Delay}, query_timeout)
+      ](SM);
+
     {sync, _Req, _Answer} ->
-      fsm:clear_timeout(SM, answer_timeout);
-    UUg ->
-      ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
-      SM
+      [fsm:clear_timeout(__, answer_timeout),
+       fsm:run_event(MM, __#sm{event=sync_answer}, {})
+      ](SM);
+
+    _ -> SM
   end.
 
-handle_idle(_MM, #sm{event = internal} = SM, _Term) ->
-  Timeout = share:get(SM, gen_timeout),
-  fsm:set_timeout(SM#sm{event = eps}, {s, Timeout}, sendim_timout);
 handle_idle(_MM, SM, _Term) ->
-  fsm:set_event(SM, eps).
+  case SM#sm.event of
+    init ->
+      Delay = share:get(SM, query_delay),
+      [share:put(__, at_queue, queue:new()),
+       fsm:set_timeout(__, {ms, Delay}, query_timeout),
+       fsm:set_event(__, eps)
+      ](SM);
+    _ -> fsm:set_event(SM, eps)
+  end.
 
-handle_sendim(_MM, #sm{event = get_distance} = SM, _Term) ->
-  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
-  case Answer_timeout of
-    true  ->
-      fsm:set_timeout(SM#sm{event = eps}, {ms, 100}, get_distance);
-    false ->
-      SM1 = fsm:send_at_command(SM, {at, "?T", ""}),
-      fsm:set_event(SM1, eps)
-  end;
-handle_sendim(_MM, SM, _Term) ->
-  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
-  case Answer_timeout of
-    true  ->
-      fsm:set_event(SM, eps);
-    false ->
-      AT = createIM(SM),
-      SM1 = fsm:send_at_command(SM, AT),
-      fsm:set_event(SM1, im_sent)
+handle_waiting_answer(_MM, SM, Term) ->
+  AQ = share:get(SM, at_queue),
+  case SM#sm.event of
+    send_at_command ->
+      SM1 = case fsm:check_timeout(SM, answer_timeout) of
+              true ->
+                share:put(SM, at_queue, queue:in(Term, AQ));
+              _ ->
+                fsm:send_at_command(SM, Term)
+            end,
+      fsm:set_event(SM1, eps);
+
+    sync_answer ->
+      case queue:out(AQ) of
+        {{value, AT}, AQn} ->
+          [fsm:send_at_command(__, AT),
+           share:put(__, at_queue, AQn),
+           fsm:set_event(__, eps)
+          ](SM);
+
+        {empty, _} ->
+          fsm:set_event(SM, empty_queue)
+      end;
+
+    _ -> fsm:set_event(SM, eps)
   end.
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
@@ -94,18 +138,30 @@ handle_alarm(_MM, SM, _Term) ->
 
 % -----------------------------------------------------------------------
 createIM(SM) ->
-  Dst = share:get(SM, dst),
+  RAddr = share:get(SM, dst),
   Pid = share:get(SM, pid),
-  D = share:get(SM, distance),
-  Data =
-  case D of
-    nothing ->
-      <<"N">>;
-    _ ->
-      <<"D", D:16>>
-  end,
-  {at, {pid, Pid}, "*SENDIM", Dst, ack, Data}.
+  Dist = share:get(SM, distance),
+  Mode = share:get(SM, mode),
+  Payload = case Dist of
+              nothing ->
+                <<"N">>;
+              _ ->
+                V = trunc(Dist * 10),
+                <<"D", V:16/little-unsigned-integer>>
+            end,
+  case Mode of
+    im  -> {at, {pid, Pid}, "*SENDIM", RAddr, ack, Payload};
+    ims -> {at, {pid, Pid}, "*SENDIMS", RAddr, none, Payload}
+  end.
 
-extractPBKM(Payl) ->
-  <<"L", DBearing:12, DElevation:12, DRoll:12, DPitch:12, DDYaw:12, _/bitstring>> = Payl,
-  {DBearing / 10, DElevation / 10, DRoll / 10, DPitch / 10, DDYaw / 10}.
+
+extractAM(Payload) ->
+  case Payload of
+    <<"L", Bearing:12/little-unsigned-integer,
+           Elevation:12/little-unsigned-integer,
+           Roll:12/little-unsigned-integer,
+           Pitch:12/little-unsigned-integer,
+           Yaw:12/little-unsigned-integer, _/bitstring>> ->
+      lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]);
+    _ -> nothing
+  end.
