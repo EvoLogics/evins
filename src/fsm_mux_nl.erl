@@ -34,7 +34,8 @@
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
--export([handle_idle/3, handle_init_roles/3, handle_ready_nl/3, handle_alarm/3, handle_final/3]).
+-export([handle_idle/3, handle_alarm/3, handle_final/3]).
+-export([handle_init_roles/3, handle_ready_nl/3, handle_discovery/3]).
 
 -define(TRANS, [
                 {idle,
@@ -48,7 +49,15 @@
                  ]},
 
                 {ready_nl,
-                 []},
+                 [
+                 {discovery_start, discovery}
+                 ]},
+
+                {discovery,
+                 [{discovery_perod, discovery},
+                 {discovery_end, discovery},
+                 {set_routing, ready_nl}
+                ]},
 
                 {alarm,
                  [{final, alarm}
@@ -68,8 +77,21 @@ stop(_SM)      -> ok.
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
   ?TRACE(?ID, "state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.state, Term]),
-  io:format("++  state ~p Ev ~p term ~p~n", [SM#sm.state, SM#sm.event,  Term]),
+  Main_role = share:get(SM, main_role),
+  State = SM#sm.state,
+  Waiting_neighbours = share:get(SM, waiting_neighbours),
+  %io:format("++  state ~p Ev ~p term ~p~n", [SM#sm.state, SM#sm.event,  Term]),
   case Term of
+    {timeout, discovery_perod_tmo} ->
+        Discovery_perod = share:get(SM, discovery_perod),
+        get_routing(SM),
+        SM1 = fsm:set_timeout(SM, {s, Discovery_perod}, discovery_perod_tmo),
+        fsm:run_event(MM, SM1#sm{event = discovery_perod}, {});
+    {timeout, discovery_end_tmo} ->
+        % get neighbours
+        get_neighbours(SM),
+        SM1 = fsm:clear_timeout(SM, discovery_perod_tmo),
+        fsm:run_event(MM, SM1#sm{event = discovery_end}, {});
     {timeout, {get_protocol, _}} ->
         Protocols = share:get(SM, protocol_roles),
         SM1 = init_nl_protocols(SM, Protocols),
@@ -78,15 +100,41 @@ handle_event(MM, SM, Term) ->
         fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
         SM;
-    {rcv_ul, discovery} ->
-        start_discovery(SM),
-        SM;
-    {rcv_ul, {set, protocol, Protocol}} ->
+    {rcv_ul, discovery} when State =:= ready_nl->
+        cast(Main_role, {send, {nl, ok}}),
+        SM1 = start_discovery(SM),
+        fsm:run_event(MM, SM1#sm{event = discovery_start}, {});
+    {rcv_ul, {set, protocol, Protocol}} when State =/= discovery ->
         % clear everything and set current protocol
         set_protocol(SM, Protocol);
-    {rcv_ul, NLCommand} ->
-        io:format("++  ~p~n", [NLCommand]),
+    {rcv_ul, NLCommand} when State =/= discovery ->
         process_ul_command(SM, NLCommand);
+    {rcv_ul, _} ->
+        cast(Main_role, {send, {nl, busy}}),
+        SM;
+
+    {rcv_ll, {routing, L}} when State == discovery ->
+        cast(Main_role, {send, L}),
+        fsm:run_event(MM, SM#sm{event = set_routing}, {});
+    {rcv_ll, {routing, _L}} when Waiting_neighbours ->
+        share:put(SM, waiting_neighbours, false),
+        SM;
+    {rcv_ll, {routing, L}} ->
+        cast(Main_role, {send, L}),
+        SM;
+    {rcv_ll, {neighbours, _, NL}} when Waiting_neighbours ->
+        % set protocol static
+        % set routing
+        set_routing(SM, NL),
+        SM;
+    {rcv_ll, {neighbours, _, NL}} when State == discovery ->
+        % set protocol static
+        % set routing
+        set_routing(SM, NL),
+        SM;
+    {rcv_ll, {neighbours, L, _}} ->
+        cast(Main_role, {send, L}),
+        SM;
     {rcv_ll, {nl, protocol, NPA}} when SM#sm.state == init_roles ->
         Protocol = nl_mac_hf:get_params_spec_timeout(SM, get_protocol),
         ConfProtocols = share:get(SM, configured_protocols),
@@ -100,17 +148,28 @@ handle_event(MM, SM, Term) ->
                 SM2 = init_nl_protocols(SM1, NQ),
                 fsm:run_event(MM, SM2, {})
         end;
-    {rcv_ll, Tuple} ->
-        Role = share:get(SM, main_role),
-        cast(Role, {send, Tuple}),
+
+    {rcv_ll, {recv, Dst, Data, Tuple}} when Dst == 255,
+                                            Data == <<"D">> ->
+        share:put(SM, waiting_neighbours, true),
+        get_neighbours(SM),
+        cast(Main_role, {send, Tuple}),
         SM;
-    {rcv_ll, _AProtocolID, Tuple} ->
-        Role = share:get(SM, main_role),
-        cast(Role, {send, Tuple}),
+    {rcv_ll, {recv, _Dst, _Data, Tuple}} ->
+        cast(Main_role, {send, Tuple}),
         SM;
-    {nl, error} ->
-        Role = share:get(SM, main_role),
-        cast(Role, {send, Term}),
+
+    {rcv_ll, Tuple} when State =/= discovery,
+                         Waiting_neighbours == false ->
+        cast(Main_role, {send, Tuple}),
+        SM;
+    {rcv_ll, _AProtocolID, Tuple} when State =/= discovery,
+                                       Waiting_neighbours == false ->
+        cast(Main_role, {send, Tuple}),
+        SM;
+    {nl, error} when State =/= discovery,
+                     Waiting_neighbours == false ->
+        cast(Main_role, {send, Term}),
         SM;
     UUg ->
         ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
@@ -128,6 +187,7 @@ handle_idle(_MM, SM, Term) ->
             share:put(SM, main_role, RoleID),
             share:put(SM, protocol_roles, Protocols),
             share:put(SM, configured_protocols, []),
+            share:put(SM, waiting_neighbours, false),
             SM1 = init_nl_protocols(SM, Protocols),
             SM1#sm{event = init};
         _  ->
@@ -139,6 +199,10 @@ handle_init_roles(_MM, SM, Term) ->
     SM#sm{event = eps}.
 
 handle_ready_nl(_MM, SM, Term) ->
+    ?TRACE(?ID, "~120p~n", [Term]),
+    SM#sm{event = eps}.
+
+handle_discovery(_MM, SM, Term) ->
     ?TRACE(?ID, "~120p~n", [Term]),
     SM#sm{event = eps}.
 
@@ -179,8 +243,67 @@ process_ul_command(SM, NLCommand) ->
     SM.
 
 start_discovery(SM) ->
-    io:format("!!!!!!!!!!!!!!!!!!!!  start_discovery ~n", []),
-    SM.
+    Time_discovery  = share:get(SM, time_discovery),
+    Discovery_perod = share:get(SM, discovery_perod),
+    get_routing(SM),
+    SM1 = fsm:set_timeout(SM, {s, Time_discovery }, discovery_end_tmo),
+    fsm:set_timeout(SM1, {s, Discovery_perod}, discovery_perod_tmo).
+
+
+
+get_routing(SM) ->
+    Discovery_protocol = share:get(SM, discovery_protocol),
+    ConfProtocol = share:get(SM, Discovery_protocol),
+    Protocol_configured = (ConfProtocol =/= nothing) and (Discovery_protocol =/= nothing),
+    case Protocol_configured of
+        true ->
+            CurrProtocol = share:get(SM, current_protocol),
+            share:put(SM, current_protocol, Discovery_protocol),
+            {SncfloodrRole, _} = share:get(SM, Discovery_protocol),
+            Tuple = {nl, send, 1, 255, <<"D">> },
+            cast(SncfloodrRole, {send, Tuple}),
+            share:put(SM, current_protocol, CurrProtocol);
+        _ ->
+            ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
+            SM
+    end.
+
+set_routing(SM, NL) ->
+    Burst_protocol = share:get(SM, burst_protocol),
+    ConfProtocol = share:get(SM, Burst_protocol),
+    Protocol_configured = (ConfProtocol =/= nothing) and (Burst_protocol =/= nothing),
+    case Protocol_configured of
+        true ->
+            CurrProtocol = share:get(SM, current_protocol),
+            share:put(SM, current_protocol, Burst_protocol),
+            {StaticrRole, _} = share:get(SM, Burst_protocol),
+
+            Routing_table = lists:map(fun(X) -> {X, X} end, NL),
+            RoutingBin = routing_to_bin(Routing_table),
+            Tuple = {nl, set, routing, RoutingBin},
+            cast(StaticrRole, {send, Tuple}),
+            cast(StaticrRole, {send, {nl, get, routing}}),
+            share:put(SM, current_protocol, CurrProtocol);
+        _ ->
+            ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+            SM
+    end.
+
+get_neighbours(SM) ->
+    Discovery_protocol = share:get(SM, discovery_protocol),
+    ConfProtocol = share:get(SM, Discovery_protocol),
+    Protocol_configured = (ConfProtocol =/= nothing) and (Discovery_protocol =/= nothing),
+    case Protocol_configured of
+        true ->
+            CurrProtocol = share:get(SM, current_protocol),
+            {SncfloodrRole, _} = share:get(SM, Discovery_protocol),
+            Tuple = {nl, get, neighbours },
+            cast(SncfloodrRole, {send, Tuple}),
+            share:put(SM, current_protocol, CurrProtocol);
+        _ ->
+            ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
+            SM
+    end.
 
 init_nl_protocols(SM, nothing) ->
     SM#sm{event = eps};
@@ -193,3 +316,9 @@ init_nl_protocols(SM, Protocols) ->
 
 cast(RoleID, Message) ->
     gen_server:cast(RoleID, {self(), Message}).
+
+routing_to_bin(Routing_table) ->
+    Path = lists:map(fun({From, To}) ->
+        [integer_to_binary(From),"->",integer_to_binary(To)]
+    end, Routing_table),
+    list_to_binary(lists:join(",", Path)).

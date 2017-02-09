@@ -62,8 +62,11 @@ split(L, Cfg) ->
   end.
 
 try_recv(L, Cfg) ->
-  case re:run(L,"(NL,protocol,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+  case re:run(L,"(NL,protocol,|NL,recv,|NL,neighbours,|NL,routing,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
     {match, [<<"NL,protocol,">>, P, L1]} -> [nl_protocol_extract(P, Cfg) | split(L1, Cfg)];
+    {match, [<<"NL,routing,">>, _P, L1]} -> [ {rcv_ll, {routing, L}} | split(L1, Cfg)];
+    {match, [<<"NL,recv,">>, P, L1]} -> [ nl_recv_extract(P, L) | split(L1, Cfg)];
+    {match, [<<"NL,neighbours,">>, P, L1]} -> [ nl_neighbours_extract(L, P, Cfg)| split(L1, Cfg)];
     nomatch ->  [{rcv_ll, L}]
   end.
 
@@ -71,14 +74,30 @@ try_send(L, Cfg) ->
   case re:run(L, "\n") of
     {match, [{_, _}]} ->
       case re:run(L, 
-        "^(NL,set,protocol,)(.*)",
+        "^(NL,set,protocol,|NL,discovery)(.*)",
         [dotall, {capture, [1, 2], binary}]) of
 
         {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
+        {match, [<<"NL,discovery">>, P]}  -> nl_discovery(P, Cfg);
         nomatch -> [{rcv_ul, L}]
       end;
     nomatch ->
       [{more, L}]
+  end.
+
+
+nl_recv_extract(P, L) ->
+   try
+    {match, [_Len, _Src, Dst, Data]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    {rcv_ll, {recv, nl_mac_hf:bin_to_num(Dst), Data, L}}
+  catch error: _Reason -> {nl, error}
+  end.
+
+nl_discovery(P, _Cfg) ->
+  try
+    {match, [_]} = re:run(P,"([^,]*)\n", [dotall, {capture, [1], binary}]),
+    [{rcv_ul, discovery}]
+  catch error: _Reason -> [{nl, error}]
   end.
 
 nl_set_protocol(P, _Cfg) ->
@@ -91,6 +110,19 @@ nl_set_protocol(P, _Cfg) ->
       false -> [{nl, error}]
     end
   catch error: _Reason -> [{nl, error}]
+  end.
+
+
+nl_neighbours_extract(L, NeighboursBin, _Cfg) ->
+  try
+    Neighbours = binary:split(NeighboursBin, [<<",">>],[global]),
+    NL =
+    lists:map(fun(X)->
+      [H,_,_] = binary:split(X, [<<":">>],[global]),
+      nl_mac_hf:bin_to_num(H)
+    end, Neighbours),
+    {rcv_ll, {neighbours, L, NL}}
+  catch error: _Reason -> {nl, error}
   end.
 
 nl_protocol_extract(P, _Cfg) ->
