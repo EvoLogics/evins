@@ -150,11 +150,13 @@ handle_event(MM, SM, Term) ->
       fsm:clear_timeout(SM, {send_tone, Msg});
     {timeout, {retransmit, Msg}} when State =:= blocking_state;
                                       State =:= backoff_state ->
+      share:put(SM, current_msg, Msg),
       SM1 = fsm:clear_timeout(SM, dp_ends),
       Tmo_retransmit = nl_mac_hf:rand_float(SM, tmo_retransmit),
       fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, Msg});
     {timeout, {retransmit, Msg}} ->
       ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
+      share:put(SM, current_msg, Msg),
       SM1 = fsm:clear_timeout(SM, dp_ends),
       [SM2, P] = nl_mac_hf:process_retransmit(SM1, Msg, send_tone),
       fsm:run_event(MM, SM2, P);
@@ -168,11 +170,13 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} when State =:= idle; State =:= transmit_data ->
       share:put(SM, current_msg, Msg),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
-      fsm:run_event(MM, SM1#sm{event = transmit_ct}, {send_tone, Msg});
+      [SM2, _P] = nl_mac_hf:process_retransmit(SM1, Msg, eps),
+      fsm:run_event(MM, SM2#sm{event = transmit_ct}, {send_tone, Msg});
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
       share:put(SM, current_msg, Msg),
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
-      fsm:cast(SM1, alh,  {send, {sync, "OK"} });
+      [SM2, _P] = nl_mac_hf:process_retransmit(SM1, Msg, eps),
+      fsm:cast(SM2, alh,  {send, {sync, "OK"} });
     {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
       fsm:run_event(MM, SM, {});
     T =
@@ -221,21 +225,11 @@ handle_idle(_MM, SM, Term) ->
 
 handle_blocking_state(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  case share:get(SM, current_msg) of
-    nothing ->
-      SM#sm{event = eps};
-    SendT ->
-      nl_mac_hf:process_send_payload(SM#sm{event = eps}, SendT)    
-  end.
+  SM#sm{event = eps}.
 
 handle_backoff_state(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  case share:get(SM, current_msg) of
-    nothing ->
-      SM#sm{event = eps};
-    SendT ->
-      nl_mac_hf:process_send_payload(SM#sm{event = eps}, SendT)
-  end.
+  SM#sm{event = eps}.
 
 handle_cr(_MM, SMP, Term) ->
   [Param_Term, SM] = nl_mac_hf:event_params(SMP, Term, send_tone),
@@ -298,11 +292,13 @@ process_cr(SM, Msg) ->
 process_ct(SM, Tuple) ->
   case Tuple of
     {recvstart} ->
-      CR_Time = share:get(SM, cr_time),
-      SM1 = fsm:set_timeout(SM, {ms, CR_Time}, end_of_frame),
-      SM1#sm{event = rcv_ct};
+      %CR_Time = share:get(SM, cr_time),
+      %SM1 = fsm:set_timeout(SM, {ms, CR_Time}, end_of_frame),
+      %SM1#sm{event = rcv_ct};
+      SM;
     {recvend, _, _, _, _} ->
-      SM#sm{event = end_of_frame};
+      SM;
+      %SM#sm{event = end_of_frame};
     _ -> SM
   end.
 
