@@ -62,10 +62,12 @@ split(L, Cfg) ->
   end.
 
 try_recv(L, Cfg) ->
-  case re:run(L,"(NL,protocol,|NL,recv,|NL,neighbours,|NL,routing,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
-    {match, [<<"NL,protocol,">>, P, L1]} -> [nl_protocol_extract(P, Cfg) | split(L1, Cfg)];
-    {match, [<<"NL,routing,">>, _P, L1]} -> [ {rcv_ll, {routing, L}} | split(L1, Cfg)];
-    {match, [<<"NL,recv,">>, P, L1]} -> [ nl_recv_extract(P, L) | split(L1, Cfg)];
+  case re:run(L,"(NL,protocol,|NL,recv,|NL,neighbours,|NL,routing,|NL,delivered,|NL,failed,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+    {match, [<<"NL,protocol,">>, P, L1]}   -> [nl_protocol_extract(P, Cfg) | split(L1, Cfg)];
+    {match, [<<"NL,routing,">>, _P, L1]}   -> [ {rcv_ll, {routing, L}} | split(L1, Cfg)];
+    {match, [<<"NL,delivered,">>, _P, L1]} -> [ {rcv_ll, {delivered, L}} | split(L1, Cfg)];
+    {match, [<<"NL,failed,">>, _P, L1]}    -> [ {rcv_ll, {failed, L}} | split(L1, Cfg)];
+    {match, [<<"NL,recv,">>, P, L1]}       -> [ nl_recv_extract(P, L) | split(L1, Cfg)];
     {match, [<<"NL,neighbours,">>, P, L1]} -> [ nl_neighbours_extract(L, P, Cfg)| split(L1, Cfg)];
     nomatch ->  [{rcv_ll, L}]
   end.

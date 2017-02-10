@@ -2,6 +2,7 @@
 -behaviour(fsm).
 
 -include("fsm.hrl").
+-include("nl.hrl").
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1, handle_event/3, stop/1]).
@@ -38,6 +39,7 @@ stop(_SM)      -> ok.
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT  ~p   ~p ~n", [MM, SM]),
   ?TRACE(?ID, "~p~n", [Term]),
+
   case Term of
     {timeout, answer_timeout} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"ANSWER TIMEOUT">>} } }),
@@ -63,10 +65,17 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
     {async, {pid, NPid}, Tuple} ->
-      [H | T] = tuple_to_list(Tuple),
+      [H | _] = tuple_to_list(Tuple),
       BPid = <<"p", (integer_to_binary(NPid))/binary>>,
-      fsm:cast(SM, alh, {send, {async, list_to_tuple([H | [BPid|T]])} }),
-      fsm:run_event(MM, SM, {});
+      [SMN, ParsedRecv] = process_recv(SM, Tuple),
+      case ParsedRecv of
+        {_, _, STuple} ->
+          SMsg = list_to_tuple([H | [BPid | tuple_to_list(STuple) ]]),
+          fsm:cast(SMN, alh, {send, {async, SMsg} }),
+          fsm:run_event(MM, SMN, {});
+        _ ->
+          SMN
+      end;
     {async, Tuple} ->
       process_async(SM, Tuple);
     {sync, _Req, Answer} ->
@@ -90,7 +99,7 @@ handle_send(_MM, SM, Term) ->
 Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Term of
     {try_send, {sendburst, AT = {at, _PID, _, _, _}} } when Answer_timeout == false ->
-      SM1 = fsm:send_at_command(SM, AT),
+      SM1 = nl_mac_hf:send_mac(SM, at, data, AT),
       SM1#sm{event = eps};
     {try_send, {sendim, {at, PID, SENDIM, Dst, _, Data}} } when Answer_timeout == false ->
       [_, Flag, _, _, _, _, _] = nl_mac_hf:extract_payload_nl_flag(Data),
@@ -102,7 +111,7 @@ Answer_timeout = fsm:check_timeout(SM, answer_timeout),
         ack;
       true -> noack end,
 
-      SM1 = fsm:send_at_command(SM, {at, PID, SENDIM, Dst, ACK, Data} ),
+      SM1 = nl_mac_hf:send_mac(SM, at, data, {at, PID, SENDIM, Dst, ACK, Data} ),
       SM1#sm{event = eps};
 
     {try_send, _} ->
@@ -175,4 +184,18 @@ if_busy(SM, Src) ->
     [] -> not_busy;
     _ when Member -> not_busy;
     _ -> busy
+  end.
+
+process_recv(SM, T) ->
+  ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [T]),
+  {_, Len, P1, P2, P3, P4, P5, P6, P7, Payl} = T,
+  [BPid, BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
+
+  CurrentPid = ?PROTOCOL_MAC_PID(share:get(SM, macp)),
+  if CurrentPid == BPid ->
+    Flag = nl_mac_hf:num2flag(BFlag, mac),
+    ShortTuple = {Len - LenAdd, P1, P2, P3, P4, P5, P6, P7, Data},
+    [SM, {BPid, Flag, ShortTuple}];
+  true ->
+    [SM, nothing]
   end.

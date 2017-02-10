@@ -251,6 +251,9 @@ send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL)
 
 mac2at(SM, Flag, Tuple) when is_tuple(Tuple)->
   case Tuple of
+    {at, PID, SENDFLAG, IDst, Data} ->
+      NewData = create_payload_mac_flag(SM, Flag, Data),
+      {at, PID, SENDFLAG, IDst, NewData};
     {at, PID, SENDFLAG, IDst, TFlag, Data} ->
       NewData = create_payload_mac_flag(SM, Flag, Data),
       {at, PID, SENDFLAG, IDst, TFlag, NewData};
@@ -356,9 +359,9 @@ extract_payload_nl_flag(Payl) ->
   end.
 
 extract_payload_mac_flag(Payl) ->
-  % 4 bits NL_MAC_PID
+  % 5 bits NL_MAC_PID
   % 3 bits Flag
-  % rest bits reserved for later (+1)
+
   CBitsMACPid = count_flag_bits(?MAC_PID_MAX),
   CBitsFlag = count_flag_bits(?FLAG_MAX),
   
@@ -367,10 +370,10 @@ extract_payload_mac_flag(Payl) ->
     <<BPid:CBitsMACPid, BFlag:CBitsFlag, Rest/bitstring>> = Payl,
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
-    [BPid, BFlag, Data, round((Add + CBitsFlag + BPid) / 8)];
+    [BPid, BFlag, Data, round((CBitsMACPid + CBitsFlag) / 8)];
   true ->
     <<BPid:CBitsMACPid, BFlag:CBitsFlag, Data/binary>> = Payl,
-    [BPid, BFlag, Data, round( (CBitsFlag + BPid) / 8)]
+    [BPid, BFlag, Data, round( (CBitsMACPid + CBitsFlag) / 8)]
   end.
 
 check_dubl_in_path(Path, MAC_addr) ->
@@ -998,11 +1001,12 @@ update_route_table(SM, NRouting_table) ->
 process_pkg_id(SM, TTL, Tuple) ->
   Queue_ids = share:get(SM, queue_ids),
   Pkg_life = share:get(SM, pkg_life),
-  [SMN, StoredTTL, NQueue_ids] = searchQKey(SM, Queue_ids, Tuple, queue:new(), nothing, Pkg_life),
+  QueueLimit = 30,
+  [SMN, StoredTTL, NQueue_ids] = searchQKey(SM, Queue_ids, Tuple, queue:new(), nothing, Pkg_life, QueueLimit),
   % if StoredTTL == nothing, it is a new package and does not exist in the queue
   case StoredTTL of
     nothing ->
-      NewQ = queue_limited_push(NQueue_ids, Tuple, 10),
+      NewQ = queue_limited_push(NQueue_ids, Tuple, QueueLimit),
       share:put(SMN, queue_ids, NewQ),
       [SMN, not_processed];
     _ when TTL > StoredTTL ->
@@ -1024,26 +1028,26 @@ deleteQKey(Q, Tuple, NQ) ->
       deleteQKey(Q1, Tuple, queue:in(CTuple, NQ))
   end.
 
-searchQKey(SM, {[],[]}, _Tuple, NQ, TTL, _Pkg_life) ->
+searchQKey(SM, {[],[]}, _Tuple, NQ, TTL, _Pkg_life, _) ->
   [SM, TTL, NQ];
-searchQKey(SM, Q, {Flag, CurrentTTL, ID, S, D, Data} = Tuple, NQ, TTL, Pkg_life) ->
+searchQKey(SM, Q, {Flag, CurrentTTL, ID, S, D, Data} = Tuple, NQ, TTL, Pkg_life, QueueLimit) ->
   { {value, CTuple}, Q1 } = queue:out(Q),
   case CTuple of
     {Flag, CurrentTTL, ID, S, D, Data} ->
-      LimQ = queue_limited_push(NQ, CTuple, 10),
-      searchQKey(SM, Q1, Tuple, LimQ, CurrentTTL, Pkg_life);
+      LimQ = queue_limited_push(NQ, CTuple, QueueLimit),
+      searchQKey(SM, Q1, Tuple, LimQ, CurrentTTL, Pkg_life, QueueLimit);
     {Flag, StoredTTL, ID, S, D, Data} when StoredTTL > CurrentTTL ->
-      searchQKey(SM, Q1, Tuple, NQ, StoredTTL, Pkg_life);
+      searchQKey(SM, Q1, Tuple, NQ, StoredTTL, Pkg_life, QueueLimit);
     {Flag, StoredTTL, ID, S, D, Data} when CurrentTTL > StoredTTL, Pkg_life =/= nothing ->
       SMN = fsm:set_timeout(SM, {s, Pkg_life}, {drop_pkg, Tuple}),
-      LimQ = queue_limited_push(NQ, Tuple, 10),
-      searchQKey(SMN, Q1, Tuple, LimQ, StoredTTL, Pkg_life);
+      LimQ = queue_limited_push(NQ, Tuple, QueueLimit),
+      searchQKey(SMN, Q1, Tuple, LimQ, StoredTTL, Pkg_life, QueueLimit);
     {Flag, StoredTTL, ID, S, D, Data} when CurrentTTL > StoredTTL ->
-      LimQ = queue_limited_push(NQ, Tuple, 10),
-      searchQKey(SM, Q1, Tuple, LimQ, StoredTTL, Pkg_life);
+      LimQ = queue_limited_push(NQ, Tuple, QueueLimit),
+      searchQKey(SM, Q1, Tuple, LimQ, StoredTTL, Pkg_life, QueueLimit);
     _ ->
-      LimQ = queue_limited_push(NQ, CTuple, 10),
-      searchQKey(SM, Q1, Tuple, LimQ, TTL, Pkg_life)
+      LimQ = queue_limited_push(NQ, CTuple, QueueLimit),
+      searchQKey(SM, Q1, Tuple, LimQ, TTL, Pkg_life, QueueLimit)
   end.
 %%--------------------------------------------------  RTT functions -------------------------------------------
 getRTT(SM, RTTTuple) ->
@@ -1287,7 +1291,8 @@ check_TTL(SM, nothing, _BPid, Tuple, Msg) ->
   share:put(SM, ttl_table, queue:in(Tuple, Q)),
   Msg;
 check_TTL(SM, Ttl_table, BPid, Tuple = {Flag, CurrentTTL, PkgID, Src, Dst, Data}, Msg) ->
-  [_SMN, StoredTTL, NTtl_table] = searchQKey(SM, Ttl_table, Tuple, queue:new(), nothing, nothing),
+  QueueLimit = 30,
+  [_SMN, StoredTTL, NTtl_table] = searchQKey(SM, Ttl_table, Tuple, queue:new(), nothing, nothing, QueueLimit),
   case StoredTTL of
     nothing ->
       share:put(SM, ttl_table, queue:in(Tuple, Ttl_table)),
@@ -1296,12 +1301,12 @@ check_TTL(SM, Ttl_table, BPid, Tuple = {Flag, CurrentTTL, PkgID, Src, Dst, Data}
       nothing;
     _ when CurrentTTL == 0, StoredTTL < ?TTL - 1->
       NTuple = {Flag, StoredTTL + 1, PkgID, Src, Dst, Data},
-      [_, _, IncTuple] = searchQKey(SM, Ttl_table, NTuple, queue:new(), nothing, nothing),
+      [_, _, IncTuple] = searchQKey(SM, Ttl_table, NTuple, queue:new(), nothing, nothing, QueueLimit),
       share:put(SM, ttl_table, IncTuple),
       create_payload_nl_flag(SM, BPid, num2flag(Flag, nl), PkgID, StoredTTL + 1, Src, Dst, Data);
     _ when StoredTTL > CurrentTTL, StoredTTL < ?TTL - 1 ->
       NTuple = {Flag, StoredTTL, PkgID, Src, Dst, Data},
-      [_, _, IncTuple] = searchQKey(SM, Ttl_table, NTuple, queue:new(), nothing, nothing),
+      [_, _, IncTuple] = searchQKey(SM, Ttl_table, NTuple, queue:new(), nothing, nothing, QueueLimit),
       share:put(SM, ttl_table, IncTuple),
       create_payload_nl_flag(SM, BPid, num2flag(Flag, nl), PkgID, StoredTTL, Src, Dst, Data);
     _ when CurrentTTL > StoredTTL, CurrentTTL < ?TTL - 1 ->

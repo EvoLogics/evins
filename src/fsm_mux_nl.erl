@@ -112,7 +112,12 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, _} ->
         cast(Main_role, {send, {nl, busy}}),
         SM;
-
+    {rcv_ll, {delivered, L}} ->
+        cast(Main_role, {send, L}),
+        SM;
+    {rcv_ll, {failed, L}} ->
+        cast(Main_role, {send, L}),
+        SM;
     {rcv_ll, {routing, L}} when State == discovery ->
         cast(Main_role, {send, L}),
         fsm:run_event(MM, SM#sm{event = set_routing}, {});
@@ -155,7 +160,6 @@ handle_event(MM, SM, Term) ->
     {rcv_ll, {recv, _Dst, _Data, Tuple}} ->
         cast(Main_role, {send, Tuple}),
         SM;
-
     {rcv_ll, Tuple} when State =/= discovery,
                          Waiting_neighbours == false ->
         cast(Main_role, {send, Tuple}),
