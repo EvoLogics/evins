@@ -136,7 +136,8 @@ nl_set_routing(P, _Cfg) ->
     LRouting = string:tokens(binary_to_list(BRouting), ","),
     IRouting = lists:map(fun(X)-> S = string:tokens(X, "->"), [list_to_integer(X1) || X1 <- S] end, LRouting),
     TRouting = [case X of [A1, A2] -> {A1, A2}; [A1] -> A1 end|| X <- IRouting],
-    [{rcv_ul, {set, routing, TRouting} }]
+    TNeighbours = [case X of {_A1, A2} -> A2; A2 -> A2 end|| X <- TRouting],
+    [{rcv_ul, {set, routing, TRouting, TNeighbours} }]
   catch error: _Reason -> [{nl, error}]
   end.
 

@@ -188,6 +188,7 @@
 			 "\r\n\r\n\r\n",
 			 "==================================== Set commands =====================================\r\n",
 			 "NL,set,address,<Addr>\t\t\t\t- set local address\r\n",
+			 "NL,set,neighbours,<LA1>,<LA2>...\t\t\t- set current neighbours\r\n",
  			 "NL,set,protocol,<Protocol_Name>\t\t\t- set current routing protocol\r\n",
  			 "NL,set,routing,[<LA1>-><LA2>],[<LA3>-><LA4>],...,[<Default LA>]\t- set routing only for static routing\r\n",
 			 "\r\n\r\n\r\n",

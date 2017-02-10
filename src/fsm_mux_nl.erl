@@ -122,12 +122,9 @@ handle_event(MM, SM, Term) ->
     {rcv_ll, {routing, L}} ->
         cast(Main_role, {send, L}),
         SM;
-    {rcv_ll, {neighbours, _, NL}} when Waiting_neighbours ->
-        % set protocol static
-        % set routing
-        set_routing(SM, NL),
-        SM;
-    {rcv_ll, {neighbours, _, NL}} when State == discovery ->
+
+    {rcv_ll, {neighbours, _, NL}} when Waiting_neighbours;
+                                       State == discovery ->
         % set protocol static
         % set routing
         set_routing(SM, NL),
@@ -268,6 +265,21 @@ get_routing(SM) ->
             SM
     end.
 
+set_routing(SM, empty) ->
+    Burst_protocol = share:get(SM, burst_protocol),
+    ConfProtocol = share:get(SM, Burst_protocol),
+    Protocol_configured = (ConfProtocol =/= nothing) and (Burst_protocol =/= nothing),
+    case Protocol_configured of
+        true ->
+            CurrProtocol = share:get(SM, current_protocol),
+            share:put(SM, current_protocol, Burst_protocol),
+            {StaticrRole, _} = share:get(SM, Burst_protocol),
+            cast(StaticrRole, {send, {nl, get, routing}}),
+            share:put(SM, current_protocol, CurrProtocol);
+        _ ->
+            ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+            SM
+    end;
 set_routing(SM, NL) ->
     Burst_protocol = share:get(SM, burst_protocol),
     ConfProtocol = share:get(SM, Burst_protocol),

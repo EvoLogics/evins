@@ -122,7 +122,7 @@ nl_neighbours_extract(L, NeighboursBin, _Cfg) ->
       nl_mac_hf:bin_to_num(H)
     end, Neighbours),
     {rcv_ll, {neighbours, L, NL}}
-  catch error: _Reason -> {nl, error}
+  catch error: _Reason -> {rcv_ll, {neighbours, L, empty}}
   end.
 
 nl_protocol_extract(P, _Cfg) ->

@@ -1177,12 +1177,17 @@ neighbours_to_list(_,Neigbours, nl) ->
 
 neighbours_to_bin(SM) ->
   F = fun(X) ->
-        {Addr, Rssi, Integrity} = X,
-        Baddr = convert_type_to_bin(Addr),
-        Brssi = convert_type_to_bin(Rssi),
-        Bintegrity = convert_type_to_bin(Integrity),
-        list_to_binary([Baddr, ":", Brssi, ":", Bintegrity])
-      end,
+      case X of
+        {Addr, Rssi, Integrity} ->
+          Baddr = convert_type_to_bin(Addr),
+          Brssi = convert_type_to_bin(Rssi),
+          Bintegrity = convert_type_to_bin(Integrity),
+          list_to_binary([Baddr, ":", Brssi, ":", Bintegrity]);
+        Addr ->
+          Baddr = convert_type_to_bin(Addr),
+          list_to_binary([Baddr])
+      end
+  end,
 
   list_to_binary(lists:join(",", [F(X) || X <- share:get(SM, neighbours_channel)])).
 
@@ -1379,7 +1384,8 @@ process_command(SM, Debug, Command) ->
         neighbours ->
           {nl, neighbours, neighbours_to_bin(SM)};
         {delete, neighbour, Addr} ->
-          delete_neighbour(SM, Addr),
+          LNeighbours = neighbours_to_list(SM, share:get(SM, current_neighbours), mac),
+          delete_neighbour(SM, Addr, LNeighbours),
           {nl, ok};
         routing ->
           {nl, routing, routing_to_bin(SM)};
@@ -1408,11 +1414,16 @@ update_neighbours_channel(_SM, _, nothing) ->
   nothing;
 update_neighbours_channel(SM, NLSrcAT, Neighbours_channel) ->
   El = lists:keyfind(NLSrcAT, 1, Neighbours_channel),
-  Updated_neighbours_channel = lists:delete(El, Neighbours_channel),
+  Updated_neighbours_channel = 
+  case El of
+    false ->
+      lists:delete(NLSrcAT, Neighbours_channel);
+    _ ->
+      lists:delete(El, Neighbours_channel)
+  end,
   share:put(SM, neighbours_channel, Updated_neighbours_channel).
 
-delete_neighbour(SM, Addr) ->
-  LNeighbours = neighbours_to_list(SM, share:get(SM, current_neighbours), mac),
+delete_neighbour(SM, Addr, LNeighbours) ->
   case lists:member(Addr, LNeighbours) of
     true ->
         % delete neighbour from the current neighbour list

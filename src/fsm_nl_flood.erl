@@ -311,12 +311,14 @@ handle_event(MM, SM, Term) ->
       share:put(SM, local_address, Addr),
       fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
       SM;
-    {rcv_ul, {set, routing, Routing} } when NProtocol =:= staticr;
-                                            NProtocol =:= staticrack ->
+    {rcv_ul, {set, routing, Routing, NL} } when NProtocol =:= staticr;
+                                                NProtocol =:= staticrack ->
+      share:put(SM, current_neighbours, NL),
+      share:put(SM, neighbours_channel, NL),
       share:put(SM, routing_table, Routing),
       fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
       SM;
-    {rcv_ul, {set, routing, _} } ->
+    {rcv_ul, {set, routing, _, _} } ->
       fsm:cast(SM, nl, {send, {sync, {nl, error} } }),
       SM;
     {rcv_ul, {set, protocol, AProtocolID} } ->
