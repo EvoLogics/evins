@@ -546,10 +546,19 @@ handle_wpath(_MM, SM, Term) ->
     {relay_wv, Params = {data, [Packet_id, Real_src, _]}, {nl, send, Real_dst, Payload}} ->
       CheckedTuple = nl_mac_hf:parse_path_data(SM, Payload),
       {_, Add, Path} = CheckedTuple,
-      NewPayload = nl_mac_hf:fill_msg(path_data, CheckedTuple),
-      SM1 = fsm:clear_timeout(SM, {wpath_timeout, {Packet_id, Real_dst, Real_src}}),
-      [SMN1, _]  = nl_mac_hf:parse_path(SM1, {Add, Path}, {Real_src, Real_dst}),
-      SMN1#sm{event = relay_wv, event_params = {relay_wv, {send, Params, {nl, send, Real_dst, NewPayload}}}};
+
+      {SM1, NewPayload} =
+      case CheckedTuple of
+        {D, Add, nothing} ->
+          {SM, nl_mac_hf:fill_msg(data, {D, Add})};
+        {_, Add, Path} ->
+          PP = nl_mac_hf:fill_msg(path_data, CheckedTuple),
+          [SMN1, _]  = nl_mac_hf:parse_path(SM, {Add, Path}, {Real_src, Real_dst}),
+          {SMN1, PP}
+      end,
+
+      SM2 = fsm:clear_timeout(SM1, {wpath_timeout, {Packet_id, Real_dst, Real_src}}),
+      SM2#sm{event = relay_wv, event_params = {relay_wv, {send, Params, {nl, send, Real_dst, NewPayload}}}};
     {relay_wv, Params = {_, [Packet_id, Real_src, _]}, Tuple = {nl, send, Real_dst, Payload}} ->
       [ListNeighbours, ListPath] = nl_mac_hf:extract_neighbours_path(SM, Payload),
       NPathTuple = {ListNeighbours, ListPath},
