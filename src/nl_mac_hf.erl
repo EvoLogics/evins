@@ -791,30 +791,34 @@ parse_path(SM, {_, ListPath}, {ISrc, IDst}) ->
 
 add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {IRssi, IIntegrity}) ->
   ?INFO(?ID, "+++ Flag ~p, NLSrcAT ~p, RealSrc ~p~n", [Flag, NLSrcAT, RealSrc]),
+  try
+    Neighbours_channel = share:get(SM, neighbours_channel),
+    SM1 = fsm:set_timeout(SM, {s, share:get(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
+    analyse(SM1, st_neighbours, NLSrcAT, {RealSrc, Real_dst}),
+    Add_neighbours =
+    fun(Neighbours) ->
+         case lists:member(NLSrcAT, Neighbours) of
+           _ when Neighbours_channel == nothing ->
+              share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity}]),
+              [NLSrcAT];
+           true ->
+              El = {_, ETSrssi, ETSintegrity} = lists:keyfind(NLSrcAT, 1, Neighbours_channel),
+              NewRssi = (IRssi + ETSrssi) / 2,
+              NewIntegrity = (ETSintegrity + IIntegrity) / 2,
+              Updated_neighbours_channel = lists:delete(El, Neighbours_channel),
+              share:put(SM1, neighbours_channel, [ {NLSrcAT, NewRssi, NewIntegrity} | Updated_neighbours_channel]),
+              Neighbours;
+           false ->
+              share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity} | Neighbours_channel]),
+              [NLSrcAT | Neighbours]
+         end
+      end,
 
-  Neighbours_channel = share:get(SM, neighbours_channel),
-  SM1 = fsm:set_timeout(SM, {s, share:get(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
-  analyse(SM1, st_neighbours, NLSrcAT, {RealSrc, Real_dst}),
-  Add_neighbours =
-  fun(Neighbours) ->
-       case lists:member(NLSrcAT, Neighbours) of
-         _ when Neighbours_channel == nothing ->
-            share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity}]),
-            [NLSrcAT];
-         true ->
-            El = {_, ETSrssi, ETSintegrity} = lists:keyfind(NLSrcAT, 1, Neighbours_channel),
-            NewRssi = (IRssi + ETSrssi) / 2,
-            NewIntegrity = (ETSintegrity + IIntegrity) / 2,
-            Updated_neighbours_channel = lists:delete(El, Neighbours_channel),
-            share:put(SM1, neighbours_channel, [ {NLSrcAT, NewRssi, NewIntegrity} | Updated_neighbours_channel]),
-            Neighbours;
-         false ->
-            share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity} | Neighbours_channel]),
-            [NLSrcAT | Neighbours]
-       end
-    end,
-
-  share:update_with(SM1, current_neighbours, Add_neighbours, []).
+    share:update_with(SM1, current_neighbours, Add_neighbours, [])
+  catch error: _ ->
+    % Got a message not for NL layer
+    neighbours_other_format
+  end.
 %%-------------------------------------------------- Process NL functions -------------------------------------------
 get_aver_value(0, Val2) ->
   round(Val2);

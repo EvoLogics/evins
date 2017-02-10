@@ -240,6 +240,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl, {send, {sync, {nl, failed, Local_address, BDst}}});
     {async, {pid, _}, Tuple} ->
       [SMN, NT] = parse_ll_msg(SM, {async, Tuple}),
+
       case NT of
         nothing ->
           SMN;
@@ -741,6 +742,7 @@ parse_rcv(SM, RcvParams, PayloadTail) ->
     DataParams = nl_mac_hf:extract_payload_nl_flag(PayloadTail),
     [BPid, _,  _,  _,  _,  _,  _] = DataParams,
     CurrentPid = ?PROTOCOL_NL_PID(share:get(SM, nlp)),
+
     if CurrentPid == BPid ->
       process_rcv_wv(SM, RcvParams, DataParams);
     true ->
@@ -769,8 +771,10 @@ process_rcv_wv(SMT, RcvParams, DataParams) ->
   PTail =
   case Flag of
     data when Protocol#pr_conf.lo; Protocol#pr_conf.pf ->
-      {_, Data, _P} = nl_mac_hf:parse_path_data(SMT, Tail),
-      Data;
+      case nl_mac_hf:parse_path_data(SMT, Tail) of
+        {_, Data, _P} -> Data;
+        _ -> Tail
+      end;
     data -> Tail;
     _ -> <<"">>
   end,
@@ -789,7 +793,12 @@ process_rcv_wv(SMT, RcvParams, DataParams) ->
   RRelayTuple = {relay, RParams, RSendTuple},
   RDstTuple   = {dst_reached, RParams, RAsyncTuple},
 
-  SMN     = nl_mac_hf:add_neighbours(SM, Flag, NLSrcAT, {RecvNLSrc, RecvNLDst}, {IRssi, IIntegrity}),
+  ResN = nl_mac_hf:add_neighbours(SM, Flag, NLSrcAT, {RecvNLSrc, RecvNLDst}, {IRssi, IIntegrity}),
+  SMN = case ResN of
+    neighbours_other_format -> SM;
+    _ -> ResN
+  end,
+
   case PPkg_id of
     _ when Flag =:= dst_reached ->
       [SMN, nothing];
