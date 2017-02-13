@@ -332,6 +332,22 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, _Tuple} when SM#sm.state =/= idle ->
       fsm:cast(SM, nl, {send, {sync, {nl, busy}}});
 
+    {rcv_ul, Tuple = {nl, send, TransmitLen, IDst, _Payload}} when  NProtocol =:= staticr,
+                                                                    TransmitLen < ?MAX_IM_LEN;
+                                                                    NProtocol =:= staticrack,
+                                                                    TransmitLen < ?MAX_IM_LEN ->
+      Routing_table = share:get(SM, routing_table),
+      RAddr = nl_mac_hf:find_in_routing_table(Routing_table, IDst),
+      if RAddr =/= ?ADDRESS_MAX ->
+        ?TRACE(?ID, "Routing exists ~p ~p~n", [Routing_table, RAddr]),
+        case process_sendim(SM, Tuple) of
+          error  -> fsm:cast(SM, nl, {send, {nl, error}});
+          Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
+        end;
+        true ->
+        ?TRACE(?ID, "NO routing available ~p ~p~n", [Routing_table, RAddr]),
+        fsm:cast(SM, nl, {send, {nl, error, norouting}})
+      end;
     {rcv_ul, Tuple = {nl, send, TransmitLen, _IDst, _Payload}} when TransmitLen < ?MAX_IM_LEN ->
       case process_sendim(SM, Tuple) of
         error  -> fsm:cast(SM, nl, {send, {nl, error}});
@@ -348,7 +364,7 @@ handle_event(MM, SM, Term) ->
         end;
       true ->
         ?TRACE(?ID, "NO routing available ~p ~p~n", [Routing_table, RAddr]),
-        fsm:cast(SM, nl, {send, {nl, error}})
+        fsm:cast(SM, nl, {send, {nl, error, norouting}})
       end;
     {ignore,_} -> SM;
     UUg ->

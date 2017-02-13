@@ -55,6 +55,7 @@ from_term(Term, Cfg) ->
 from_term_helper(Tuple,_,_) when is_tuple(Tuple) ->
   case Tuple of
     {nl, error} -> [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), ?EOL_RECV];
+    {nl, error, norouting} -> [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), ?EOL_RECV];
     {async, T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
     {sync,  T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
     T -> [nl_mac_hf:convert_to_binary(tuple_to_list(T))]

@@ -46,8 +46,8 @@ parse_conf(_Mod_ID, ArgS, Share) ->
   Discovery_perod_set = [Time  || {discovery_perod, Time} <- ArgS],
   Protocols_set = [P  || {protocols, P} <- ArgS],
 
-  Time_discovery  = set_params(Time_discovery_set, 15), %s
-  Discovery_perod = set_params(Discovery_perod_set, 5), %s
+  Time_discovery  = set_params(Time_discovery_set, 30), %s
+  Discovery_perod = set_params(Discovery_perod_set, 10), %s
 
   ShareID = #sm{share = Share},
 

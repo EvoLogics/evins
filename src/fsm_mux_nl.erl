@@ -107,6 +107,9 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, {set, protocol, Protocol}} when State =/= discovery ->
         % clear everything and set current protocol
         set_protocol(SM, Protocol);
+    {rcv_ul, <<"\n">>} ->
+        cast(Main_role, {send, {nl, error} }),
+        SM;
     {rcv_ul, NLCommand} when State =/= discovery ->
         process_ul_command(SM, NLCommand);
     {rcv_ul, _} ->
