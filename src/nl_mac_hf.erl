@@ -1283,11 +1283,13 @@ process_send_payload(SM, {at, PID, P1, P2, P3, Payload}) ->
   Ttl_table = share:get(SM, ttl_table),
   NewPayload = check_TTL(SM, Ttl_table, BPid, Tuple, Payload),
   NewMsg = {at, PID, P1, P2, P3, NewPayload},
+  Tmo_retransmit = rand_float(SM1, tmo_retransmit),
   case num2flag(Flag, nl) of
+    dst_reached when TTL == 1, NewPayload =/= nothing->
+      fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, NewMsg});
     dst_reached ->
       SM1;
     _ when NewPayload =/= nothing ->
-      Tmo_retransmit = rand_float(SM1, tmo_retransmit),
       fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, NewMsg});
     _ ->
       SM1
