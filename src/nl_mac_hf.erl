@@ -794,22 +794,23 @@ add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {IRssi, IIntegrity}) ->
   try
     Neighbours_channel = share:get(SM, neighbours_channel),
     SM1 = fsm:set_timeout(SM, {s, share:get(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
+    Current_time = erlang:monotonic_time(milli_seconds),
     analyse(SM1, st_neighbours, NLSrcAT, {RealSrc, Real_dst}),
     Add_neighbours =
     fun(Neighbours) ->
          case lists:member(NLSrcAT, Neighbours) of
            _ when Neighbours_channel == nothing ->
-              share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity}]),
+              share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity, Current_time}]),
               [NLSrcAT];
            true ->
-              El = {_, ETSrssi, ETSintegrity} = lists:keyfind(NLSrcAT, 1, Neighbours_channel),
+              El = {_, ETSrssi, ETSintegrity, _} = lists:keyfind(NLSrcAT, 1, Neighbours_channel),
               NewRssi = (IRssi + ETSrssi) / 2,
               NewIntegrity = (ETSintegrity + IIntegrity) / 2,
               Updated_neighbours_channel = lists:delete(El, Neighbours_channel),
-              share:put(SM1, neighbours_channel, [ {NLSrcAT, NewRssi, NewIntegrity} | Updated_neighbours_channel]),
+              share:put(SM1, neighbours_channel, [ {NLSrcAT, NewRssi, NewIntegrity, Current_time} | Updated_neighbours_channel]),
               Neighbours;
            false ->
-              share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity} | Neighbours_channel]),
+              share:put(SM1, neighbours_channel, [ {NLSrcAT, IRssi, IIntegrity, Current_time} | Neighbours_channel]),
               [NLSrcAT | Neighbours]
          end
       end,
@@ -1186,11 +1187,13 @@ neighbours_to_list(_,Neigbours, nl) ->
 neighbours_to_bin(SM) ->
   F = fun(X) ->
       case X of
-        {Addr, Rssi, Integrity} ->
+        {Addr, Rssi, Integrity, Time} ->
           Baddr = convert_type_to_bin(Addr),
           Brssi = convert_type_to_bin(Rssi),
           Bintegrity = convert_type_to_bin(Integrity),
-          list_to_binary([Baddr, ":", Brssi, ":", Bintegrity]);
+          CurrentTime = erlang:monotonic_time(milli_seconds) - Time,
+          BTime = convert_type_to_bin(CurrentTime),
+          list_to_binary([Baddr, ":", Brssi, ":", Bintegrity, ":", BTime]);
         Addr ->
           Baddr = convert_type_to_bin(Addr),
           list_to_binary([Baddr])
@@ -1389,7 +1392,7 @@ process_command(SM, Debug, Command) ->
         protocols ->
           {nl, Command, Req};
         {protocol, Name} ->
-          {nl, protocol, get_protocol_info(SM, Name)};
+          {nl, protocolinfo, get_protocol_info(SM, Name)};
         neighbours ->
           {nl, neighbours, neighbours_to_bin(SM)};
         {delete, neighbour, Addr} ->

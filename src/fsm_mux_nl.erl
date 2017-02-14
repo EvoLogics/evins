@@ -80,6 +80,8 @@ handle_event(MM, SM, Term) ->
   Main_role = share:get(SM, main_role),
   State = SM#sm.state,
   Waiting_neighbours = share:get(SM, waiting_neighbours),
+  Setting_routing = share:get(SM, setting_routing),
+  Waiting_sync = share:get(SM, waiting_sync),
   %io:format("++  state ~p Ev ~p term ~p~n", [SM#sm.state, SM#sm.event,  Term]),
   case Term of
     {timeout, discovery_perod_tmo} ->
@@ -100,6 +102,12 @@ handle_event(MM, SM, Term) ->
         fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
         SM;
+    {rcv_ul, {get, configured, protocols}} ->
+        ConfPr = share:get(SM, configured_protocols),
+        ListPs = [  atom_to_list(NamePr) || {NamePr, _, _} <- ConfPr],
+        BinP = list_to_binary(lists:join(",", ListPs)),
+        cast(Main_role, {send, {nl, confprotocols, BinP}}),
+        SM;
     {rcv_ul, discovery} when State =:= ready_nl->
         cast(Main_role, {send, {nl, ok}}),
         SM1 = start_discovery(SM),
@@ -109,6 +117,16 @@ handle_event(MM, SM, Term) ->
         set_protocol(SM, Protocol);
     {rcv_ul, <<"\n">>} ->
         cast(Main_role, {send, {nl, error} }),
+        SM;
+    {rcv_ul, {help, NLCommand}} ->
+        ConfPr = share:get(SM, configured_protocols),
+        if ConfPr =/= [] ->
+            {_, TmpRole, _} = lists:last(ConfPr),
+            cast(Main_role, {send, list_to_binary(get_mux_commands())}),
+            cast(TmpRole, {send, NLCommand});
+        true ->
+            cast(Main_role, {send, {nl, error}})
+        end,
         SM;
     {rcv_ul, NLCommand} when State =/= discovery ->
         process_ul_command(SM, NLCommand);
@@ -154,18 +172,33 @@ handle_event(MM, SM, Term) ->
                 fsm:run_event(MM, SM2, {})
         end;
 
-    {rcv_ll, {recv, Dst, Data, Tuple}} when Dst == 255,
+    {rcv_ll, {recv, Dst, Data, _Tuple}} when Dst == 255,
                                             Data == <<"D">> ->
         share:put(SM, waiting_neighbours, true),
         get_neighbours(SM),
-        cast(Main_role, {send, Tuple}),
         SM;
     {rcv_ll, {recv, _Dst, _Data, Tuple}} ->
         cast(Main_role, {send, Tuple}),
         SM;
-    {rcv_ll, Tuple} when State =/= discovery,
-                         Waiting_neighbours == false ->
+    {rcv_ll, {sync, _Tuple}} when Setting_routing =/= false ->
+        {true, LNeighbours} = share:get(SM, setting_routing),
+        NLBin = neighbours_to_bin(LNeighbours),
+        set_neighbours(SM, NLBin),
+        share:put(SM, setting_routing, false),
+        share:put(SM, waiting_sync, true),
+        SM;
+    {rcv_ll, {sync, Tuple}} when State =/= discovery,
+                                 Waiting_neighbours == false,
+                                 Waiting_sync == false ->
         cast(Main_role, {send, Tuple}),
+        SM;
+    {rcv_ll, Tuple} when State =/= discovery,
+                         Waiting_neighbours == false,
+                         Waiting_sync == false ->
+        cast(Main_role, {send, Tuple}),
+        SM;
+    {rcv_ll, _} ->
+        share:put(SM, waiting_sync, false),
         SM;
     {rcv_ll, _AProtocolID, Tuple} when State =/= discovery,
                                        Waiting_neighbours == false ->
@@ -192,6 +225,8 @@ handle_idle(_MM, SM, Term) ->
             share:put(SM, protocol_roles, Protocols),
             share:put(SM, configured_protocols, []),
             share:put(SM, waiting_neighbours, false),
+            share:put(SM, setting_routing, false),
+            share:put(SM, waiting_sync, false),
             SM1 = init_nl_protocols(SM, Protocols),
             SM1#sm{event = init};
         _  ->
@@ -297,11 +332,31 @@ set_routing(SM, NL) ->
             share:put(SM, current_protocol, Burst_protocol),
             {StaticrRole, _} = share:get(SM, Burst_protocol),
 
-            Routing_table = lists:map(fun(X) -> {X, X} end, NL),
+            Routing_table = lists:map(fun( {A, _I, _R, _T} ) -> {A, A} end, NL),
             RoutingBin = routing_to_bin(Routing_table),
             Tuple = {nl, set, routing, RoutingBin},
+            share:put(SM, setting_routing, {true, NL}),
             cast(StaticrRole, {send, Tuple}),
             cast(StaticrRole, {send, {nl, get, routing}}),
+            share:put(SM, current_protocol, CurrProtocol);
+        _ ->
+            ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+            SM
+    end.
+
+set_neighbours(SM, empty) ->
+    SM;
+set_neighbours(SM, NLBin) ->
+    Burst_protocol = share:get(SM, burst_protocol),
+    ConfProtocol = share:get(SM, Burst_protocol),
+    Protocol_configured = (ConfProtocol =/= nothing) and (Burst_protocol =/= nothing),
+    case Protocol_configured of
+        true ->
+            CurrProtocol = share:get(SM, current_protocol),
+            share:put(SM, current_protocol, Burst_protocol),
+            {StaticrRole, _} = share:get(SM, Burst_protocol),
+            Tuple = {nl, set, neighbours, NLBin},
+            cast(StaticrRole, {send, Tuple}),
             share:put(SM, current_protocol, CurrProtocol);
         _ ->
             ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
@@ -341,3 +396,29 @@ routing_to_bin(Routing_table) ->
         [integer_to_binary(From),"->",integer_to_binary(To)]
     end, Routing_table),
     list_to_binary(lists:join(",", Path)).
+
+get_mux_commands() ->
+    ["=========================================== MUX commands ===========================================\n",
+    "NL,discovery\t\t\t\t\t- Run discovery\n",
+    "NL,get,protocols,configured\t\t\t- Get list of currently configured protocolsfor MUX\n\n",
+    "=========================================== Sync MUX responses =====================================\n",
+    "NL,error,norouting\t\t\t\t- Sync error message, if no routing to dst exists (Static routing)\n",
+    "NL,error,noprotocol\t\t\t\t- Sync error message, if no protocol specified\n",
+    "\n\n\n"].
+
+neighbours_to_bin(NL) ->
+  F = fun(X) ->
+      case X of
+        {Addr, Rssi, Integrity, Time} ->
+          Baddr = nl_mac_hf:convert_type_to_bin(Addr),
+          Brssi = nl_mac_hf:convert_type_to_bin(Rssi),
+          Bintegrity = nl_mac_hf:convert_type_to_bin(Integrity),
+          BTime = nl_mac_hf:convert_type_to_bin(Time),
+          list_to_binary([Baddr, ":", Brssi, ":", Bintegrity, ":", BTime]);
+        Addr ->
+          Baddr = nl_mac_hf:convert_type_to_bin(Addr),
+          list_to_binary([Baddr])
+      end
+  end,
+
+  list_to_binary(lists:join(",", [F(X) || X <- NL])).

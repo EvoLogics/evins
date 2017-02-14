@@ -312,11 +312,24 @@ handle_event(MM, SM, Term) ->
       share:put(SM, local_address, Addr),
       fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
       SM;
-    {rcv_ul, {set, routing, Routing, NL} } when NProtocol =:= staticr;
+    {rcv_ul, {set, neighbours, Flag, NL} } when NProtocol =:= staticr;
                                                 NProtocol =:= staticrack ->
-      share:put(SM, current_neighbours, NL),
-      share:put(SM, neighbours_channel, NL),
-      share:put(SM, routing_table, Routing),
+      case Flag of
+        normal ->
+          share:put(SM, current_neighbours, NL),
+          share:put(SM, neighbours_channel, NL);
+        add ->
+          CurrentTime = erlang:monotonic_time(milli_seconds),
+          Neighbours_channel = [ {A, I, R, CurrentTime - T } || {A, I, R, T} <- NL],
+          Neighbours = [ A || {A, _, _, _} <- NL],
+          share:put(SM, neighbours_channel, Neighbours_channel),
+          share:put(SM, current_neighbours, Neighbours)
+      end,
+      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+      SM;
+    {rcv_ul, {set, routing, Routing} } when NProtocol =:= staticr;
+                                            NProtocol =:= staticrack ->
+     share:put(SM, routing_table, Routing),
       fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
       SM;
     {rcv_ul, {set, routing, _, _} } ->

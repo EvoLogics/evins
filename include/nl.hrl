@@ -174,12 +174,13 @@
 			 "?\t\t\t\t\t\t- List of all commands\r\n",
 			 "\r\n\r\n\r\n",
 			 "===================================== Send and receive ======================================\r\n",
-			 "NL,send,[<Datalen>],<Dst>,<Data>\t\t- send data, <Datalen> - optional\r\n",
-			 "NL,recv,<Datalen>,<Src>,<Dst>,<Data>\t\t- recv data\r\n",
+			 "NL,send,[<Datalen>],<Dst>,<Data>\t\t- Send data, <Datalen> - optional\r\n",
+			 "NL,recv,<Datalen>,<Src>,<Dst>,<Data>\t\t- Recv data\r\n",
 			 "\r\n\r\n\r\n",
 			 "===================================== Immediate response =====================================\r\n",
-			 "NL,ok\t\t\t\t\t\t- message was accepted and will be transmitted\r\n",
-			 "NL,error\t\t\t\t\t- message was not accepted and will be dropped\r\n",
+			 "NL,ok\t\t\t\t\t\t- Message was accepted and will be transmitted\r\n",
+			 "NL,error\t\t\t\t\t- Message was not accepted and will be dropped\r\n",
+			 "NL,error,norouting\t\t\t\t- Message was not accepted and will be dropped, no routing specified, only for static routing\r\n",
 			 "NL,busy\t\t\t\t\t\t- NL is busy, message will be dropped\r\n",
 			 "\r\n\r\n\r\n",
 			 "==================================== Data delivery reports ====================================\r\n",
@@ -187,17 +188,20 @@
 			 "NL,delivered,<Src>,<Dst>\t\t\t- Message was successfully delivered to destination node\r\n",
 			 "\r\n\r\n\r\n",
 			 "==================================== Set commands =====================================\r\n",
-			 "NL,set,address,<Addr>\t\t\t\t- set local address\r\n",
-			 "NL,set,neighbours,<LA1>,<LA2>...\t\t\t- set current neighbours\r\n",
- 			 "NL,set,protocol,<Protocol_Name>\t\t\t- set current routing protocol\r\n",
- 			 "NL,set,routing,[<LA1>-><LA2>],[<LA3>-><LA4>],...,[<Default LA>]\t- set routing only for static routing\r\n",
+			 "NL,set,address,<Addr>\t\t\t\t- Set local address\r\n",
+			 "NL,set,neighbours,<LA1>,<LA2>...\t\t- Set current neighbours\r\n",
+			 "NL,set,neighbours,[<Addr1>:<Integrity1>:<Rssi1>:<TimeLastUpdate1(ms)>],[<Addr2>:<Integrity2>:<Rssi2>:<TimeLastUpdate2(ms)>],.. - Set current neighbours with current channel characteristics\r\n",
+			 "NL,set,protocol,<Protocol_Name>\t\t\t- Set current routing protocol\r\n",
+			 "NL,set,routing,[<LA1>-><LA2>],[<LA3>-><LA4>],...,[<Default LA>]\t- Set routing only for static routing\r\n",
 			 "\r\n\r\n\r\n",
 			 "==================================== Information commands =====================================\r\n",
-			 "NL,get,address\t\t\t\t\t- get local address\r\n",
+			 "NL,get,address\t\t\t\t\t- Get local address\r\n",
 			 "NL,get,protocols\t\t\t\t- Get description of all protocols\r\n",
 			 "NL,get,protocol\t\t\t\t\t- Get current routing protocol\r\n",
 			 "NL,get,protocol,<Protocol_name>\t\t\t- Get description of specific protocol\r\n",
-			 "NL,get,neighbours\t\t\t\t- Get current  neighbours\r\n",
+			 "NL,get,neighbours\t\t\t\t- Get current  neighbours\r\n
+			 \t\t\tAnswer:
+			 \t\t\tNL,neighbours,[<Addr1>:<Integrity1>:<Rssi1>:<TimeLastUpdate1(ms)>],[<Addr2>:<Integrity2>:<Rssi2>:<TimeLastUpdate2(ms)>],..\r\n\r\n"
 			 "NL,get,routing\t\t\t\t\t- Get current routing table\r\n",
 			 "NL,get,state\t\t\t\t\t- Get current  state of protocol (sm)\r\n",
 			 "NL,get,states\t\t\t\t\t- Get last 50  states of protocol (sm)\r\n",
@@ -218,11 +222,11 @@
 			 \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
 			 "\r\n\r\n\r\n",
 			 "========================= Clear commands ========================\n",
-			 "NL,delete,neighbour,<Addr>\t\t\t\t-remove a neighbour from the current neighbour list and updates the routing table\r\n",
-			 "NL,clear,stats,data\t\t\t\t-clear the data statistics\r\n"
+			 "NL,delete,neighbour,<Addr>\t\t\t-Remove a neighbour from the current neighbour list and updates the routing table\r\n",
+			 "NL,clear,stats,data\t\t\t\t-Clear the data statistics\r\n"
 			 "\r\n\r\n\r\n",
 			 "========================= Reset commands ========================\r\n",
-			 "NL,reset,state\t\t\t\t\t-revert fsm state to idle state\r\n"
+			 "NL,reset,state\t\t\t\t\t-Revert fsm state to idle state\r\n"
 			]).
 
 -define(STATE_DESCR,

@@ -61,8 +61,12 @@ split(L, Cfg) ->
     nomatch -> try_send(L, Cfg)
   end.
 
+
 try_recv(L, Cfg) ->
-  case re:run(L,"(NL,protocol,|NL,recv,|NL,neighbours,|NL,routing,|NL,delivered,|NL,failed,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+  case re:run(L,"^(NL,ok|NL,busy|NL,error|NL,protocol,|NL,recv,|NL,neighbours,|NL,routing,|NL,delivered,|NL,failed,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+    {match, [<<"NL,ok">>, _P, L1]}   -> [ {rcv_ll, {sync, L}} | split(L1, Cfg)];
+    {match, [<<"NL,busy">>, _P, L1]}   -> [ {rcv_ll, {sync, L}} | split(L1, Cfg)];
+    {match, [<<"NL,error">>, _P, L1]}   -> [ {rcv_ll, {sync, L}} | split(L1, Cfg)];
     {match, [<<"NL,protocol,">>, P, L1]}   -> [nl_protocol_extract(P, Cfg) | split(L1, Cfg)];
     {match, [<<"NL,routing,">>, _P, L1]}   -> [ {rcv_ll, {routing, L}} | split(L1, Cfg)];
     {match, [<<"NL,delivered,">>, _P, L1]} -> [ {rcv_ll, {delivered, L}} | split(L1, Cfg)];
@@ -73,18 +77,23 @@ try_recv(L, Cfg) ->
   end.
 
 try_send(L, Cfg) ->
-  case re:run(L, "\n") of
-    {match, [{_, _}]} ->
-      case re:run(L, 
-        "^(NL,set,protocol,|NL,discovery)(.*)",
-        [dotall, {capture, [1, 2], binary}]) of
+  case L of
+      <<"?\n">>  -> [ {rcv_ul, {help, L}} ];
+      _ ->
+      case re:run(L, "\n") of
+        {match, [{_, _}]} ->
+          case re:run(L,
+            "^(NL,set,protocol,|NL,discovery|NL,get,protocols,configured)(.*)",
+            [dotall, {capture, [1, 2], binary}]) of
 
-        {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
-        {match, [<<"NL,discovery">>, P]}  -> nl_discovery(P, Cfg);
-        nomatch -> [{rcv_ul, L}]
-      end;
-    nomatch ->
-      [{more, L}]
+            {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
+            {match, [<<"NL,discovery">>, P]}  -> nl_discovery(P, Cfg);
+            {match, [<<"NL,get,protocols,configured">>, _P]}  -> [{rcv_ul, {get, configured, protocols}}];
+            nomatch -> [{rcv_ul, L}]
+          end;
+        nomatch ->
+          [{more, L}]
+      end
   end.
 
 
@@ -120,8 +129,11 @@ nl_neighbours_extract(L, NeighboursBin, _Cfg) ->
     Neighbours = binary:split(NeighboursBin, [<<",">>],[global]),
     NL =
     lists:map(fun(X)->
-      [H,_,_] = binary:split(X, [<<":">>],[global]),
-      nl_mac_hf:bin_to_num(H)
+      [H, Int, Rssi, Time] = binary:split(X, [<<":">>],[global]),
+      {nl_mac_hf:bin_to_num(H),
+      nl_mac_hf:bin_to_num(Int),
+      nl_mac_hf:bin_to_num(Rssi),
+      nl_mac_hf:bin_to_num(Time)}
     end, Neighbours),
     {rcv_ll, {neighbours, L, NL}}
   catch error: _Reason -> {rcv_ll, {neighbours, L, empty}}

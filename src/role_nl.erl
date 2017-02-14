@@ -68,7 +68,7 @@ split(L, Cfg) ->
   end.
 
 try_recv(L, Cfg) ->
-  case re:run(L,"(NL,recv,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+  case re:run(L,"^(NL,recv,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
     {match, [<<"NL,recv,">>, P, L1]} -> [nl_recv_extract(P, Cfg) | split(L1, Cfg)];
     nomatch ->
       case re:run(L,"^(NL,busy|NL,ok|NL,error|NL,failed,|NL,delivered,)[\r\n]+(.*)", [dotall, {capture, [1, 2], binary}]) of
@@ -88,13 +88,14 @@ try_send(L, Cfg) ->
       <<"?\n">>  -> get_help();
       _ ->
         case re:run(L, 
-          "^(NL,send,|NL,set,protocol,|NL,set,routing,|NL,set,address,|NL,clear,stats,data|NL,reset,state|NL,delete,neighbour,)(.*)",
+          "^(NL,send,|NL,set,protocol,|NL,set,routing,|NL,set,address,|NL,clear,stats,data|NL,reset,state|NL,delete,neighbour,|NL,set,neighbours,)(.*)",
           [dotall, {capture, [1, 2], binary}]) of
 
           {match, [<<"NL,send,">>, P]}  -> nl_send_extract(P, Cfg);
           {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
           {match, [<<"NL,set,routing,">>, P]}  -> nl_set_routing(P, Cfg);
           {match, [<<"NL,set,address,">>, P]}  -> nl_set_address(P, Cfg);
+          {match, [<<"NL,set,neighbours,">>, P]}  -> nl_set_neighbours(P, Cfg);
           {match, [<<"NL,delete,neighbour,">>, P]}  -> nl_delete_neighbour(P, Cfg);
           {match, [<<"NL,clear,stats,data">>, P]}  -> nl_clear(P, Cfg);
           {match, [<<"NL,reset,state">>, _P]}  -> nl_reset_state();
@@ -131,14 +132,38 @@ nl_set_protocol(P, _Cfg) ->
 nl_reset_state() ->
   [{rcv_ul, {reset, state} }].
 
+nl_set_neighbours(P, _Cfg) ->
+  try
+    {match, [BNeighbours]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
+    LBNeighbours = binary:split(BNeighbours, [<<":">>],[global]),
+    [Flag, Neighours] =
+    case LBNeighbours of
+      _ when length(LBNeighbours) == 1 ->
+        LINeighbours = binary:split(BNeighbours, [<<",">>],[global]),
+        NL = [nl_mac_hf:bin_to_num(N) || N <- LINeighbours],
+        [normal, NL];
+      _ ->
+        LAddINeighbours = binary:split(BNeighbours, [<<",">>],[global]),
+        NL =
+        lists:map(fun(X) ->
+          [N1, I, R, T] = binary:split(X, [<<":">>],[global]),
+          {nl_mac_hf:bin_to_num(N1),
+          nl_mac_hf:bin_to_num(I),
+          nl_mac_hf:bin_to_num(R),
+          nl_mac_hf:bin_to_num(T)} end, LAddINeighbours),
+        [add, NL]
+      end,
+      [{rcv_ul, {set, neighbours, Flag, Neighours} }]
+  catch error: _Reason -> [{nl, error}]
+  end.
+
 nl_set_routing(P, _Cfg) ->
   try
     {match, [BRouting]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
     LRouting = string:tokens(binary_to_list(BRouting), ","),
     IRouting = lists:map(fun(X)-> S = string:tokens(X, "->"), [list_to_integer(X1) || X1 <- S] end, LRouting),
     TRouting = [case X of [A1, A2] -> {A1, A2}; [A1] -> A1 end|| X <- IRouting],
-    TNeighbours = [case X of {_A1, A2} -> A2; A2 -> A2 end|| X <- TRouting],
-    [{rcv_ul, {set, routing, TRouting, TNeighbours} }]
+    [{rcv_ul, {set, routing, TRouting} }]
   catch error: _Reason -> [{nl, error}]
   end.
 
