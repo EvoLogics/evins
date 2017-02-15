@@ -44,8 +44,8 @@ handle_event(MM, SM, Term) ->
       ](SM);
 
     %% ------ IM logic -------
-    {async, _, {recvpbm, _, RAddr, LAddr, _, _, _, _, Payload}} ->
-      io:format("RAngles: ~p~n", [extractAM(Payload)]),
+    {async, _, {recvpbm, _, RAddr, LAddr, _, _, _, _, _Payload}} ->
+      %io:format("RAngles: ~p~n", [extractAM(Payload)]),
       SM;
 
     {async, {deliveredim, RAddr}} ->
@@ -61,7 +61,7 @@ handle_event(MM, SM, Term) ->
       Delay = share:get(SM, query_delay),
       {PTime, _} = string:to_integer(PTimeStr),
       Dist = PTime * 1500.0e-6,
-      io:format("LDistance: ~p~n", [Dist]),
+      %io:format("LDistance: ~p~n", [Dist]),
       [share:put(__, distance, Dist),
        fsm:clear_timeout(__, query_timeout),
        fsm:set_timeout(__, {ms, Delay}, query_timeout),
@@ -73,14 +73,14 @@ handle_event(MM, SM, Term) ->
     {async, {sendend, RAddr,"ims", STS, _}} ->
       share:put(SM, sts, STS);
 
-    {async, _, {recvims, _, RAddr, LAddr, TS, _, _, _, _, Payload}} ->
-      io:format("RAngles: ~p~n", [extractAM(Payload)]),
+    {async, _, {recvims, _, RAddr, LAddr, TS, _, _, _, _, _Payload}} ->
+      %io:format("RAngles: ~p~n", [extractAM(Payload)]),
       Delay = share:get(SM, query_delay),
       STS = share:get(SM, sts),
       AD = share:get(SM, answer_delay),
       PTime = (TS - STS - AD * 1000) / 2,
       Dist = PTime * 1500.0e-6,
-      io:format("LDistance: ~p~n", [Dist]),
+      %io:format("LDistance: ~p~n", [Dist]),
       [share:put(__, distance, Dist),
        fsm:clear_timeout(__, query_timeout),
        fsm:set_timeout(__, {ms, Delay}, query_timeout)
@@ -146,7 +146,7 @@ createIM(SM) ->
               nothing ->
                 <<"N">>;
               _ ->
-                V = trunc(Dist * 10),
+                V = round(Dist * 10),
                 <<"D", V:16/little-unsigned-integer>>
             end,
   case Mode of
@@ -155,13 +155,13 @@ createIM(SM) ->
   end.
 
 
-extractAM(Payload) ->
-  case Payload of
-    <<"L", Bearing:12/little-unsigned-integer,
-           Elevation:12/little-unsigned-integer,
-           Roll:12/little-unsigned-integer,
-           Pitch:12/little-unsigned-integer,
-           Yaw:12/little-unsigned-integer, _/bitstring>> ->
-      lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]);
-    _ -> nothing
-  end.
+%extractAM(Payload) ->
+%  case Payload of
+%    <<"L", Bearing:12/little-unsigned-integer,
+%           Elevation:12/little-unsigned-integer,
+%           Roll:12/little-unsigned-integer,
+%           Pitch:12/little-unsigned-integer,
+%           Yaw:12/little-unsigned-integer, _/bitstring>> ->
+%      lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]);
+%    _ -> nothing
+%  end.

@@ -40,23 +40,23 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event=Event}, {});
 
     % RECVIM (only for debugging)
-    {async,  {pid, Pid}, {recvim, _, _RAddr, LAddr, ack, _, _, _, _, Payload}} ->
-      io:format("RDistance = ~p~n", [extractIM(Payload)]),
+    {async,  {pid, Pid}, {recvim, _, _RAddr, LAddr, ack, _, _, _, _, _Payload}} ->
+      %io:format("RDistance = ~p~n", [extractIM(Payload)]),
       share:put(SM, im_pid, Pid);
 
     % RECVIMS
-    {async, {pid, Pid}, {recvims, _, RAddr, LAddr, TS, Dur, _, _, _, Payload}} ->
-      io:format("RDistance = ~p~n", [extractIM(Payload)]),
+    {async, {pid, Pid}, {recvims, _, RAddr, LAddr, TS, Dur, _, _, _, _Payload}} ->
+      %io:format("RDistance = ~p~n", [extractIM(Payload)]),
       AD = share:get(SM, answer_delay),
       fsm:set_timeout(SM, {ms, 0.5 * AD - Dur / 1000}, {am_timeout, {Pid, RAddr, TS + AD * 1000}});
 
     % create AM to send by PBM or IMS
     {async, {usblangles, _, _, RAddr, Bearing, Elevation, _, _, Roll, Pitch, Yaw, _, _, Acc}} ->
       AM = case Acc of
-             _ when Acc > 0 -> createAM(lists:map(fun rad2deg/1, [Bearing, Elevation, Roll, Pitch, Yaw]));
+             _ when Acc >= 0 -> createAM(lists:map(fun rad2deg/1, [Bearing, Elevation, Roll, Pitch, Yaw]));
              _ -> <<"N">>
            end,
-      io:format("LAngles: ~p~n", [extractAM(AM)]),
+      %io:format("LAngles: ~p~n", [extractAM(AM)]),
       case find_spec_timeouts(SM, am_timeout) of
         [] ->
           Pid = share:get(SM, im_pid),
@@ -152,17 +152,20 @@ createAM(Angles) ->
   Padding = (8 - (bit_size(BinMsg) rem 8)) rem 8,
   <<BinMsg/bitstring, 0:Padding>>.
 
-extractAM(Payload) ->
-  <<"L", Bearing:12/little-unsigned-integer,
-    Elevation:12/little-unsigned-integer,
-    Roll:12/little-unsigned-integer,
-    Pitch:12/little-unsigned-integer,
-    Yaw:12/little-unsigned-integer, _/bitstring>> = Payload,
-  lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]).
+%extractAM(<<"N">>) ->
+%    nothing;
+%extractAM(Payload) ->
+%  <<"L", Bearing:12/little-unsigned-integer,
+%    Elevation:12/little-unsigned-integer,
+%    Roll:12/little-unsigned-integer,
+%    Pitch:12/little-unsigned-integer,
+%    Yaw:12/little-unsigned-integer, _/bitstring>> = Payload,
+%  lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]).
 
-extractIM(Payload) ->
-  case Payload of
-    <<"D", Distance:16/little-unsigned-integer>> ->
-      Distance / 10;
-    _ -> nothing
-  end.
+%extractIM(Payload) ->
+%  case Payload of
+%    <<"D", Distance:16/little-unsigned-integer,
+%           _Heading:12/little-unsigned-integer, _/bitstring>> ->
+%      Distance / 10;
+%    _ -> nothing
+%  end.
