@@ -45,6 +45,8 @@ to_term(Tail, Chunk, Cfg) ->
 %% ref,<filename>
 %% config,threshould,gain,source_level
 
+%% hook,rx,<len>,<filename>
+
 %% stop
 %% report,<code_name>,<len>
 %% busy,<code_name>
@@ -53,24 +55,25 @@ to_term(Tail, Chunk, Cfg) ->
 split(L, Cfg) ->
   case re:split(L,"\n",[{parts,2}]) of
     [Line,Rest] ->
-      case re:split(Line,",") of
-        [<<"stop">>] ->
-          [{sdmcli, {stop}} | split(Rest, Cfg)];
-        [<<"rx">>,BLen,BFName] ->
-          try 
-            [{sdmcli, {rx, binary_to_integer(BLen), binary_to_list(BFName)}} | split(Rest, Cfg)]
-          catch
-            _:_ -> 
-              [{error, {parseError, binary_to_list(L)}} | split(Rest, Cfg)]
-          end;
-        [<<"tx">>,BFName] ->
-          [{sdmcli, {tx, binary_to_list(BFName)}} | split(Rest, Cfg)];
-        [<<"ref">>,BFName] ->
-          [{sdmcli, {ref, binary_to_list(BFName)}} | split(Rest, Cfg)];
-        [<<"config">>,BThr,BGain,BSL] ->
-          [Thr,Gain,SL] = [binary_to_integer(X) || X <- [BThr,BGain,BSL]],
-          [{sdmcli, {config,Thr,Gain,SL}} | split(Rest, Cfg)];
-        _ ->
+      try 
+        case re:split(Line,",") of
+          [<<"stop">>] ->
+            [{sdmcli, {stop}} | split(Rest, Cfg)];
+          [<<"rx">>,BLen,BFName] ->
+            [{sdmcli, {rx, binary_to_integer(BLen), binary_to_list(BFName)}} | split(Rest, Cfg)];
+          [<<"hook">>,<<"rx">>,BLen,BFName] ->
+            [{sdmcli, {hook, rx, binary_to_integer(BLen), binary_to_list(BFName)}} | split(Rest, Cfg)];
+          [<<"tx">>,BFName] ->
+            [{sdmcli, {tx, binary_to_list(BFName)}} | split(Rest, Cfg)];
+          [<<"ref">>,BFName] ->
+            [{sdmcli, {ref, binary_to_list(BFName)}} | split(Rest, Cfg)];
+          [<<"config">>,BThr,BGain,BSL] ->
+            [Thr,Gain,SL] = [binary_to_integer(X) || X <- [BThr,BGain,BSL]],
+            [{sdmcli, {config,Thr,Gain,SL}} | split(Rest, Cfg)]
+        end
+      catch
+        _Error:_ ->
+          io:format("Error: ~p~n", [_Error]),
           [{error, {parseError, binary_to_list(L)}} | split(Rest, Cfg)]
       end;
     [_] -> [{more, L}]
@@ -78,6 +81,8 @@ split(L, Cfg) ->
 
 from_term({sdmcli,{rx}}, Cfg) ->
   [<<"rx\n">>, Cfg];
+from_term({sdmcli,{hook}}, Cfg) ->
+  [<<"hook\n">>, Cfg];
 from_term({sdmcli,{stop}}, Cfg) ->
   [<<"stop\n">>, Cfg];
 from_term({sdmcli,{report,Name,Len}}, Cfg) ->

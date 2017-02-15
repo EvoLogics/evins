@@ -214,7 +214,7 @@ clear_timeout(SM, Event) ->
   SM#sm{timeouts = TRefList}.
 
 %% Time: {s, Seconds}, {ms, Milliseconds}, {us, Microseconds}
-set_timeout(SM, Time, Event) -> 
+set_timeout(SM, {_, Value} = Time, Event) when Value > 0 -> 
   #sm{timeouts = Timeouts} = clear_timeout(SM, Event),
   MS = case Time of
          {s, V} -> V * 1000;
@@ -222,7 +222,11 @@ set_timeout(SM, Time, Event) ->
          {us, V} -> (V + 999) div 1000
        end,
   {ok, TRef} = timer:send_after(round(MS), {timeout, Event}),
-  SM#sm{timeouts = [{Event,TRef} | Timeouts]}.
+  SM#sm{timeouts = [{Event,TRef} | Timeouts]};
+set_timeout(_, {_, Value}, Event) ->
+  error({error, lists:flatten(io_lib:format("~p negative ~p", [Event, Value]))});
+set_timeout(_, Time, Event) ->
+  error({error, lists:flatten(io_lib:format("~p no appliable ~p", [Event, Time]))}).
 
 set_interval(SM, Time, Event) ->
   #sm{timeouts = Timeouts} = clear_timeout(SM, Event),
