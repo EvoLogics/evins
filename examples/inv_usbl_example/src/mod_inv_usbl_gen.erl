@@ -37,7 +37,7 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   parse_conf(Mod_ID, ArgS, Share),
-  Roles = fsm_worker:role_info(Role_IDs, [at]),
+  Roles = fsm_worker:role_info(Role_IDs, [at,nmea]),
   [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_inv_usbl_gen}].
 
 parse_conf(_Mod_ID, ArgS, Share) ->

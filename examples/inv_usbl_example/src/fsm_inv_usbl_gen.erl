@@ -24,7 +24,7 @@
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> SM.
+init(SM)       -> share:put(SM, heading, 0).
 trans()        -> ?TRANS.
 final()        -> [].
 init_event()   -> init.
@@ -91,6 +91,9 @@ handle_event(MM, SM, Term) ->
        fsm:run_event(MM, __#sm{event=sync_answer}, {})
       ](SM);
 
+    {nmea, {tnthpr, Heading, _, _Pitch, _, _Roll, _}} ->
+       share:put(SM, heading, Heading);
+
     _ -> SM
   end.
 
@@ -141,13 +144,17 @@ createIM(SM) ->
   RAddr = share:get(SM, dst),
   Pid = share:get(SM, pid),
   Dist = share:get(SM, distance),
+  Heading = share:get(SM, heading),
   Mode = share:get(SM, mode),
   Payload = case Dist of
               nothing ->
                 <<"N">>;
               _ ->
                 V = round(Dist * 10),
-                <<"D", V:16/little-unsigned-integer>>
+                H = round(Heading * 10),
+                <<"D", V:16/little-unsigned-integer,
+                       H:12/little-unsigned-integer,
+                       0:4>>
             end,
   case Mode of
     im  -> {at, {pid, Pid}, "*SENDIM", RAddr, ack, Payload};
