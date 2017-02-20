@@ -91,19 +91,21 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   true -> nothing
   end,
 
-  lists:foldr(fun(X, _)-> [PIDTmp, ParamsTmp, SMTmp] = conf_fsm(X), conf_protocol(CurrentProtocol, Share, X, PIDTmp, ParamsTmp, SMTmp) end, [], ?LIST_ALL_PROTOCOLS),
+  lists:foldr(
+    fun(X, _)->
+      [ParamsTmp, SMTmp] = conf_fsm(X),
+      conf_protocol(CurrentProtocol, Share, X, ParamsTmp, SMTmp)
+    end, [], ?LIST_ALL_PROTOCOLS),
 
   Module = conf_fsm(CurrentProtocol),
   if Module =:= error ->
     ?ERROR(Mod_ID, "!!! No NL protocol ID!~n", []);
   true ->
-    [_, _, SMN] = Module,
+    [_, SMN] = Module,
     ShareID = #sm{share = Share},
     La = share:get(ShareID, local_address),  
     DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
-    %Filename = "/tmp/" ++ "share_file_" ++ integer_to_list(La),
     Roles = fsm_worker:role_info(Role_IDs, [alh, nl]),
-    %{ok, Ref} = dets:open_file(DetsName,[{file, Filename}]),
     {ok, Ref} = dets:open_file(DetsName,[]),
     [#sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
@@ -113,9 +115,10 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Addr_set      = [Addrs          || {local_addr, Addrs} <- ArgS],
   Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
   Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
-  Max_address_set   = [Addrs          || {max_address, Addrs} <- ArgS],
+  Max_address_set   = [Addrs      || {max_address, Addrs} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
   Max_hops_Set  = [Hops           || {max_hops, Hops} <- ArgS],
+  Pkg_life_Set  = [Time           || {pkg_life, Time} <- ArgS],
 
   Tmo_wv            = [Time || {tmo_wv, Time} <- ArgS],
   Tmo_wack          = [Time || {tmo_wack, Time} <- ArgS],
@@ -128,13 +131,14 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
+  Pkg_life        = set_params(Pkg_life_Set, 180), % in sek
 
-  {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {0.3, 0.9}),
-  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {0.3, 0.9}),
+  {Wwv_tmo_start, Wwv_tmo_end}    = set_timeouts(Tmo_wv, {0.3, 2}),
+  {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {1, 2}),
   {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
 
   Blacklist                       = set_blacklist(Bll_addrs, []),
-  Routing_table                   = set_routing(Routing_addrs, NL_Protocol, ?BITS_ADDRESS_MAX),
+  Routing_table                   = set_routing(Routing_addrs, NL_Protocol, ?ADDRESS_MAX),
   Probability                     = set_params(Prob_set, {0.4, 0.9}),
 
   Max_hops        = set_params(Max_hops_Set, 8),
@@ -149,7 +153,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
 
   ShareID = #sm{share = Share},
-  share:put(ShareID, [{nl_protocol, NL_Protocol},
+  share:put(ShareID, [{pid, 0}, % TODO: maybe we should use this PID (outgo intreface)
+                      {nl_protocol, NL_Protocol},
                       {routing_table, Routing_table},
                       {local_address, Addr},
                       {max_address, Max_address},
@@ -163,10 +168,11 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {min_rtt, RTT},
                       {path_life, Path_life},
                       {neighbour_life, Neighbour_life},
-                      {max_pkg_id, ?BITS_ADDRESS_MAX},
+                      {max_pkg_id, ?PKG_ID_MAX},
                       {rtt, RTT + RTT/2},
                       {send_wv_dbl_tmo, Tmo_dbl_wv},
-                      {probability, Probability}]),
+                      {probability, Probability},
+                      {pkg_life, Pkg_life}]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
   ?TRACE(Mod_ID, "Routing Table ~p ~n", [Routing_table]),
@@ -179,6 +185,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ?TRACE(Mod_ID, "Wait Tmo_path ~p ~n", [WTmo_path]),
   ?TRACE(Mod_ID, "Path_life ~p ~n", [Path_life]),
   ?TRACE(Mod_ID, "Neighbour_life ~p ~n", [Neighbour_life]),
+  ?TRACE(Mod_ID, "Pkg_life ~p ~n", [Pkg_life]),
 
   NL_Protocol.
 
@@ -197,10 +204,10 @@ conf_fsm(Protocol) ->
   [{_, Decr}] = lists:filter(fun({PN, _})-> PN =:= Protocol end, ?PROTOCOL_CONF),
   Decr.
 
-conf_protocol(CurrentProtocol, Share, Protocol, Pid, Params, SMName) ->
+conf_protocol(CurrentProtocol, Share, Protocol, Params, SMName) ->
   ShareID = #sm{share = Share},
   if (CurrentProtocol =:= Protocol) ->
-      share:put(ShareID, [{pid, Pid}, {np,  Protocol}]);
+      share:put(ShareID, nlp, Protocol);
     true -> nothing
   end,
   parse_pr_params(Share, Params, Protocol),
@@ -258,6 +265,6 @@ set_routing(Routing_addrs, NL_Protocol, Default) ->
       Default;
     _ when (Routing_addrs =/= []) ->
       [TupleRouting] = Routing_addrs,
-      [{?BITS_ADDRESS_MAX, ?BITS_ADDRESS_MAX} | tuple_to_list(TupleRouting)];
+      [{?ADDRESS_MAX, ?ADDRESS_MAX} | tuple_to_list(TupleRouting)];
     _ -> Default
   end.

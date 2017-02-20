@@ -45,12 +45,13 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   Module =
   case P = parse_conf(ArgS, Share) of
-    csma_alh  -> fsm_csma_alh;
-    cut_lohi  -> fsm_t_lohi;
-    aut_lohi  -> fsm_t_lohi;
-    dacap     -> fsm_dacap;
-    _         -> io:format("!!! ERROR, no MAC protocol with the name ~p~n", [P]),
-                error
+    mac_burst  -> fsm_mac_burst;
+    csma_alh   -> fsm_csma_alh;
+    cut_lohi   -> fsm_t_lohi;
+    aut_lohi   -> fsm_t_lohi;
+    dacap      -> fsm_dacap;
+    _          -> io:format("!!! ERROR, no MAC protocol with the name ~p~n", [P]),
+                  error
   end,
   Roles = fsm_worker:role_info(Role_IDs, [at, alh]),
   if Module =:= error->
@@ -105,6 +106,8 @@ parse_conf(ArgS, Share) ->
       share:put(ShareID, u, U);
     _  -> nothing
   end,
+
+  share:put(ShareID, macp, Protocol),
   io:format("!!! Name of current protocol ~p~n", [Protocol]),
   Protocol.
 

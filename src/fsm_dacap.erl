@@ -204,10 +204,16 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, _} ->
       fsm:cast(SM, alh,  {send, {sync, "OK"} }),
       SM;
-    {async, PID, Tuple} ->
+    T = {async, PID, Tuple} ->
       %% recv, recvim
-      [SM1, Param] = process_rcv_flag(SM, PID, Tuple),
-      fsm:run_event(MM, SM1, Param);
+      [SMN, ParsedRecv] = parse_ll_msg(SM, T),
+      case ParsedRecv of
+        {_BPID, Flag, RTuple} ->
+          [SM1, Param] = process_rcv_flag(SMN, PID, Flag, Tuple, RTuple),
+          fsm:run_event(MM, SM1, Param);
+        _ ->
+          SMN
+      end;
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       process_tmstmp(SM, Tuple);
@@ -410,26 +416,31 @@ process_recv(SM, T) ->
 process_recv_helper(SM, Len, Src, 255, P1, P2, P3, P4, P5, Payl) ->
   [SM, {raw, {Len, Src, 255, P1, P2, P3, P4, P5, Payl}}];
 process_recv_helper(SM, Len, Src, Dst, P1, P2, P3, P4, P5, Payl) ->
-  [BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
-  Flag = nl_mac_hf:num2flag(BFlag, mac),
-  ShortTuple = {Len - LenAdd, Src, Dst, P1, P2, P3, P4, P5, Data},
-  process_recv_helper(SM, Flag, ShortTuple, Dst).
+  [BPid, BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
+  CurrentPid = ?PROTOCOL_MAC_PID(share:get(SM, macp)),
+    if CurrentPid == BPid ->
+      Flag = nl_mac_hf:num2flag(BFlag, mac),
+      ShortTuple = {Len - LenAdd, Src, Dst, P1, P2, P3, P4, P5, Data},
+      process_recv_helper(SM, BPid, Flag, ShortTuple, Dst);
+    true ->
+    [SM, nothing]
+  end.
 
-process_recv_helper(SM, Flag, ShortTuple, Dst) ->
+process_recv_helper(SM, BPid, Flag, ShortTuple, Dst) ->
   Local_addr = share:get(SM, local_address),
   case Flag of
     rts when Dst =:= Local_addr ->
-      [SM, {rts_fm, ShortTuple}];
+      [SM, BPid, {rts_fm, ShortTuple}];
     cts when Dst =:= Local_addr ->
-      [SM, {cts_fm, ShortTuple}];
+      [SM, BPid, {cts_fm, ShortTuple}];
     rts  ->
-      [SM, {rts_nfm, ShortTuple}];
+      [SM, BPid, {rts_nfm, ShortTuple}];
     cts  ->
-      [SM, {cts_nfm, ShortTuple}];
+      [SM, BPid, {cts_nfm, ShortTuple}];
     warn ->
-      [SM, {warn, ShortTuple}];
+      [SM, BPid, {warn, ShortTuple}];
     data ->
-      [SM, {data, ShortTuple}]
+      [SM, BPid, {data, ShortTuple}]
   end.
 
 process_sync(SM1, Req, Answer, {rcv_rts_fm, STuple}) when Req =:= "?CLOCK" ->
@@ -455,20 +466,17 @@ process_sync(SM1, Req, Answer, {rcv_rts_fm, STuple}) when Req =:= "?CLOCK" ->
 process_sync(SM1, _, _, _)  ->
   [SM1, {}].
 
-process_rcv_flag(SM, PID, Tuple) ->
-   State = SM#sm.state,
-  T = {async, PID, Tuple},
+process_rcv_flag(SM, PID, Flag, Tuple, RTuple) ->
+  State = SM#sm.state,
+  {pid, NPid} = PID,
   [H |_] = tuple_to_list(Tuple),
-  BPid=
-  case PID of
-    {pid, NPid} -> <<"p", (integer_to_binary(NPid))/binary>>
-  end,
-  [SMN, {Flag, RTuple}] = parse_ll_msg(SM, T),
+  BPid = <<"p", (integer_to_binary(NPid))/binary>>,
+
   {_, Src, _, TFlag, _, _, _, _, Data} = RTuple,
   case Tuple of
     {recvim, _, _, _, _, _, _, _, _, _} ->
       RcvPid = [BPid | tuple_to_list(RTuple) ],
-      fsm:cast(SMN, alh, {send, {async, list_to_tuple([H | RcvPid] )} });
+      fsm:cast(SM, alh, {send, {async, list_to_tuple([H | RcvPid] )} });
     {recvims, _, _, _, _, _, _, _, _, _} -> nothing
   end,
   Tmo_defer_trans = fsm:check_timeout(SM, tmo_defer_trans),
