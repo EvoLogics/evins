@@ -102,13 +102,28 @@ handle_event(MM, SM, Term) ->
         fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
         SM;
+    {rcv_ul, stop, discovery} ->
+        cast(Main_role, {send, {nl, ok}}),
+        fsm:clear_timeouts(SM#sm{state = ready_nl});
+    {rcv_ul, get, discovery, period} ->
+        Time = share:get(SM, discovery_perod),
+        TupleDiscovery = {nl, discovery, period, Time},
+        cast(Main_role, {send, TupleDiscovery}),
+        SM;
+    {rcv_ul, get, discovery, time} ->
+        Time = share:get(SM, time_discovery),
+        TupleDiscovery = {nl, discovery, time, Time},
+        cast(Main_role, {send, TupleDiscovery}),
+        SM;
     {rcv_ul, {get, configured, protocols}} ->
         ConfPr = share:get(SM, configured_protocols),
         ListPs = [  atom_to_list(NamePr) || {NamePr, _, _} <- ConfPr],
         BinP = list_to_binary(lists:join(",", ListPs)),
         cast(Main_role, {send, {nl, confprotocols, BinP}}),
         SM;
-    {rcv_ul, discovery} when State =:= ready_nl->
+    {rcv_ul, discovery, Discovery_perod, Time_discovery} when State =:= ready_nl->
+        share:put(SM, [{time_discovery,  Time_discovery},
+                       {discovery_perod, Discovery_perod}]),
         cast(Main_role, {send, {nl, ok}}),
         SM1 = start_discovery(SM),
         fsm:run_event(MM, SM1#sm{event = discovery_start}, {});
@@ -399,8 +414,13 @@ routing_to_bin(Routing_table) ->
 
 get_mux_commands() ->
     ["=========================================== MUX commands ===========================================\n",
-    "NL,discovery\t\t\t\t\t- Run discovery\n",
-    "NL,get,protocols,configured\t\t\t- Get list of currently configured protocolsfor MUX\n\n",
+    "NL,discovery,<Discovery_period>,<Time_discovery>\t- Run discovery, Time_discovery - whole discovery time in s,
+                                                    \t\t\tDiscovery_period - time for one discovery try in s
+                                                    \t\t\tTime_discovery / Discovery_period = Retry_count\n",
+    "NL,discovery,stop\t\t\t\t\t- Stop discovery\n\n"
+    "NL,get,protocols,configured\t\t\t\t- Get list of currently configured protocolsfor MUX\n\n",
+    "NL,get,discovery,period\t\t\t\t\t- Time for one discovery try in s\n\n",
+    "NL,get,discovery,time\t\t\t\t\t- Whole discovery time in s\n\n",
     "=========================================== Sync MUX responses =====================================\n",
     "NL,error,norouting\t\t\t\t- Sync error message, if no routing to dst exists (Static routing)\n",
     "NL,error,noprotocol\t\t\t\t- Sync error message, if no protocol specified\n",

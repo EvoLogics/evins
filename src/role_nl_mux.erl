@@ -83,12 +83,15 @@ try_send(L, Cfg) ->
       case re:run(L, "\n") of
         {match, [{_, _}]} ->
           case re:run(L,
-            "^(NL,set,protocol,|NL,discovery|NL,get,protocols,configured)(.*)",
+            "^(NL,set,protocol,|NL,discovery,stop|NL,discovery|NL,get,discovery||NL,get,protocols,configured)(.*)",
             [dotall, {capture, [1, 2], binary}]) of
 
             {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
             {match, [<<"NL,discovery">>, P]}  -> nl_discovery(P, Cfg);
+            {match, [<<"NL,discovery,stop">>, _P]}  -> [{rcv_ul, stop, discovery}];
+            {match, [<<"NL,get,discovery">>, P]}  -> nl_get_discovery(P, Cfg);
             {match, [<<"NL,get,protocols,configured">>, _P]}  -> [{rcv_ul, {get, configured, protocols}}];
+            {match, [<<"">>, _]}  -> [{rcv_ul, L}];
             nomatch -> [{rcv_ul, L}]
           end;
         nomatch ->
@@ -104,10 +107,23 @@ nl_recv_extract(P, L) ->
   catch error: _Reason -> {nl, error}
   end.
 
+nl_get_discovery(P, _Cfg) ->
+  try
+    {match, [Param]} = re:run(P,",([^,]*)\n", [dotall, {capture, [1], binary}]),
+    Flag =
+    case Param of
+      <<"period">> -> period;
+      <<"time">> -> time
+    end,
+
+    [{rcv_ul, get, discovery, Flag}]
+  catch error: _Reason -> [{nl, error}]
+  end.
+
 nl_discovery(P, _Cfg) ->
   try
-    {match, [_]} = re:run(P,"([^,]*)\n", [dotall, {capture, [1], binary}]),
-    [{rcv_ul, discovery}]
+    {match, [Discovery_perod, Time_discovery]} = re:run(P,",([^,]*),([^,]*)\n", [dotall, {capture, [1, 2], binary}]),
+    [{rcv_ul, discovery, nl_mac_hf:bin_to_num(Discovery_perod), nl_mac_hf:bin_to_num(Time_discovery)}]
   catch error: _Reason -> [{nl, error}]
   end.
 
