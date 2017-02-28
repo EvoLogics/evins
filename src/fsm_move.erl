@@ -82,10 +82,10 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
       ?TRACE(?ID, "MS: ~p~n", [MS]),
       lists:foldl(fun(M,SM_acc) ->
                       case M of
-                        [{tide, Tau, _Pr, _Amp, _Phy, _Period}] -> fsm:set_interval(SM_acc, {ms, Tau}, tide);
-                        [{circle, _C, _R, _V, Tau, _Phy}] -> fsm:set_interval(SM_acc, {ms, Tau}, circle);
-                        [{brownian,Tau,_,_,_,_,_,_,_,_,_}] -> fsm:set_interval(SM_acc, {ms, Tau}, brownian);
-                        [{rocking, Tau}] -> fsm:set_interval(SM_acc, {ms, Tau}, rocking);
+                        {tide, Tau, _Pr, _Amp, _Phy, _Period} -> fsm:set_interval(SM_acc, {ms, Tau}, tide);
+                        {circle, _C, _R, _V, Tau, _Phy} -> fsm:set_interval(SM_acc, {ms, Tau}, circle);
+                        {brownian,Tau,_,_,_,_,_,_,_,_,_} -> fsm:set_interval(SM_acc, {ms, Tau}, brownian);
+                        {rocking, Tau} -> fsm:set_interval(SM_acc, {ms, Tau}, rocking);
                         _ ->
                           ?TRACE(?ID, "Hmmm: ~p~n", [M]),
                           SM_acc
@@ -109,7 +109,7 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       fsm:broadcast(SM, pressure, {send, {nmea, DBS}}),
       fsm:broadcast(fsm:set_event(SM, eps), nmea, {send, {nmea, DBS}});
     circle ->
-      {circle, C, R, V, Tau, Phy} = share:get(SM#sm.share, circle),
+      {circle, C, R, V, Tau, Phy} = share:get(SM, circle),
       {XO, YO, ZO} = C,
       Phy1 = Phy + V*(Tau/1000)/R,
       %% X,Y,Z in ENU reference frame
