@@ -33,6 +33,7 @@
 
 -export([start/3, stop/1, to_term/3, from_term/2, ctrl/2, split/2]).
 -record(config, {filter, mode, waitsync, request, telegram, eol, ext_networking, pid}).
+-define(EOL_RECV, <<"\r\n">>).
 
 stop(_) -> ok.
 
@@ -53,7 +54,11 @@ from_term(Term, Cfg) ->
 from_term_helper(Tuple, _) when is_binary(Tuple) ->
   [Tuple];
 from_term_helper(Tuple, Cfg) when is_tuple(Tuple) ->
-  [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), Cfg#config.eol].
+  case Tuple of
+    {answer, T} -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
+    _ ->
+    [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), Cfg#config.eol]
+  end.
 
 split(L, Cfg) ->
   case re:run(L, "\r\n") of
@@ -83,7 +88,7 @@ try_send(L, Cfg) ->
       case re:run(L, "\n") of
         {match, [{_, _}]} ->
           case re:run(L,
-            "^(NL,set,protocol,|NL,discovery,stop|NL,discovery|NL,get,discovery||NL,get,protocols,configured)(.*)",
+            "^(NL,set,protocol,|NL,discovery,stop|NL,discovery|NL,get,discovery|NL,get,protocols,configured)(.*)",
             [dotall, {capture, [1, 2], binary}]) of
 
             {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
@@ -91,7 +96,6 @@ try_send(L, Cfg) ->
             {match, [<<"NL,discovery,stop">>, _P]}  -> [{rcv_ul, stop, discovery}];
             {match, [<<"NL,get,discovery">>, P]}  -> nl_get_discovery(P, Cfg);
             {match, [<<"NL,get,protocols,configured">>, _P]}  -> [{rcv_ul, {get, configured, protocols}}];
-            {match, [<<"">>, _]}  -> [{rcv_ul, L}];
             nomatch -> [{rcv_ul, L}]
           end;
         nomatch ->
