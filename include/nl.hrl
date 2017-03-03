@@ -151,106 +151,106 @@
 		       ]).
 
 -define(PROTOCOL_DESCR, ["\n",
-			 "staticr        - simple static routing, in config file f.e. {routing,{{7,1},2}}\r\n",
-			 "staticrack     - simple static routing with acknowledgement, in config file f.e. {routing,{{7,1},2}}\r\n",
-			 "sncfloodr      - sequence number controlled flooding\r\n",
-			 "sncfloodrack   - sequence number controlled flooding with acknowledgement\r\n",
-			 "sncfloodpfr    - pathfind and relay to destination\r\n",
-			 "sncfloodpfrack - pathfind and relay to destination with acknowledgement\r\n",
-			 "evoicrppfr     - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header\r\n"
-			 "evoicrppfrack  - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header with acknowledgement\r\n"
-			 "dblfloodpfr    - double flooding path finder, based on 3 waves, going through the network to find path\r\n"
-			 "dblfloodpfrack - double flooding path finder, based on 3 waves, going through the network to find path with acknowledgement\r\n"
-			 "dpfloodr       - dynamic probabilistic flooding\r\n"
-			 "dpfloodrack    - dynamic probabilistic flooding with acknowledgement\r\n"
-			 "icrpr          - information carrying routing protocol\r\n"
-			 "loarp          - low overhead routing protocol\r\n"
-			 "loarpack       - low overhead routing protocol with acknowledgement\r\n"
+			 "staticr        - simple static routing, in config file f.e. {routing,{{7,1},2}}\n",
+			 "staticrack     - simple static routing with acknowledgement, in config file f.e. {routing,{{7,1},2}}\n",
+			 "sncfloodr      - sequence number controlled flooding\n",
+			 "sncfloodrack   - sequence number controlled flooding with acknowledgement\n",
+			 "sncfloodpfr    - pathfind and relay to destination\n",
+			 "sncfloodpfrack - pathfind and relay to destination with acknowledgement\n",
+			 "evoicrppfr     - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header\n"
+			 "evoicrppfrack  - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header with acknowledgement\n"
+			 "dblfloodpfr    - double flooding path finder, based on 3 waves, going through the network to find path\n"
+			 "dblfloodpfrack - double flooding path finder, based on 3 waves, going through the network to find path with acknowledgement\n"
+			 "dpfloodr       - dynamic probabilistic flooding\n"
+			 "dpfloodrack    - dynamic probabilistic flooding with acknowledgement\n"
+			 "icrpr          - information carrying routing protocol\n"
+			 "loarp          - low overhead routing protocol\n"
+			 "loarpack       - low overhead routing protocol with acknowledgement\n"
 			]).
 
 
--define(HELP, ["\r\n",
-			 "=========================================== HELP ===========================================\r\n",
-			 "?\t\t\t\t\t\t- List of all commands\r\n",
-			 "\r\n\r\n\r\n",
-			 "===================================== Send and receive ======================================\r\n",
-			 "NL,send,[<Datalen>],<Dst>,<Data>\t\t- Send data, <Datalen> - optional\r\n",
-			 "NL,recv,<Datalen>,<Src>,<Dst>,<Data>\t\t- Recv data\r\n",
-			 "\r\n\r\n\r\n",
-			 "===================================== Immediate response =====================================\r\n",
-			 "NL,ok\t\t\t\t\t\t- Message was accepted and will be transmitted\r\n",
-			 "NL,error\t\t\t\t\t- Message was not accepted and will be dropped\r\n",
-			 "NL,error,norouting\t\t\t\t- Message was not accepted and will be dropped, no routing specified, only for static routing\r\n",
-			 "NL,busy\t\t\t\t\t\t- NL is busy, message will be dropped\r\n",
-			 "\r\n\r\n\r\n",
-			 "==================================== Data delivery reports ====================================\r\n",
-			 "NL,failed,<Src>,<Dst>\t\t\t\t- Message was not delivered to destination node\r\n",
-			 "NL,delivered,<Src>,<Dst>\t\t\t- Message was successfully delivered to destination node\r\n",
-			 "\r\n\r\n\r\n",
-			 "==================================== Set commands =====================================\r\n",
-			 "NL,set,address,<Addr>\t\t\t\t- Set local address\r\n",
-			 "NL,set,neighbours,<LA1>,<LA2>...\t\t- Set current neighbours\r\n",
-			 "NL,set,neighbours,[<Addr1>:<Integrity1>:<Rssi1>:<TimeLastUpdate1(ms)>],[<Addr2>:<Integrity2>:<Rssi2>:<TimeLastUpdate2(ms)>],.. - Set current neighbours with current channel characteristics\r\n",
-			 "NL,set,protocol,<Protocol_Name>\t\t\t- Set current routing protocol\r\n",
-			 "NL,set,routing,[<LA1>-><LA2>],[<LA3>-><LA4>],...,[<Default LA>]\t- Set routing only for static routing\r\n",
-			 "\r\n\r\n\r\n",
-			 "==================================== Information commands =====================================\r\n",
-			 "NL,get,address\t\t\t\t\t- Get local address\r\n",
-			 "NL,get,protocols\t\t\t\t- Get description of all protocols\r\n",
-			 "NL,get,protocol\t\t\t\t\t- Get current routing protocol\r\n",
-			 "NL,get,protocol,<Protocol_name>\t\t\t- Get description of specific protocol\r\n",
-			 "NL,get,neighbours\t\t\t\t- Get current  neighbours\r\n
+-define(HELP, ["\n",
+			 "=========================================== HELP ===========================================\n",
+			 "?\t\t\t\t\t\t- List of all commands\n",
+			 "\n\n\n",
+			 "===================================== Send and receive ======================================\n",
+			 "NL,send,[<Datalen>],<Dst>,<Data>\t\t- Send data, <Datalen> - optional\n",
+			 "NL,recv,<Datalen>,<Src>,<Dst>,<Data>\t\t- Recv data\n",
+			 "\n\n\n",
+			 "===================================== Immediate response =====================================\n",
+			 "NL,ok\t\t\t\t\t\t- Message was accepted and will be transmitted\n",
+			 "NL,error\t\t\t\t\t- Message was not accepted and will be dropped\n",
+			 "NL,error,norouting\t\t\t\t- Message was not accepted and will be dropped, no routing specified, only for static routing\n",
+			 "NL,busy\t\t\t\t\t\t- NL is busy, message will be dropped\n",
+			 "\n\n\n",
+			 "==================================== Data delivery reports ====================================\n",
+			 "NL,failed,<Src>,<Dst>\t\t\t\t- Message was not delivered to destination node\n",
+			 "NL,delivered,<Src>,<Dst>\t\t\t- Message was successfully delivered to destination node\n",
+			 "\n\n\n",
+			 "==================================== Set commands =====================================\n",
+			 "NL,set,address,<Addr>\t\t\t\t- Set local address\n",
+			 "NL,set,neighbours,<LA1>,<LA2>...\t\t- Set current neighbours\n",
+			 "NL,set,neighbours,[<Addr1>:<Integrity1>:<Rssi1>:<TimeLastUpdate1(ms)>],[<Addr2>:<Integrity2>:<Rssi2>:<TimeLastUpdate2(ms)>],.. - Set current neighbours with current channel characteristics\n",
+			 "NL,set,protocol,<Protocol_Name>\t\t\t- Set current routing protocol\n",
+			 "NL,set,routing,[<LA1>-><LA2>],[<LA3>-><LA4>],...,[<Default LA>]\t- Set routing only for static routing\n",
+			 "\n\n\n",
+			 "==================================== Information commands =====================================\n",
+			 "NL,get,address\t\t\t\t\t- Get local address\n",
+			 "NL,get,protocols\t\t\t\t- Get description of all protocols\n",
+			 "NL,get,protocol\t\t\t\t\t- Get current routing protocol\n",
+			 "NL,get,protocol,<Protocol_name>\t\t\t- Get description of specific protocol\n",
+			 "NL,get,neighbours\t\t\t\t- Get current  neighbours\n
 			 \t\t\tAnswer:
-			 \t\t\tNL,neighbours,[<Addr1>:<Integrity1>:<Rssi1>:<TimeLastUpdate1(ms)>],[<Addr2>:<Integrity2>:<Rssi2>:<TimeLastUpdate2(ms)>],..\r\n\r\n"
-			 "NL,get,routing\t\t\t\t\t- Get current routing table\r\n",
-			 "NL,get,state\t\t\t\t\t- Get current  state of protocol (sm)\r\n",
-			 "NL,get,states\t\t\t\t\t- Get last 50  states of protocol (sm)\r\n",
-			 "\r\n\r\n\r\n",
-			 "======================== Statistics commands for protocols of all types ========================\r\n",
-			 "NL,get,stats,neighbours\t\t\t\t- Get statistics of all neighbours from start of program till the current time\r\n
+			 \t\t\tNL,neighbours,[<Addr1>:<Integrity1>:<Rssi1>:<TimeLastUpdate1(ms)>],[<Addr2>:<Integrity2>:<Rssi2>:<TimeLastUpdate2(ms)>],..\n\n"
+			 "NL,get,routing\t\t\t\t\t- Get current routing table\n",
+			 "NL,get,state\t\t\t\t\t- Get current  state of protocol (sm)\n",
+			 "NL,get,states\t\t\t\t\t- Get last 50  states of protocol (sm)\n",
+			 "\n\n\n",
+			 "======================== Statistics commands for protocols of all types ========================\n",
+			 "NL,get,stats,neighbours\t\t\t\t- Get statistics of all neighbours from start of program till the current time\n
 			 \t\t\tAnswer:
-			 \t\t\t<Role : relay or source><Neighbours><Duration find path><Count found this path><Total count try findpath>\r\n"
-			 "\r\n",
-			 "================== Statistics commands only for protocols of path finding type ==================\r\n",
-			 "NL,get,stats,paths\t\t\t\t- Get statistics of all paths from start of program till the current time\r\n
+			 \t\t\t<Role : relay or source><Neighbours><Duration find path><Count found this path><Total count try findpath>\n"
+			 "\n",
+			 "================== Statistics commands only for protocols of path finding type ==================\n",
+			 "NL,get,stats,paths\t\t\t\t- Get statistics of all paths from start of program till the current time\n
 			 \t\t\tAnswer:
-			 \t\t\t<Role : relay or source><Path><Duration find path><Count found this path><Total count try findpath>\r\n"
-			 "\r\n",
-			 "========================= Statistics commands only for protocols with ack ========================\r\n",
-			 "NL,get,stats,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time\r\n
+			 \t\t\t<Role : relay or source><Path><Duration find path><Count found this path><Total count try findpath>\n"
+			 "\n",
+			 "========================= Statistics commands only for protocols with ack ========================\n",
+			 "NL,get,stats,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time\n
 			 \t\t\tAnswer:
 			 \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
-			 "\r\n\r\n\r\n",
+			 "\n\n\n",
 			 "========================= Clear commands ========================\n",
-			 "NL,delete,neighbour,<Addr>\t\t\t-Remove a neighbour from the current neighbour list and updates the routing table\r\n",
-			 "NL,clear,stats,data\t\t\t\t-Clear the data statistics\r\n"
-			 "\r\n\r\n\r\n",
-			 "========================= Reset commands ========================\r\n",
-			 "NL,reset,state\t\t\t\t\t-Revert fsm state to idle state\r\n"
+			 "NL,delete,neighbour,<Addr>\t\t\t-Remove a neighbour from the current neighbour list and updates the routing table\n",
+			 "NL,clear,stats,data\t\t\t\t-Clear the data statistics\n"
+			 "\n\n\n",
+			 "========================= Reset commands ========================\n",
+			 "NL,reset,state\t\t\t\t\t-Revert fsm state to idle state\n"
 			]).
 
 -define(STATE_DESCR,
-	[{idle,	"Ready to proccess data\r\n"},
-	 {swv,	"Sending data\r\n"},
-	 {rwv,	"Receiving data\r\n"},
-	 {wack,	"Waiting for acknowledgement\r\n"},
-	 {sack,	"Sending acknowledgement\r\n"},
-	 {wpath,"Waiting for path\r\n"},
-	 {spath,"Sending for path\r\n"}]).
+	[{idle,	"Ready to proccess data\n"},
+	 {swv,	"Sending data\n"},
+	 {rwv,	"Receiving data\n"},
+	 {wack,	"Waiting for acknowledgement\n"},
+	 {sack,	"Sending acknowledgement\n"},
+	 {wpath,"Waiting for path\n"},
+	 {spath,"Sending for path\n"}]).
 
 -define(PROTOCOL_SPEC(P),
 	lists:foldr(fun(X,A) ->
 			    case X of
-				stat when P#pr_conf.stat 	  -> ["Type\t\t: Static Routing\r\n"  | A];
-				ry_only when P#pr_conf.ry_only 	  -> ["Type\t\t: Only relay\r\n"  | A];
-				ack 	when P#pr_conf.ack 	  -> ["Ack\t\t: true\r\n"  | A];
-				ack	when not P#pr_conf.ack 	  -> ["Ack\t\t: false\r\n" | A];
-				br_na	when P#pr_conf.br_na 	  -> ["Broadcast\t: not available\r\n" | A];
-				br_na 	when not P#pr_conf.br_na  -> ["Broadcast\t: available\r\n" | A];
-				pf 	when P#pr_conf.pf	  -> ["Type\t\t: Path finder\r\n" | A];
-				evo 	when P#pr_conf.evo	  -> ["Specifics\t: Evologics DMACE Rssi and Integrity\r\n" | A];
-				dbl 	when P#pr_conf.dbl	  -> ["Specifics\t: 2 waves are used to find path, find two way links\r\n" | A];
-				rm 	when P#pr_conf.rm	  -> ["Route maintenance\r\n" | A];
+				stat when P#pr_conf.stat 	  -> ["Type\t\t: Static Routing\n"  | A];
+				ry_only when P#pr_conf.ry_only 	  -> ["Type\t\t: Only relay\n"  | A];
+				ack 	when P#pr_conf.ack 	  -> ["Ack\t\t: true\n"  | A];
+				ack	when not P#pr_conf.ack 	  -> ["Ack\t\t: false\n" | A];
+				br_na	when P#pr_conf.br_na 	  -> ["Broadcast\t: not available\n" | A];
+				br_na 	when not P#pr_conf.br_na  -> ["Broadcast\t: available\n" | A];
+				pf 	when P#pr_conf.pf	  -> ["Type\t\t: Path finder\n" | A];
+				evo 	when P#pr_conf.evo	  -> ["Specifics\t: Evologics DMACE Rssi and Integrity\n" | A];
+				dbl 	when P#pr_conf.dbl	  -> ["Specifics\t: 2 waves are used to find path, find two way links\n" | A];
+				rm 	when P#pr_conf.rm	  -> ["Route maintenance\n" | A];
 				_ 				  -> A
 			    end end, [], ?LIST_ALL_PARAMS)).
 

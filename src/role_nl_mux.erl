@@ -32,13 +32,16 @@
 -include("nl.hrl").
 
 -export([start/3, stop/1, to_term/3, from_term/2, ctrl/2, split/2]).
--record(config, {filter, mode, waitsync, request, telegram, eol, ext_networking, pid}).
+%-record(config, {filter, mode, waitsync, request, telegram, eol, ext_networking, pid}).
 -define(EOL_RECV, <<"\r\n">>).
 
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-  Cfg = #config{filter = nl, mode = data, waitsync = no, request = "", telegram = "", eol = "\n", ext_networking = no, pid = 0},
+  %Cfg = #config{filter = nl, mode = data, waitsync = no, request = "", telegram = "", eol = "\n", ext_networking = no, pid = 0},
+  Cfg = #{filter => nl, mode => data, waitsync => no, request => "",
+          telegram => "", eol => "\n", ext_networking => no, pid => 0},
+
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
 ctrl(_,Cfg) -> Cfg.
@@ -49,7 +52,19 @@ to_term(Tail, Chunk, Cfg) ->
 from_term(Term, Cfg) ->
   Tuple = from_term_helper(Term, Cfg),
   Bin = list_to_binary(Tuple),
-  [Bin, Cfg].
+  #{waitsync := CfgWaitsync} = Cfg,
+  WaitSync =
+  case re:run(Bin, "\r\n") of
+    {match, [{_, _}]} -> CfgWaitsync;
+    nomatch when Bin =:= <<"?\n">> -> multiline;
+    nomatch ->
+      case re:run(Bin, "^(NL,get,states|NL,get,protocol,|NL,get,stats,)(.*?)\n", [dotall, {capture, [1, 2], binary}]) of
+        {match, [_, _]} -> multiline;
+        nomatch -> CfgWaitsync
+      end
+  end,
+
+  [Bin, Cfg#{waitsync => WaitSync}].
 
 from_term_helper(Tuple, _) when is_binary(Tuple) ->
   [Tuple];
@@ -57,7 +72,8 @@ from_term_helper(Tuple, Cfg) when is_tuple(Tuple) ->
   case Tuple of
     {answer, T} -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
     _ ->
-    [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), Cfg#config.eol]
+    #{eol := EOL} = Cfg,
+    [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), EOL]
   end.
 
 split(L, Cfg) ->
@@ -66,8 +82,8 @@ split(L, Cfg) ->
     nomatch -> try_send(L, Cfg)
   end.
 
-
 try_recv(L, Cfg) ->
+  #{waitsync := Waitsync} = Cfg,
   case re:run(L,"^(NL,ok|NL,busy|NL,error|NL,protocol,|NL,recv,|NL,neighbours,|NL,routing,|NL,delivered,|NL,failed,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
     {match, [<<"NL,ok">>, _P, L1]}   -> [ {rcv_ll, {sync, L}} | split(L1, Cfg)];
     {match, [<<"NL,busy">>, _P, L1]}   -> [ {rcv_ll, {sync, L}} | split(L1, Cfg)];
@@ -78,13 +94,19 @@ try_recv(L, Cfg) ->
     {match, [<<"NL,failed,">>, _P, L1]}    -> [ {rcv_ll, {failed, L}} | split(L1, Cfg)];
     {match, [<<"NL,recv,">>, P, L1]}       -> [ nl_recv_extract(P, L) | split(L1, Cfg)];
     {match, [<<"NL,neighbours,">>, P, L1]} -> [ nl_neighbours_extract(L, P, Cfg)| split(L1, Cfg)];
-    nomatch ->  [{rcv_ll, L}]
+    nomatch when Waitsync == multiline ->
+      case re:split(L,"\n\r\n",[{parts,2}]) of
+        [_, L1] -> [{rcv_ll, L} | split(L1, Cfg#{waitsync => no})];
+        _ -> [{rcv_ll, L}]
+      end;
+    nomatch ->  [{nl, error}]
   end.
 
 try_send(L, Cfg) ->
   case L of
       <<"?\n">>  -> [ {rcv_ul, {help, L}} ];
       _ ->
+      #{waitsync := Waitsync} = Cfg,
       case re:run(L, "\n") of
         {match, [{_, _}]} ->
           case re:run(L,
@@ -96,19 +118,12 @@ try_send(L, Cfg) ->
             {match, [<<"NL,discovery,stop">>, _P]}  -> [{rcv_ul, stop, discovery}];
             {match, [<<"NL,get,discovery">>, P]}  -> nl_get_discovery(P, Cfg);
             {match, [<<"NL,get,protocols,configured">>, _P]}  -> [{rcv_ul, {get, configured, protocols}}];
+            nomatch when Waitsync == multiline -> [{more, L}];
             nomatch -> [{rcv_ul, L}]
           end;
-        nomatch ->
-          [{more, L}]
+        nomatch when Waitsync == multiline -> [{more, L}];
+        nomatch -> [{more, L}]
       end
-  end.
-
-
-nl_recv_extract(P, L) ->
-   try
-    {match, [_Len, _Src, Dst, Data]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
-    {rcv_ll, {recv, nl_mac_hf:bin_to_num(Dst), Data, L}}
-  catch error: _Reason -> {nl, error}
   end.
 
 nl_get_discovery(P, _Cfg) ->
@@ -143,6 +158,14 @@ nl_set_protocol(P, _Cfg) ->
   catch error: _Reason -> [{nl, error}]
   end.
 
+
+
+nl_recv_extract(P, L) ->
+   try
+    {match, [_Len, _Src, Dst, Data]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    {rcv_ll, {recv, nl_mac_hf:bin_to_num(Dst), Data, L}}
+  catch error: _Reason -> {nl, error}
+  end.
 
 nl_neighbours_extract(L, NeighboursBin, _Cfg) ->
   try
