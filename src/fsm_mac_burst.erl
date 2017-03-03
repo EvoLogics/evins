@@ -96,26 +96,26 @@ handle_idle(_MM, SM, _Term) ->
   end.
 
 handle_send(_MM, SM, Term) ->
-Answer_timeout = fsm:check_timeout(SM, answer_timeout),
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Term of
     {try_send, {sendburst, AT = {at, _PID, _, _, _}} } when Answer_timeout == false ->
       SM1 = nl_mac_hf:send_mac(SM, at, data, AT),
       SM1#sm{event = eps};
-    {try_send, {sendim, {at, PID, SENDIM, Dst, _, Data}} } when Answer_timeout == false ->
+    {try_send, {sendburst, {at, _PID, _, _, _}} } ->
+      fsm:set_timeout(SM, {ms, 500}, Term);
+    {try_send, {sendim, {at, PID, _SENDIM, Dst, _, Data}} } when Answer_timeout == false ->
       [_, Flag, _, _, _, _, _] = nl_mac_hf:extract_payload_nl_flag(Data),
       NLFlag = nl_mac_hf:num2flag(Flag, nl),
-      ACK =
-      if NLFlag == data ->
-        LAsyncs = share:get(SM, notacked_msg),
-        share:put(SM, notacked_msg, [Dst | LAsyncs]),
-        ack;
-      true -> noack end,
-
-      SM1 = nl_mac_hf:send_mac(SM, at, data, {at, PID, SENDIM, Dst, ACK, Data} ),
-      SM1#sm{event = eps};
-
-    {try_send, _} ->
-      fsm:set_timeout(SM, {ms, 500}, Term);
+      case NLFlag of
+      data when Answer_timeout == true ->
+        fsm:set_timeout(SM, {ms, 500}, Term);
+      data ->
+        AT = {at, PID, "*SEND", Dst, Data},
+        SM1 = nl_mac_hf:send_mac(SM, at, data, AT),
+        SM1#sm{event = eps};
+      _ ->
+        SM#sm{event = eps}
+      end;
     _ ->
       SM#sm{event = eps}
   end.
