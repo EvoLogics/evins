@@ -84,10 +84,11 @@ split(L, Cfg) ->
 
 try_recv(L, Cfg) ->
   #{waitsync := Waitsync} = Cfg,
-  case re:run(L,"^(NL,ok|NL,busy|NL,error|NL,protocol,|NL,recv,|NL,neighbours,|NL,routing,|NL,delivered,|NL,failed,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
+  case re:run(L,"^(NL,ok|NL,busy|NL,error|NL,protocol,|NL,recv,|NL,neighbours,|NL,routing,|NL,delivered,|NL,failed,|NL,address,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
     {match, [<<"NL,ok">>, _P, L1]}   -> [ {rcv_ll, {sync, L}} | split(L1, Cfg)];
     {match, [<<"NL,busy">>, _P, L1]}   -> [ {rcv_ll, {sync, L}} | split(L1, Cfg)];
     {match, [<<"NL,error">>, _P, L1]}   -> [ {rcv_ll, {sync, L}} | split(L1, Cfg)];
+    {match, [<<"NL,address,">>, _P, L1]}   -> [ {rcv_ll, {sync, L}} | split(L1, Cfg)];
     {match, [<<"NL,protocol,">>, P, L1]}   -> [nl_protocol_extract(P, Cfg) | split(L1, Cfg)];
     {match, [<<"NL,routing,">>, _P, L1]}   -> [ {rcv_ll, {routing, L}} | split(L1, Cfg)];
     {match, [<<"NL,delivered,">>, _P, L1]} -> [ {rcv_ll, {delivered, L}} | split(L1, Cfg)];
