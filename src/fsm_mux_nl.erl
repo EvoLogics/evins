@@ -83,7 +83,8 @@ handle_event(MM, SM, Term) ->
   Waiting_neighbours = share:get(SM, waiting_neighbours),
   Setting_routing = share:get(SM, setting_routing),
   Waiting_sync = share:get(SM, waiting_sync),
-
+  Discovery_perod_tmo = fsm:check_timeout(SM, discovery_perod_tmo),
+  
   case Term of
     {timeout, discovery_perod_tmo} ->
         Discovery_perod = share:get(SM, discovery_perod),
@@ -122,6 +123,9 @@ handle_event(MM, SM, Term) ->
         BinP = list_to_binary(lists:join(",", ListPs)),
         TupleProtocols = {answer, {nl, confprotocols, BinP}},
         cast(Main_role, {send, TupleProtocols}),
+        SM;
+    {rcv_ul, discovery, _, _} when Discovery_perod_tmo =:= true->
+        cast(Main_role, {send, {answer, {nl, busy}}} ),
         SM;
     {rcv_ul, discovery, Discovery_perod, Time_discovery} when State =:= ready_nl->
         share:put(SM, [{time_discovery,  Time_discovery},
