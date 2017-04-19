@@ -46,7 +46,8 @@
                  [{tide, moving},
                   {brownian, moving},
                   {circle, moving},
-                  {rocking, moving}
+                  {rocking, moving},
+                  {stationary, moving}
                  ]},
                 {alarm,
                  []}]).
@@ -78,14 +79,16 @@ handle_event(MM, SM, Term) ->
 handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
   case Event of
     initial -> 
-      MS = [share:get(SM, T) || T <- [circle, brownian, tide, rocking]],
+      MS = [share:get(SM, T) || T <- [movement, tide, rocking]],
       ?TRACE(?ID, "MS: ~p~n", [MS]),
       lists:foldl(fun(M,SM_acc) ->
                       case M of
-                        [{tide, Tau, _Pr, _Amp, _Phy, _Period}] -> fsm:set_interval(SM_acc, {ms, Tau}, tide);
-                        [{circle, _C, _R, _V, Tau, _Phy}] -> fsm:set_interval(SM_acc, {ms, Tau}, circle);
-                        [{brownian,Tau,_,_,_,_,_,_,_,_,_}] -> fsm:set_interval(SM_acc, {ms, Tau}, brownian);
-                        [{rocking, Tau}] -> fsm:set_interval(SM_acc, {ms, Tau}, rocking);
+                        {tide, Tau, _Pr, _Amp, _Phy, _Period} -> fsm:set_interval(SM_acc, {ms, Tau}, tide);
+                        {stationary, _, _, _} -> fsm:set_timeout(SM_acc, {ms, 1}, stationary);
+                        {stationary, _, _, _, Tau} -> fsm:set_interval(SM_acc, {ms, Tau}, stationary);
+                        {circle, _C, _R, _V, Tau, _Phy} -> fsm:set_interval(SM_acc, {ms, Tau}, circle);
+                        {brownian,Tau,_,_,_,_,_,_,_,_,_} -> fsm:set_interval(SM_acc, {ms, Tau}, brownian);
+                        {rocking, Tau} -> fsm:set_interval(SM_acc, {ms, Tau}, rocking);
                         _ ->
                           ?TRACE(?ID, "Hmmm: ~p~n", [M]),
                           SM_acc
@@ -108,8 +111,15 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       DBS = {dbs, Depth1},
       fsm:broadcast(SM, pressure, {send, {nmea, DBS}}),
       fsm:broadcast(fsm:set_event(SM, eps), nmea, {send, {nmea, DBS}});
+    stationary ->
+      P = case share:get(SM, movement) of
+            {stationary, X, Y, Z, _Tau} -> [X, Y, Z];
+            {stationary, X, Y, Z} -> [X, Y, Z]
+          end,
+      broadcast_position(SM, P),
+      fsm:set_event(SM, eps);
     circle ->
-      {circle, C, R, V, Tau, Phy} = share:get(SM#sm.share, circle),
+      {circle, C, R, V, Tau, Phy} = share:get(SM, movement),
       {XO, YO, ZO} = C,
       Phy1 = Phy + V*(Tau/1000)/R,
       %% X,Y,Z in ENU reference frame
@@ -120,7 +130,7 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       share:put(SM, circle, {circle, C, R, V, Tau, Phy1}),
       fsm:set_event(SM, eps);
     brownian ->
-      {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, X, Y, Z} = share:get(SM, brownian),
+      {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, X, Y, Z} = share:get(SM, movement),
       Xn = geometry:brownian_walk(XMin, XMax, X),
       Yn = geometry:brownian_walk(YMin, YMax, Y),
       Zn = geometry:brownian_walk(ZMin, ZMax, Z),

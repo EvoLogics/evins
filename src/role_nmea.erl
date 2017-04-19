@@ -84,7 +84,7 @@ checksum([H|T]) -> H bxor checksum(T);
 checksum(<<H,T/binary>>) -> H bxor checksum(T).
 
 split(L, Cfg) ->
-  case re:split(L,"\r\n",[{parts,2}]) of
+  case re:split(L,"\r?\n",[{parts,2}]) of
     [Sentense,Rest] ->
       %% NMEA checksum might be optional
       case re:run(Sentense,"^\\\$((P|..)([^,]+),([^*]+))(\\\*(..)|)",[dotall,{capture,[1,3,4,6],binary}]) of

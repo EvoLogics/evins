@@ -29,7 +29,7 @@
 -include("fsm.hrl").
 
 -export([init/0, delete/1, get/2, get/3, get/4, put/2, put/3, put/4, clean/2]).
--export([update_with/3, update_with/4, update_with/5]).
+-export([update_with/3, update_with/4, update_with/5, match/2]).
          
 init() ->
   ets:new(table, [ordered_set, public]).
@@ -80,3 +80,6 @@ clean(SM, Category_and_Key) ->
   ets:match_delete(SM#sm.share, {{Category_and_Key, '_'}, '_'}),
   ets:match_delete(SM#sm.share, {Category_and_Key, '_'}),
   SM.
+
+match(SM, Pattern) ->
+  ets:match(SM#sm.share, Pattern).
