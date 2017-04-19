@@ -178,7 +178,7 @@ answer_split(L,Wait,Request,Pid) ->
           recv_extract(L,Recv,binary_to_integer(BLen),Tail,Wait,Request,Pid);
         nomatch ->
           case re:run(L,"^(RECVSTART|RECVEND,|RECVFAILED,|SEND[^,]*,|BITRATE,|RADDR,|SRCLEVEL,|PHYON|PHYOFF|USBL[^,]*,"
-                      "|DROPCNT|DELIVERED|FAILED|EXPIRED|CANCELED)(.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
+                      "|ECLK,|DROPCNT,|DELIVERED|FAILED|EXPIRED|CANCELED)(.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
             {match, [<<"RECVSTART">>,<<>>,L1]} -> [{async, {recvstart}}  | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVEND,">>,P,L1]}     -> [recvend_extract(P)    | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVFAILED,">>,P,L1]}  -> [recvfailed_extract(P) | answer_split(L1,Wait,Request,Pid)];
@@ -198,6 +198,7 @@ answer_split(L,Wait,Request,Pid) ->
             {match, [<<"EXPIRED">>,P,L1]}      -> [expired_extract(P)    | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"SRCLEVEL,">>,P,L1]}    -> [srclevel_extract(P)   | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"DROPCNT,">>,P,L1]}     -> [dropcnt_extract(P)    | answer_split(L1,Wait,Request,Pid)];
+            {match, [<<"ECLK,">>,P,L1]}        -> [eclk_extract(P)       | answer_split(L1,Wait,Request,Pid)];
             {match, [H, P, L1]}                -> [{error, {wrongAsync, binary_to_list(list_to_binary([H, P]))}} | answer_split(L1,Wait,Request,Pid)];
             nomatch ->
               case re:run(L,"^(ERROR|BUSY) (.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
@@ -374,6 +375,28 @@ dropcnt_extract(P) ->
     {async,{dropcnt,Val}}
   catch
     error:_ -> {error, {parseError, dropcnt, binary_to_list(P)}}
+  end.
+
+%% ECLK,mono,phyclock,physteer,bite,gps
+%% gps, mono %f in seconds
+%% phy_clock %d in microseconds
+%% phy_steer %d in nanoseconds per second
+%% bite 0-7 bitmask, bit0 - atomic clock bite, bit1 - gps event, bit2 - power event
+eclk_extract(P) ->
+  try
+    {match, [BMono,BClk,BSteer,BFlag,BGPS]} = re:run(P,"^([^,]*),([^,]*),([^,]*),([^,]*)$",[dotall,{capture,[1,2,3,4,5],binary}]),
+    [Mono, GPS] = [round(binary_to_float(X)*1000000) || X <- [BMono, BGPS]],
+    [Clk, Steer, Flag] = [binary_to_integer(X) || X <- [BClk, BSteer, BFlag]],
+    <<_:5,Power:1,GPSevent:1,Bite:1>> = <<Flag:8>>,
+    Event = case {Power, GPSevent, Bite} of
+              {1, _, _} -> power;
+              {_, 1, _} -> gps;
+              {_, _, 1} -> unlocked;
+              {_, _, 0} -> locked
+            end,
+    {async,{eclk,Mono,Clk,Steer,Event,GPS}}
+  catch
+    error:_ -> {error, {parseError, eclk, binary_to_list(P)}}
   end.
 
 %% SENDEND,addr,type,usec,dur

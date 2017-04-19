@@ -77,12 +77,14 @@ stop(_SM)      -> ok.
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
   ?TRACE(?ID, "state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.state, Term]),
+
   Main_role = share:get(SM, main_role),
   State = SM#sm.state,
   Waiting_neighbours = share:get(SM, waiting_neighbours),
   Setting_routing = share:get(SM, setting_routing),
   Waiting_sync = share:get(SM, waiting_sync),
-  %io:format("++  state ~p Ev ~p term ~p~n", [SM#sm.state, SM#sm.event,  Term]),
+  Discovery_perod_tmo = fsm:check_timeout(SM, discovery_perod_tmo),
+  
   case Term of
     {timeout, discovery_perod_tmo} ->
         Discovery_perod = share:get(SM, discovery_perod),
@@ -102,21 +104,40 @@ handle_event(MM, SM, Term) ->
         fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
         SM;
+    {rcv_ul, stop, discovery} ->
+        cast(Main_role, {send, {answer, {nl, ok}}} ),
+        fsm:clear_timeouts(SM#sm{state = ready_nl});
+    {rcv_ul, get, discovery, period} ->
+        Time = share:get(SM, discovery_perod),
+        TupleDiscovery = {answer, {nl, discovery, period, Time}},
+        cast(Main_role, {send, TupleDiscovery}),
+        SM;
+    {rcv_ul, get, discovery, time} ->
+        Time = share:get(SM, time_discovery),
+        TupleDiscovery = {answer, {nl, discovery, time, Time}},
+        cast(Main_role, {send, TupleDiscovery}),
+        SM;
     {rcv_ul, {get, configured, protocols}} ->
         ConfPr = share:get(SM, configured_protocols),
         ListPs = [  atom_to_list(NamePr) || {NamePr, _, _} <- ConfPr],
         BinP = list_to_binary(lists:join(",", ListPs)),
-        cast(Main_role, {send, {nl, confprotocols, BinP}}),
+        TupleProtocols = {answer, {nl, confprotocols, BinP}},
+        cast(Main_role, {send, TupleProtocols}),
         SM;
-    {rcv_ul, discovery} when State =:= ready_nl->
-        cast(Main_role, {send, {nl, ok}}),
+    {rcv_ul, discovery, _, _} when Discovery_perod_tmo =:= true->
+        cast(Main_role, {send, {answer, {nl, busy}}} ),
+        SM;
+    {rcv_ul, discovery, Discovery_perod, Time_discovery} when State =:= ready_nl->
+        share:put(SM, [{time_discovery,  Time_discovery},
+                       {discovery_perod, Discovery_perod}]),
+        cast(Main_role, {send, {answer, {nl, ok}}}),
         SM1 = start_discovery(SM),
         fsm:run_event(MM, SM1#sm{event = discovery_start}, {});
     {rcv_ul, {set, protocol, Protocol}} when State =/= discovery ->
         % clear everything and set current protocol
         set_protocol(SM, Protocol);
     {rcv_ul, <<"\n">>} ->
-        cast(Main_role, {send, {nl, error} }),
+        cast(Main_role, {send, {answer, {nl, error}} }),
         SM;
     {rcv_ul, {help, NLCommand}} ->
         ConfPr = share:get(SM, configured_protocols),
@@ -125,13 +146,13 @@ handle_event(MM, SM, Term) ->
             cast(Main_role, {send, list_to_binary(get_mux_commands())}),
             cast(TmpRole, {send, NLCommand});
         true ->
-            cast(Main_role, {send, {nl, error}})
+            cast(Main_role, {send, {answer, {nl, error}}} )
         end,
         SM;
     {rcv_ul, NLCommand} when State =/= discovery ->
         process_ul_command(SM, NLCommand);
     {rcv_ul, _} ->
-        cast(Main_role, {send, {nl, busy}}),
+        cast(Main_role, {send, {answer, {nl, busy}}}),
         SM;
     {rcv_ll, {delivered, L}} ->
         cast(Main_role, {send, L}),
@@ -206,7 +227,7 @@ handle_event(MM, SM, Term) ->
         SM;
     {nl, error} when State =/= discovery,
                      Waiting_neighbours == false ->
-        cast(Main_role, {send, Term}),
+        cast(Main_role, {send, {answer, Term} }),
         SM;
     UUg ->
         ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
@@ -258,10 +279,10 @@ set_protocol(SM, Protocol) ->
     case share:get(SM, Protocol) of
         nothing ->
             % this protocol is not configured yet
-            cast(Role, {send, {nl, error, noprotocol} }),
+            cast(Role, {send, {answer, {nl, error, noprotocol} } }),
             SM;
         _ ->
-            cast(Role, {send, {nl, ok} }),
+            cast(Role, {send, {answer, {nl, ok}}}),
             share:put(SM, current_protocol, Protocol),
             fsm:clear_timeouts(SM)
     end.
@@ -277,7 +298,7 @@ process_ul_command(SM, NLCommand) ->
             {RoleProtocol, _} = ConfProtocol,
             cast(RoleProtocol, {send, NLCommand} );
         false ->
-            cast(Role, {send, {nl, error, noprotocol} })
+            cast(Role, {send, {answer, {nl, error, noprotocol}}})
     end,
     SM.
 
@@ -398,13 +419,18 @@ routing_to_bin(Routing_table) ->
     list_to_binary(lists:join(",", Path)).
 
 get_mux_commands() ->
-    ["=========================================== MUX commands ===========================================\n",
-    "NL,discovery\t\t\t\t\t- Run discovery\n",
-    "NL,get,protocols,configured\t\t\t- Get list of currently configured protocolsfor MUX\n\n",
-    "=========================================== Sync MUX responses =====================================\n",
-    "NL,error,norouting\t\t\t\t- Sync error message, if no routing to dst exists (Static routing)\n",
-    "NL,error,noprotocol\t\t\t\t- Sync error message, if no protocol specified\n",
-    "\n\n\n"].
+    ["=========================================== MUX commands ===========================================\r\n",
+    "NL,discovery,<Discovery_period>,<Time_discovery>\t- Run discovery, Time_discovery - whole discovery time in s,
+                                                    \t\t\tDiscovery_period - time for one discovery try in s
+                                                    \t\t\tTime_discovery / Discovery_period = Retry_count\r\n",
+    "NL,discovery,stop\t\t\t\t\t- Stop discovery\r\n\r\n"
+    "NL,get,protocols,configured\t\t\t\t- Get list of currently configured protocolsfor MUX\r\n\r\n",
+    "NL,get,discovery,period\t\t\t\t\t- Time for one discovery try in s\r\n\r\n",
+    "NL,get,discovery,time\t\t\t\t\t- Whole discovery time in s\r\n\r\n",
+    "=========================================== Sync MUX responses =====================================\r\n",
+    "NL,error,norouting\t\t\t\t- Sync error message, if no routing to dst exists (Static routing)\r\n",
+    "NL,error,noprotocol\t\t\t\t- Sync error message, if no protocol specified\r\n",
+    "\r\n\r\n\r\n"].
 
 neighbours_to_bin(NL) ->
   F = fun(X) ->
