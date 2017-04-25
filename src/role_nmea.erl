@@ -84,7 +84,7 @@ checksum([H|T]) -> H bxor checksum(T);
 checksum(<<H,T/binary>>) -> H bxor checksum(T).
 
 split(L, Cfg) ->
-  case re:split(L,"\r\n",[{parts,2}]) of
+  case re:split(L,"\r?\n",[{parts,2}]) of
     [Sentense,Rest] ->
       %% NMEA checksum might be optional
       case re:run(Sentense,"^\\\$((P|..)([^,]+),([^*]+))(\\\*(..)|)",[dotall,{capture,[1,3,4,6],binary}]) of
@@ -141,6 +141,11 @@ extract_utc(BUTC) ->
   [HH,MM] = [safe_binary_to_integer(X) || X <- [BHH,BMM]],
   60*(60*HH + MM) + SS.
 
+safe_extract_geodata(BUTC, BLat, BN, BLon, BE) ->
+  try extract_geodata(BUTC, BLat, BN, BLon, BE)
+  catch _:_ -> [nothing, nothing, nothing]
+  end.
+  
 extract_geodata(BUTC, BLat, BN, BLon, BE) ->
   <<BLatHH:2/binary,BLatMM/binary>> = BLat,
   <<BLonHH:3/binary,BLonMM/binary>> = BLon,
@@ -593,8 +598,9 @@ extract_evossa(Params) ->
   end.
 
 %% $PEVOCTL,BUSBL,...
-%% ID - configuration id (BUSBL/...)
+%% ID - configuration id (BUSBL/SBL...)
 %% $PEVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
+%% $PEVOCTL,SBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
 %% Lat/Lon/Alt x.x reference coordinates
 %% Mode        a   interrogation mode (S = silent / T  = transponder / <I1>:...:<In> = interrogation sequence)
 %% IT          x   interrogation timeout in us
@@ -604,7 +610,7 @@ extract_evoctl(<<"BUSBL,",Params/binary>>) ->
   try
     [BLat,BN,BLon,BE,BAlt,BMode,BIT,BMP,BAD] = 
       lists:sublist(re:split(Params, ","),9),
-    [_, Lat, Lon] = extract_geodata(nothing, BLat, BN, BLon, BE),
+    [_, Lat, Lon] = safe_extract_geodata(nothing, BLat, BN, BLon, BE),
     Alt = safe_binary_to_float(BAlt),
     Mode = case BMode of
              <<>> -> nothing;
@@ -617,6 +623,31 @@ extract_evoctl(<<"BUSBL,",Params/binary>>) ->
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
   end;
+%% $PEVOCTL,SBL,Lat,N,Lon,E,Alt,X,Y,Z,Pitch,Roll,Yaw,Mode,IT,MP,AD
+%% Lat/Lon/Alt     x.x reference coordinates
+%% X,Y,Z           x.x coordinates of SBL node in local frame in meters
+%% Pitch,Roll,Yaw  x.x pitch/roll/yaw SBL antenna related to reference point (NED, in degrees)
+%% Mode            a   interrogation mode (S = silent / T  = transponder / <I1>:...:<In> = interrogation sequence)
+%% IT              x   interrogation timeout in us
+%% MP              x   max pressure id dBar (must be equal on all the modems)
+%% AD              x   answer delays in us
+extract_evoctl(<<"SBL,",Params/binary>>) ->
+  %% try
+    [BLat,BN,BLon,BE,BAlt,BX,BY,BZ,BPitch,BRoll,BYaw,BMode,BIT,BMP,BAD] = 
+      lists:sublist(re:split(Params, ","),15),
+    [_, Lat, Lon] = safe_extract_geodata(nothing, BLat, BN, BLon, BE),
+    [Alt,X,Y,Z,Pitch,Roll,Yaw] = [safe_binary_to_float(BV) || BV <- [BAlt, BX, BY, BZ, BPitch, BRoll, BYaw]],
+    Mode = case BMode of
+             <<>> -> nothing;
+             <<"S">> -> silent;
+             <<"T">> -> transponder;
+             _ -> [binary_to_integer(BI) || BI <- re:split(BMode, ":")]
+           end,
+    [IT, MP, AD] = [safe_binary_to_integer(Item) || Item <- [BIT, BMP, BAD]],
+    {nmea, {evoctl, sbl, {Lat, Lon, Alt, X, Y, Z, Pitch, Roll, Yaw, Mode, IT, MP, AD}}};
+  %% catch
+  %%   error:_ ->{error, {parseError, evoctl, Params}}
+  %% end;
 extract_evoctl(Params) ->
   {error, {parseError, evoctl, Params}}.
 
@@ -911,7 +942,21 @@ build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}) ->
                     end, integer_to_list(hd(Seq)), tl(Seq))
           end,
   flatten(["PEVOCTL,BUSBL",safe_fmt(["~s","~s","~.1.0f","~s","~B","~B","~B"],
-                                    [SLat,SLon,Alt,SMode,IT,MP,AD],",")]).
+                                    [SLat,SLon,Alt,SMode,IT,MP,AD],",")]);
+%% $PEVOCTL,SBL,Lat,N,Lon,E,Alt,X,Y,Z,Pitch,Roll,Yaw,Mode,IT,MP,AD
+build_evoctl(sbl, {Lat, Lon, Alt, X, Y, Z, Pitch, Roll, Yaw, Mode, IT, MP, AD}) ->
+  SLat = lat_format(Lat),
+  SLon = lon_format(Lon),
+  SMode = case Mode of
+            silent -> "S";
+            transponder -> "T";
+            Seq when is_list(Seq) ->
+              foldl(fun(Id,Acc) ->
+                        Acc ++ ":" ++ integer_to_list(Id)
+                    end, integer_to_list(hd(Seq)), tl(Seq))
+          end,
+  flatten(["PEVOCTL,SBL",safe_fmt(["~s","~s","~.1.0f","~.3.0f","~.3.0f","~.3.0f","~.2.0f","~.2.0f","~.2.0f","~s","~B","~B","~B"],
+                                    [SLat,SLon,Alt,X,Y,Z,Pitch,Roll,Yaw,SMode,IT,MP,AD],",")]).
 
 %% $-EVORCT,TX,TX_phy,Lat,LatS,Lon,LonS,Alt,S_gps,Pressure,S_pressure,Yaw,Pitch,Roll,S_ahrs,LAx,LAy,LAz,HL
 build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,Ly,Lz},HL) ->
@@ -1099,6 +1144,8 @@ from_term_helper(Sentense) ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
     {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}} ->
       build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD});
+    {evoctl, sbl, {Lat, Lon, Alt, X, Y, Z, Pitch, Roll, Yaw, Mode, IT, MP, AD}} ->
+      build_evoctl(sbl, {Lat, Lon, Alt, X, Y, Z, Pitch, Roll, Yaw, Mode, IT, MP, AD});
     {hdg,Heading,Dev,Var} ->
       build_hdg(Heading,Dev,Var);
     {hdt,Heading} ->
