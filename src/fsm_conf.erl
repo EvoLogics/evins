@@ -182,7 +182,7 @@ match_message_helper([],_,Msg,Match_size,Unmatch_offset) when length(Msg) == Mat
   {ok,Unmatch_offset,Match_size};
 match_message_helper([],_,_,Match_size,Unmatch_offset) ->
   {more,Unmatch_offset,Match_size};
-match_message_helper(Bin,[],Msg,Match_size,Unmatch_offset) ->
+match_message_helper(_,[],_,Match_size,Unmatch_offset) ->
   %% some async data after Msg
   {ok,Unmatch_offset,Match_size};
   %% match_message_helper(Bin,Msg,Msg,0,Unmatch_offset+Match_size);
