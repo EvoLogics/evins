@@ -197,7 +197,7 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
   case Event of
     internal      ->
       %% must be run optionally!
-      share:put(SM, yars, [{at,"@ZF","1"},{at, "@ZX","1"},{at,"@ZU","1"},{at,"@ZA","1"}]),
+      share:put(SM, yars, [{at,"@ZF","1"},{at, "@ZX","1"},{at,"@ZU","1"}]),
       AT = {at, "?MODE", ""},
       fsm:set_event(
         fsm:set_timeout(
