@@ -909,10 +909,9 @@ build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS) ->
                                         (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
                                      end, "", Lst))) end,
   SRX = utc_format(RX_utc),
-  SRX_phy = io_lib:format(",~B",[RX_phy]),
-  flatten(["PEVORCM",SRX,SRX_phy,
-           safe_fmt(["~B","~.2.0f","~B","~B","~B","~s","~s","~s","~s"],
-                    [Src,PSrc,RSSI,Int,TS,SFun(AS),SFun(TSS),SFun(TDS),SFun(TDOAS)],",")]).
+  flatten(["PEVORCM",SRX,
+           safe_fmt(["~B","~B","~.2.0f","~B","~B","~B","~s","~s","~s","~s"],
+                    [RX_phy,Src,PSrc,RSSI,Int,TS,SFun(AS),SFun(TSS),SFun(TDS),SFun(TDOAS)],",")]).
 
 %% $-EVOSEQ,sid,total,maddr,range,seq
 build_evoseq(Sid,Total,MAddr,Range,Seq) ->
