@@ -51,6 +51,7 @@
           mfa,                  % {M, F, A} to run
                                                 % M basically defines the calling behaviour
           fsms,                 % list of FSMs to run sequentially
+          fsm_pids,             % list of running FSM child pids
           share                 % Share ets table
          }).
 
@@ -70,7 +71,13 @@ init(#modstate{behaviour = B, mod_id = Mod_ID, role_ids = Role_IDs, mfa = {_, _,
   Share = share:init(),
   FSMs_pre = B:register_fsms(Mod_ID, Role_IDs, Share, ArgS),
   FSMs = lists:map(fun(FSM) -> FSM#sm{id = Mod_ID} end, FSMs_pre),
-  {ok, State#modstate{fsms = FSMs, share = Share}}.
+  case Role_IDs of
+    [] ->
+      gen_server:cast(self(), {nothing, nothing, ok});
+    _ ->
+      nothing
+  end,
+  {ok, State#modstate{fsms = FSMs, fsm_pids = [], share = Share}}.
 
 handle_call(behaviour = Request, From, #modstate{behaviour = B, mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
@@ -80,7 +87,7 @@ handle_call(Request, From, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
   {stop, {Request, From}, State}.
 
-handle_cast({Src_Role_PID, Src_Role_ID, ok} = Req, #modstate{mod_id = ID, role_ids = Role_IDs} = State) ->
+handle_cast({Src_Role_PID, Src_Role_ID, ok} = Req, #modstate{mod_id = ID, role_ids = Role_IDs, fsm_pids = []} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, Req}}),
   {New_Role_IDs, Status} =
     lists:foldl(fun({Role, Role_ID, _, Flag, E} = Item, {Acc_Role_IDs, AccFlag}) ->
@@ -94,6 +101,19 @@ handle_cast({Src_Role_PID, Src_Role_ID, ok} = Req, #modstate{mod_id = ID, role_i
      true ->
       {noreply, State#modstate{role_ids = New_Role_IDs}}
   end;
+handle_cast({Src_Role_PID, Src_Role_ID, ok}, #modstate{role_ids = Role_IDs, fsm_pids = PIDs} = State) ->
+  New_role_IDs =
+    lists:map(fun({Role, Role_ID, _, _, E} = Item) when Role_ID == Src_Role_ID ->
+                  lists:map(fun(PID) ->
+                                gen_server:cast(PID, {role, Item})
+                            end, PIDs),
+                  {Role, Role_ID, Src_Role_PID, true, E};
+                 (Item) -> Item
+              end, Role_IDs),
+  {noreply, State#modstate{role_ids = New_role_IDs}};
+
+handle_cast({role, Role_ID}, #modstate{role_ids = Role_IDs} = State) ->
+  {noreply, State#modstate{role_ids = [Role_ID | Role_IDs]}};  
 
 handle_cast(restart, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, restart}}),
@@ -150,19 +170,20 @@ ets_insert_sm(Table, Trans) ->
 run_next_fsm(FSM, #modstate{mod_id = Mod_ID, sup_id = Sup_ID, share = Share}) ->
   Table = ets:new(table, [ordered_set, public]),
   ets_insert_sm(Table, (FSM#sm.module):trans()),
-  %% io:format("where is ~p: ~p~n", [FSM#sm.module, whereis(FSM#sm.module)]),
   FSM_worker = {{FSM#sm.module, Mod_ID}, 
   %% FSM_worker = {FSM#sm.module, 
                 {FSM#sm.module, start_link, [FSM#sm{share = Share, table = Table}]},
                 temporary, 10000, worker, [fsm]},
   {ok, Child_pid} = supervisor:start_child(Sup_ID, FSM_worker),
-  link(Child_pid).
+  link(Child_pid),
+  Child_pid.
 
 run_fsms(#modstate{fsms = FSMs} = State) ->
-  lists:map(fun(FSM) ->
-                run_next_fsm(FSM, State)
-            end, FSMs),
-  {noreply, State#modstate{fsms = []}}.
+  PIDs =
+    lists:map(fun(FSM) ->
+                  run_next_fsm(FSM, State)
+              end, FSMs),
+  {noreply, State#modstate{fsms = [], fsm_pids = PIDs}}.
 
 %% public helper functions
 role_info(Role_IDs, Role) when is_atom(Role) ->

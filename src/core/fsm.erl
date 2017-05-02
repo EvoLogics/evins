@@ -108,6 +108,11 @@ handle_cast({chan_parseError, _, _} = Reason, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, Reason}}),
   {stop, Reason, SM};
 
+handle_cast({role, {_,Role_ID,_,_,_} = Item}, #sm{roles = Roles} = SM) ->
+  Self = self(),
+  cast_helper(Role_ID, {fsm, Self, ok}),
+  {noreply, SM#sm{roles = [Item | Roles]}};
+
 handle_cast(Request, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {unhandled_cast, Request}}}),
   {stop, Request, SM}.
