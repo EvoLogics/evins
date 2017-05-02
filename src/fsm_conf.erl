@@ -115,7 +115,8 @@
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> share:put(SM, raw_buffer, <<"">>), SM.
+init(SM)       ->
+  share:put(SM, raw_buffer, <<"">>), SM.
 trans()        -> ?TRANS.
 final()        -> [].
 init_event()   -> eps.
@@ -125,14 +126,21 @@ handle_event(MM, SM, Term) ->
   case Term of
     {sync,_Req,_Answer} when SM#sm.state == final ->
       SM;
-    {sync,_Req,Answer} -> 
+    {sync,Req,Answer} -> 
       case Answer of
-        {error, _}        -> fsm:run_event(MM, SM#sm{event=error}, Term);
-        S when is_list(S) -> fsm:run_event(MM, SM#sm{event=rcv}, Term)
+        S when is_list(S) ->
+          fsm:run_event(MM, SM#sm{event=rcv}, Term);
+        {error,"WRONG FORMAT"} when Req == "@ZA" ->
+          %% for compatibility with 1.8 firmware
+          fsm:run_event(MM, SM#sm{event=rcv}, {sync, Req, "OK"});
+        {error, _}        ->
+          fsm:run_event(MM, SM#sm{event=error}, Term)
       end;
     {timeout,Event} ->
       fsm:run_event(MM, SM#sm{event=Event}, {});
-    {async,_Notif} -> 
+    {async,_,_} ->
+      SM;
+    {async,_} -> 
       SM;
     {error,Reason} ->
       ?WARNING(?ID, "error ~p~n", [Reason]),
@@ -174,8 +182,10 @@ match_message_helper([],_,Msg,Match_size,Unmatch_offset) when length(Msg) == Mat
   {ok,Unmatch_offset,Match_size};
 match_message_helper([],_,_,Match_size,Unmatch_offset) ->
   {more,Unmatch_offset,Match_size};
-match_message_helper(Bin,[],Msg,Match_size,Unmatch_offset) ->
-  match_message_helper(Bin,Msg,Msg,0,Unmatch_offset+Match_size);
+match_message_helper(_,[],_,Match_size,Unmatch_offset) ->
+  %% some async data after Msg
+  {ok,Unmatch_offset,Match_size};
+  %% match_message_helper(Bin,Msg,Msg,0,Unmatch_offset+Match_size);
 match_message_helper([First|Bin_tail],[First|Msg_tail],Msg,Match_size,Unmatch_offset) ->
   match_message_helper(Bin_tail,Msg_tail,Msg,Match_size+1,Unmatch_offset);
 match_message_helper(Bin,_,Msg,0,Unmatch_offset) ->
@@ -187,7 +197,7 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
   case Event of
     internal      ->
       %% must be run optionally!
-      share:put(SM, yars, [{at,"@ZF","1"},{at, "@ZX","1"},{at,"@ZU","1"}]),
+      share:put(SM, yars, [{at,"@ZF","1"},{at, "@ZX","1"},{at,"@ZU","1"},{at,"@ZA","1"}]),
       AT = {at, "?MODE", ""},
       fsm:set_event(
         fsm:set_timeout(

@@ -141,6 +141,11 @@ extract_utc(BUTC) ->
   [HH,MM] = [safe_binary_to_integer(X) || X <- [BHH,BMM]],
   60*(60*HH + MM) + SS.
 
+safe_extract_geodata(BUTC, BLat, BN, BLon, BE) ->
+  try extract_geodata(BUTC, BLat, BN, BLon, BE)
+  catch _:_ -> [nothing, nothing, nothing]
+  end.
+  
 extract_geodata(BUTC, BLat, BN, BLon, BE) ->
   <<BLatHH:2/binary,BLatMM/binary>> = BLat,
   <<BLonHH:3/binary,BLonMM/binary>> = BLon,
@@ -530,7 +535,7 @@ extract_evorcp(Params) ->
 extract_evossb(Params) ->
   try
     [BUTC,BTID,BS,BErr,BCS,BFS,BX,BY,BZ,BAcc,BPr,BVel] = 
-      lists:sublist(re:split(Params, ","),11),
+      lists:sublist(re:split(Params, ","),12),
     UTC = extract_utc(BUTC),
     TID = safe_binary_to_integer(BTID),
     [X,Y,Z,Acc,Pr,Vel] = [safe_binary_to_float(V) || V <- [BX,BY,BZ,BAcc,BPr,BVel]],
@@ -593,7 +598,7 @@ extract_evossa(Params) ->
   end.
 
 %% $PEVOCTL,BUSBL,...
-%% ID - configuration id (BUSBL/...)
+%% ID - configuration id (BUSBL/SBL...)
 %% $PEVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
 %% Lat/Lon/Alt x.x reference coordinates
 %% Mode        a   interrogation mode (S = silent / T  = transponder / <I1>:...:<In> = interrogation sequence)
@@ -604,7 +609,7 @@ extract_evoctl(<<"BUSBL,",Params/binary>>) ->
   try
     [BLat,BN,BLon,BE,BAlt,BMode,BIT,BMP,BAD] = 
       lists:sublist(re:split(Params, ","),9),
-    [_, Lat, Lon] = extract_geodata(nothing, BLat, BN, BLon, BE),
+    [_, Lat, Lon] = safe_extract_geodata(nothing, BLat, BN, BLon, BE),
     Alt = safe_binary_to_float(BAlt),
     Mode = case BMode of
              <<>> -> nothing;
@@ -617,6 +622,28 @@ extract_evoctl(<<"BUSBL,",Params/binary>>) ->
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
   end;
+%% $PEVOCTL,SBL,X,Y,Z,Mode,IT,MP,AD
+%% X,Y,Z           x.x coordinates of SBL node in local frame in meters
+%% Mode            a   interrogation mode (S = silent / T  = transponder / <I1>:...:<In> = interrogation sequence)
+%% IT              x   interrogation timeout in us
+%% MP              x   max pressure id dBar (must be equal on all the modems)
+%% AD              x   answer delays in us
+extract_evoctl(<<"SBL,",Params/binary>>) ->
+  %% try
+    [BX,BY,BZ,BMode,BIT,BMP,BAD] = 
+      lists:sublist(re:split(Params, ","),9),
+    [X,Y,Z] = [safe_binary_to_float(BV) || BV <- [BX, BY, BZ]],
+    Mode = case BMode of
+             <<>> -> nothing;
+             <<"S">> -> silent;
+             <<"T">> -> transponder;
+             _ -> [binary_to_integer(BI) || BI <- re:split(BMode, ":")]
+           end,
+    [IT, MP, AD] = [safe_binary_to_integer(Item) || Item <- [BIT, BMP, BAD]],
+    {nmea, {evoctl, sbl, {X, Y, Z, Mode, IT, MP, AD}}};
+  %% catch
+  %%   error:_ ->{error, {parseError, evoctl, Params}}
+  %% end;
 extract_evoctl(Params) ->
   {error, {parseError, evoctl, Params}}.
 
@@ -882,10 +909,9 @@ build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS) ->
                                         (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
                                      end, "", Lst))) end,
   SRX = utc_format(RX_utc),
-  SRX_phy = io_lib:format(",~B",[RX_phy]),
-  flatten(["PEVORCM",SRX,SRX_phy,
-           safe_fmt(["~B","~.2.0f","~B","~B","~B","~s","~s","~s","~s"],
-                    [Src,PSrc,RSSI,Int,TS,SFun(AS),SFun(TSS),SFun(TDS),SFun(TDOAS)],",")]).
+  flatten(["PEVORCM",SRX,
+           safe_fmt(["~B","~B","~.2.0f","~B","~B","~B","~s","~s","~s","~s"],
+                    [RX_phy,Src,PSrc,RSSI,Int,TS,SFun(AS),SFun(TSS),SFun(TDS),SFun(TDOAS)],",")]).
 
 %% $-EVOSEQ,sid,total,maddr,range,seq
 build_evoseq(Sid,Total,MAddr,Range,Seq) ->
@@ -910,8 +936,23 @@ build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}) ->
                         Acc ++ ":" ++ integer_to_list(Id)
                     end, integer_to_list(hd(Seq)), tl(Seq))
           end,
-  flatten(["PEVOCTL,BUSBL",safe_fmt(["~s","~s","~.1.0f","~s","~B","~B","~B"],
-                                    [SLat,SLon,Alt,SMode,IT,MP,AD],",")]).
+  flatten(["PEVOCTL,BUSBL",SLat,SLon,
+           safe_fmt(["~.1.0f","~s","~B","~B","~B"],
+                    [Alt,SMode,IT,MP,AD],",")]);
+%% $PEVOCTL,SBL,X,Y,Z,Mode,IT,MP,AD
+build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD}) ->
+  SMode = case Mode of
+            silent -> "S";
+            transponder -> "T";
+            Seq when is_list(Seq) ->
+              foldl(fun(Id,Acc) ->
+                        Acc ++ ":" ++ integer_to_list(Id)
+                    end, integer_to_list(hd(Seq)), tl(Seq));
+            _ -> ""
+          end,
+  flatten(["PEVOCTL,SBL",
+           safe_fmt(["~.3.0f","~.3.0f","~.3.0f","~s","~B","~B","~B"],
+                    [X,Y,Z,SMode,IT,MP,AD],",")]).
 
 %% $-EVORCT,TX,TX_phy,Lat,LatS,Lon,LonS,Alt,S_gps,Pressure,S_pressure,Yaw,Pitch,Roll,S_ahrs,LAx,LAy,LAz,HL
 build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,Ly,Lz},HL) ->
@@ -1099,6 +1140,8 @@ from_term_helper(Sentense) ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
     {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}} ->
       build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD});
+    {evoctl, sbl, {X, Y, Z, Mode, IT, MP, AD}} ->
+      build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD});
     {hdg,Heading,Dev,Var} ->
       build_hdg(Heading,Dev,Var);
     {hdt,Heading} ->

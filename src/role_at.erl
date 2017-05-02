@@ -384,7 +384,7 @@ dropcnt_extract(P) ->
 %% bite 0-7 bitmask, bit0 - atomic clock bite, bit1 - gps event, bit2 - power event
 eclk_extract(P) ->
   try
-    {match, [BMono,BClk,BSteer,BFlag,BGPS]} = re:run(P,"^([^,]*),([^,]*),([^,]*),([^,]*)$",[dotall,{capture,[1,2,3,4,5],binary}]),
+    {match, [BMono,BClk,BSteer,BFlag,BGPS]} = re:run(P,"^([^,]*),([^,]*),([^,]*),([^,]*),([^,]*)$",[dotall,{capture,[1,2,3,4,5],binary}]),
     [Mono, GPS] = [round(binary_to_float(X)*1000000) || X <- [BMono, BGPS]],
     [Clk, Steer, Flag] = [binary_to_integer(X) || X <- [BClk, BSteer, BFlag]],
     <<_:5,Power:1,GPSevent:1,Bite:1>> = <<Flag:8>>,
