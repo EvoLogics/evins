@@ -1,4 +1,4 @@
-%% Copyright (c) 2015, Oleksiy Kebkal <lesha@evologics.de>
+%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
 %% 
 %% Redistribution and use in source and binary forms, with or without 
 %% modification, are permitted provided that the following conditions 
