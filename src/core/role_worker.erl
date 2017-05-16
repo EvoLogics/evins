@@ -231,9 +231,30 @@ handle_cast({_, {fsm, Pid, ok}}, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {fsm, Pid, ok}}}),
   {noreply, cast_connected(Pid, State#ifstate{fsm_pids = [Pid | State#ifstate.fsm_pids]})};
 
-handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, cfg = Cfg} = State) ->
+handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, fsm_pids = FSMs, mm = MM, cfg = #{allow := Allow} = Cfg} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {ctrl, Term}}}),
   NewCfg = B:ctrl(Term, Cfg),
+  Events =
+    case {Term, Allow} of
+      {{allow,nobody}, nobody} -> [];
+      {{allow,nobody}, all} ->
+        [{denied, PIDx} || PIDx <- FSMs];
+      {{allow,nobody}, PID} when is_pid(PID) -> [{denied, PID}];
+      {{allow,all}, all} -> [];
+      {{allow,all}, nobody} ->
+        [{allowed, PIDx} || PIDx <- FSMs];
+      {{allow,all}, PID} when is_pid(PID) ->
+        [{allowed, PIDx} || PIDx <- lists:delete(PID, FSMs)];
+      {{allow,PID}, all}  when is_pid(PID) ->
+        [{denied, PIDx} || PIDx <- lists:delete(PID, FSMs)];
+      {{allow,PID}, nobody} when is_pid(PID)  -> [{allowed, PID}];
+      {{allow,PID}, PID_prev} when is_pid(PID), is_pid(PID_prev), PID == PID_prev -> [];
+      {{allow,PID}, PID_prev} when is_pid(PID), is_pid(PID_prev) ->
+        [{allowed, PID}, {denied, PID_prev}];
+      _ -> []
+      end,
+  io:format("Casting: ~p~n", [Events]),
+  [gen_server:cast(PIDx, {chan, MM, {Event}}) || {Event, PIDx} <- Events],
   {noreply, State#ifstate{cfg = NewCfg}};
 
 handle_cast({_, {send, _}}, #ifstate{cfg = #{allow := nobody}} = State) ->

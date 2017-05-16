@@ -602,7 +602,7 @@ extract_evossa(Params) ->
 %% $PEVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
 %% Lat/Lon/Alt x.x reference coordinates
 %% Mode        a   interrogation mode (S = silent / T  = transponder / <I1>:...:<In> = interrogation sequence)
-%% IT          x   interrogation timeout in us
+%% IT          x   interrogation period in us
 %% MP          x   max pressure id dBar (must be equal on all the modems)
 %% AD          x   answer delays in us
 extract_evoctl(<<"BUSBL,",Params/binary>>) ->
