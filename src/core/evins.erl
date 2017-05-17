@@ -35,7 +35,8 @@
 -export([loaded_modules/0,find_id/1,fabric_config/0,user_config/0,configured_modules/0,update_config/1,sign_config/1,cast/2,cast/3]).
 -export([loaded_fsms/1]).
 
--export([module_parameters/1,module_parameters/2,roles/1,roles/3,store_config/0,store_config/1,config/1,config/0]).
+-export([roles/1,roles/2]).
+-export([module_parameters/1,module_parameters/2,store_config/0,store_config/1,config/1,config/0]).
 -export([module_id/2,mfa/1,mfa/2]).
 
 %% TODO: reflect status, that running configuration doesn't correspond to the stored in the memory
@@ -78,7 +79,8 @@ mfa(Module_ID) -> gen_server:call(fsm_watch, {mfa, Module_ID}).
 mfa(Module_ID, MFA_new) -> gen_server:call(fsm_watch, {mfa, Module_ID, MFA_new}).
 
 roles(Module_ID) -> gen_server:call(fsm_watch, {roles, Module_ID}).
-roles(Module_ID, Role_spec_old, Role_spec_new) -> gen_server:call(fsm_watch, {roles, Module_ID, Role_spec_old, Role_spec_new}).
+roles(Module_ID, Role_spec) -> gen_server:call(fsm_watch, {roles, Module_ID, Role_spec}).
+%% roles(Module_ID, Role_spec_old, Role_spec_new) -> gen_server:call(fsm_watch, {roles, Module_ID, Role_spec_old, Role_spec_new}).
 
 config(Module_ID) -> gen_server:call(fsm_watch, {config, Module_ID}).
 config() -> gen_server:call(fsm_watch, config).

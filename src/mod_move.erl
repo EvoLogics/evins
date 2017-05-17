@@ -39,15 +39,16 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   {A1,A2,A3} = os:timestamp(),
   _Old = rand:seed(exsplus, { A1, A2, A3 }),
 
-  %% {movement,[{circle,...},{tide,...},{rocking,...},{brownian,...},{jitter,...}]}
+  %% {movement,[{stationary,...},{circle,...},{tide,...},{rocking,...},{brownian,...},{jitter,...}]}
 
   %% {circle, _C, _R, _V, Tau, _Phy} - optional
   %% {brownian, XMin, YMin, XMax, YMax}
+  %% {stationary, X, Y, Z, Tau}
 
-  %% for circle and brownian
+  %% for circle, brownian and stationary
   %% {jitter, Jx, Jy, Jz} (2*J*random:uniform() - J)
 
-  %% {tide, Tau, Pressure_offset, Amplitude, Phase, Period} 
+  %% {tide, Tau, Depth, Amplitude, Phase, Period} or {pressure, P}
   %% {rocking, Tau} - mock
 
   %% {lever_arm, [Forward, Right, Down]}
@@ -75,38 +76,38 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   Jitter = lists:keyfind(jitter,1,Movements),
   ?TRACE(Mod_ID, "Jitter: ~180p~n", [Jitter]),
   ShareID = #sm{share = Share},
-  share:put(ShareID, [{jitter, Jitter}, {lever_arm, Lever_arm}]),
+  share:put(ShareID, lever_arm, Lever_arm),
+
   ?TRACE(Mod_ID, "Movements: ~140p~n", [Movements]),
-  Roles =
-    lists:foldl(
-      fun(M,Acc) -> case M of
-                      {jitter, _, _, _} ->
-                        Acc;
-                      {circle, _C, _R, _V, _Tau, _Phy} = Movement ->
-                        [{geodetic, Lat, Lon, Alt}] = [R || {reference,R} <- ArgS],
-                        Sea_level = Alt - Z_lever_arm + Depth,
-                        share:put(ShareID, [{sea_level, Sea_level}, {geodetic, [Lat, Lon, Alt]}, {circle, Movement}]),
-                        fsm_worker:role_info(Role_IDs, [scli]) ++ Acc;
-                      {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax} ->
-                        [{geodetic, Lat, Lon, Alt}] = [R || {reference,R} <- ArgS],
-                        Sea_level = Alt - Z_lever_arm + Depth,
-                        Xs = (rand:uniform() * (XMax - XMin)) + XMin,
-                        Ys = (rand:uniform() * (YMax - YMin)) + YMin,
-                        Zs = (rand:uniform() * (ZMax - ZMin)) + ZMin,
-                        share:put(ShareID, [{sea_level, Sea_level},
-                                            {geodetic, [Lat, Lon, Alt]},
-                                            {brownian, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xs, Ys, Zs}}]),
-                        fsm_worker:role_info(Role_IDs, [scli]) ++ Acc;
-                      {tide, _Tau, _Pr, _Amp, _Phy, _Period} = Movement ->
-                        share:put(ShareID, tide, Movement),
-                        Acc;
-                      {rocking, _Tau} = Movement ->
-                        share:put(ShareID, rocking, Movement),
-                        Acc;
-                      Unsupported ->
-                        ?ERROR(Mod_ID, "Unsupported movement mode: ~p~n", [Unsupported]),
-                        Acc
-                    end
-      end, fsm_worker:role_info(Role_IDs, [nmea,pressure]), Movements),
-  [#sm{roles = Roles, module = fsm_move}].
+  lists:map(fun({jitter, _, _, _} = Movement) ->
+                share:put(ShareID, jitter, Movement);
+               ({tide, _Tau, _Pr, _Amp, _Phy, _Period} = Movement) ->
+                share:put(ShareID, tide, Movement);
+               ({rocking, _Tau} = Movement) ->
+                share:put(ShareID, rocking, Movement);
+               (_) ->
+                nothing
+            end, Movements),
+  %% NOTE: if several movements provided, will be overwirtten with last one
+  Init_movement = fun(Movement) ->
+                      [{geodetic, Lat, Lon, Alt}] = [R || {reference,R} <- ArgS],
+                      Sea_level = Alt - Z_lever_arm + Depth,
+                      share:put(ShareID, [{sea_level, Sea_level}, {geodetic, [Lat, Lon, Alt]}, {movement, Movement}])
+                  end,
+  lists:map(
+    fun({stationary, _, _, _, _} = Movement) ->
+        Init_movement(Movement);
+       ({stationary, _, _, _} = Movement) ->
+        Init_movement(Movement);
+       ({circle, _C, _R, _V, _Tau, _Phy} = Movement) ->
+        Init_movement(Movement);
+       ({brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax}) ->
+        Xs = (rand:uniform() * (XMax - XMin)) + XMin,
+        Ys = (rand:uniform() * (YMax - YMin)) + YMin,
+        Zs = (rand:uniform() * (ZMax - ZMin)) + ZMin,
+        Init_movement({brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xs, Ys, Zs});
+       (_) ->
+        nothing
+    end, Movements),
+  [#sm{roles = fsm_worker:role_info(Role_IDs, [nmea,pressure,scli]), module = fsm_move}].
 

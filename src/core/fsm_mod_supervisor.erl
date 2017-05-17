@@ -33,22 +33,14 @@
 -export([start_link/1, init/1]).
 -import(lists, [map/2, zip/2, seq/2]).
 
+-export([role_workers/4]).
+
 start_link(Args) ->
   {module, ID, _} = Args,
   Sup_ID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[?MODULE,ID]))),
   supervisor:start_link({local, Sup_ID}, ?MODULE, {supervisor, Sup_ID, args, Args}).
 
-%% {spec, #{restart => restart()}}
-init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
-  [{M, F, A}] = [{Mx, Fx, Ax} || {mfa, Mx, Fx, Ax} <- ConfigData],
-  Spec =
-    case [SpecX || {spec, SpecX} <- A] of
-      [Item | []] when is_map(Item) -> Item;
-      _ -> #{}
-    end,
-  Restart = maps:get(restart, Spec, permanent),
-  Mod_ID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[M,ID]))),
-
+role_workers(ID, Mod_ID, Offset, ConfigData) ->
   Roles = 
     [{R,{cowboy,I,P},[]}       || {role,R,iface,{cowboy,I,P}} <- ConfigData] ++
     [{R,{cowboy,I,P},E}        || {role,R,params,E,iface,{cowboy,I,P}} <- ConfigData] ++
@@ -65,7 +57,7 @@ init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
                                                       {cowboy,_,_}    -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {erlang,I1,_} -> io_lib:format("~p_~p",[ID,I1])
                                                     end))
-                     end, zip(seq(1,length(Roles)), Roles)),
+                     end, zip(seq(Offset,Offset-1+length(Roles)), Roles)),
   %% M2,I2
   Role_workers = map(fun({Role_ID, {R,If,E}}) ->
                          Iface = case If of
@@ -91,9 +83,20 @@ init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
                           {Role, start, [Role_ID, Mod_ID, MM]},
                           permanent, 1000, worker, [role_worker]}
                      end, zip(Role_ID_list, Roles)),
-
   Role_IDs = [{R,Role_ID,undefined,false,E} || {Role_ID, {R,_,E}} <- zip(Role_ID_list, Roles)],
-
+  {Role_IDs, Role_workers}.
+  
+%% {spec, #{restart => restart()}}
+init({supervisor, Sup_ID, args, {module, ID, ConfigData}}) ->
+  [{M, F, A}] = [{Mx, Fx, Ax} || {mfa, Mx, Fx, Ax} <- ConfigData],
+  Spec =
+    case [SpecX || {spec, SpecX} <- A] of
+      [Item | []] when is_map(Item) -> Item;
+      _ -> #{}
+    end,
+  Restart = maps:get(restart, Spec, permanent),
+  Mod_ID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[M,ID]))),
+  {Role_IDs, Role_workers} = role_workers(ID, Mod_ID, 1, ConfigData),
   SM_worker = {Mod_ID, 
                {M, start, [Mod_ID, Role_IDs, Sup_ID, {M, F, A}]},
                Restart, 1000, worker, [fsm_worker]},

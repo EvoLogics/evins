@@ -164,30 +164,63 @@ handle_call({roles, Module_ID}, _From, #watchstate{configuration = ModuleList} =
                end, {error, "Module not found"}, ModuleList),
    State};
 
-%% TODO: new parameters should be immediately applied or not?
-handle_call({roles, Module_ID, Role_spec_old, Role_spec_new}, _From, #watchstate{configuration = ModuleList} = State) ->
-  case {lists:keymember(Module_ID, 2, ModuleList), fsm_supervisor:check_role(Role_spec_new)} of
+handle_call({roles, Module_ID, Role_spec}, _From, #watchstate{configuration = ModuleList} = State) ->
+  case {lists:keymember(Module_ID, 2, ModuleList), fsm_supervisor:check_role(Role_spec)} of
     {true, ok} ->
       {module, Module_ID, ModuleConfigProbe} = lists:keyfind(Module_ID, 2, ModuleList),
-      case lists:member(Role_spec_old, ModuleConfigProbe) of
+      case lists:member(Role_spec, ModuleConfigProbe) of
         true ->
-          NewModuleList =
-            lists:map(fun({module, ID, ModuleConfig}) when ID == Module_ID ->
-                          {module, ID,
-                           lists:map(fun(Role_spec) when Role_spec == Role_spec_old -> Role_spec_new;
-                                        (Other) -> Other
-                                     end, ModuleConfig)};
-                         (Item) -> Item
-                      end, ModuleList),
-          {reply, ok, configure_modules(State, NewModuleList)};
-        _ ->
-          {reply, {error, "Role spec not found"}, State}
+          {reply, {error, "Role spec already exists"}, State};
+        false ->
+          try
+            {mfa,M,_,_} = lists:keyfind(mfa,1,ModuleConfigProbe),
+            NewModuleList =
+              lists:map(fun({module, ID, ModuleConfig}) when ID == Module_ID ->
+                            Role_number = length(ModuleConfig) - 1,
+                            Mod_ID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[M,ID]))),
+                            {[Role_ID], [Role_worker]} = fsm_mod_supervisor:role_workers(ID,Mod_ID,Role_number + 1,[Role_spec]),
+                            gen_server:cast(Mod_ID, {role, Role_ID}),
+                            Mod_sup_ID = list_to_atom(lists:flatten(io_lib:format("~p_~p",[fsm_mod_supervisor,ID]))),
+                            {ok, _Child_pid} = supervisor:start_child(Mod_sup_ID, Role_worker),
+                            {module, ID, [Role_spec | ModuleConfig]};
+                           (Item) -> Item
+                        end, ModuleList),
+            {reply, ok, configure_modules(State, NewModuleList)}
+          catch
+            error:Reason ->
+              {reply, {error, Reason}, State}
+          end
       end;
     {false, _} ->
       {reply, {error, "Module not found"}, State};
     {_, Spec_error} ->
       {reply, Spec_error, State}
   end;
+
+%% %% TODO: new parameters should be immediately applied or not?
+%% handle_call({roles, Module_ID, Role_spec_old, Role_spec_new}, _From, #watchstate{configuration = ModuleList} = State) ->
+%%   case {lists:keymember(Module_ID, 2, ModuleList), fsm_supervisor:check_role(Role_spec_new)} of
+%%     {true, ok} ->
+%%       {module, Module_ID, ModuleConfigProbe} = lists:keyfind(Module_ID, 2, ModuleList),
+%%       case lists:member(Role_spec_old, ModuleConfigProbe) of
+%%         true ->
+%%           NewModuleList =
+%%             lists:map(fun({module, ID, ModuleConfig}) when ID == Module_ID ->
+%%                           {module, ID,
+%%                            lists:map(fun(Role_spec) when Role_spec == Role_spec_old -> Role_spec_new;
+%%                                         (Other) -> Other
+%%                                      end, ModuleConfig)};
+%%                          (Item) -> Item
+%%                       end, ModuleList),
+%%           {reply, ok, configure_modules(State, NewModuleList)};
+%%         _ ->
+%%           {reply, {error, "Role spec not found"}, State}
+%%       end;
+%%     {false, _} ->
+%%       {reply, {error, "Module not found"}, State};
+%%     {_, Spec_error} ->
+%%       {reply, Spec_error, State}
+%%   end;
 
 handle_call({mfa, Module_ID}, _From, #watchstate{configuration = ModuleList} = State) ->
   {reply,
