@@ -51,7 +51,7 @@ parse_conf(_Mod_ID, ArgS, Share) ->
 
   ShareID = #sm{share = Share},
 
-  set_protocols(ShareID, Protocols_set, [{discovery, sncfloodr}, {burst, staticr}]),
+  set_protocols(ShareID, Protocols_set, [{discovery, sncfloodr}, {burst, polling}]),
   share:put(ShareID, [{time_discovery, Time_discovery},
                       {discovery_perod, Discovery_perod}]).
 

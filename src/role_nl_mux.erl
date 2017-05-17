@@ -154,6 +154,8 @@ nl_set_protocol(P, _Cfg) ->
     case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
       true ->
         [{rcv_ul, {set, protocol, AProtocolID} }];
+      false when AProtocolID == polling ->
+        [{rcv_ul, {set, protocol, AProtocolID} }];
       false -> [{nl, error}]
     end
   catch error: _Reason -> [{nl, error}]
@@ -186,8 +188,10 @@ nl_neighbours_extract(L, NeighboursBin, _Cfg) ->
 nl_protocol_extract(P, _Cfg) ->
    try
     {match, [Name]} = re:run(P,"([^,]*)", [dotall, {capture, [1], binary}]),
-    case lists:member(NPA = binary_to_atom(Name, utf8), ?LIST_ALL_PROTOCOLS) of
+    NPA = binary_to_atom(Name, utf8),
+    case lists:member(NPA, ?LIST_ALL_PROTOCOLS) of
       true  -> {rcv_ll, {nl, protocol, NPA}};
+      false when NPA == polling -> {rcv_ll, {nl, protocol, NPA}};
       false -> {nl, error}
     end
   catch error: _Reason -> {nl, error}

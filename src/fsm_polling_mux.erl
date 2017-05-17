@@ -176,6 +176,10 @@ handle_event(MM, SM, Term) ->
       ?INFO(?ID, "allowed ~n", []),
       fsm:send_at_command(SM, {at, "?PC", ""}),
       SM;
+    {rcv_ul, {get, protocol}} ->
+      ProtocolName = share:get(SM, nl_protocol),
+      fsm:cast(SM, polling_mux, {send, {response, {nl, protocol, ProtocolName}}}),
+      SM;
     {rcv_ul, {flush, buffer}} ->
       fsm:cast(SM, polling_mux, {send, {response, {nl, ok}}}),
       clear_buffer(SM),
@@ -207,7 +211,24 @@ handle_event(MM, SM, Term) ->
       SM1 = fsm:clear_timeouts(SM),
       fsm:cast(SM, polling_mux, {send, {response, {nl, ok}}}),
       fsm:run_event(MM, SM1#sm{event = poll_stop}, {});
-
+    {rcv_ul, {set, neighbours, Flag, NL} } ->
+      case Flag of
+        normal ->
+          share:put(SM, current_neighbours, NL);
+        add ->
+          Neighbours = [ A || {A, _, _, _} <- NL],
+          share:put(SM, current_neighbours, Neighbours)
+      end,
+      fsm:cast(SM, polling_mux, {send, {response, {nl, ok} } }),
+      SM;
+    {rcv_ul, {set, routing, Routing} } ->
+      share:put(SM, routing_table, Routing),
+      fsm:cast(SM, polling_mux, {send, {response, {nl, ok} } }),
+      SM;
+    {rcv_ul, {get, routing} } ->
+      Answer = {nl, routing, nl_mac_hf:routing_to_bin(SM)},
+      fsm:cast(SM, polling_mux, {send, {response, Answer}}),
+      SM;
     {async, {pid, _Pid}, RTuple = {recv, _Len, _Src, Local_address , _,  _,  _,  _,  _, _Data}} ->
       fsm:run_event(MM, SM#sm{event = recv_poll_data}, {recv_poll_data, RTuple});
     {async, {pid, _Pid}, RTuple = {recvpbm, _Len, _Src, Local_address, _, _, _, _, _Data}} ->
@@ -351,7 +372,7 @@ handle_wait_poll_data(_MM, SMW, Term = {recv_poll_data, RTuple}) ->
   WaitingRestData = Poll_data_len_whole - Poll_data_len,
 
   case Src of
-    Current_poll_addr when WaitingRestData == 0->
+    Current_poll_addr when WaitingRestData =< 0->
       poll_next_addr(SM),
       SM#sm{event = poll_next_addr};
     _ ->
@@ -422,7 +443,9 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   Event_params = SM#sm.event_params,
 
-  {recv, {Pid, _Len, Src, _Dst, _Flag, _}} = Event_params,
+  {recv, {Pid, _Len, Src, _Dst, _Flag, _DataCDT}} = Event_params,
+  %extract_CDT_msg(SM, DataCDT),
+
   Data = create_VDT_pbm_msg(SM, Src),
 
   case Answer_timeout of
@@ -482,24 +505,24 @@ clear_buffer(SM) ->
   end,
   [ F(X) || X <- LSeq].
 
-%extract_CDT_msg(SM, _Msg) ->
-  % TODO: check LA, parse ther Rest of the mesg
-  % Local_address = share:get(SM, local_address),
-  % {recvpbm, _Len, _Dst, _Src, _, _Rssi, _Int, _, Payload} = Msg,
-  % CBitsPosLen = nl_mac_hf:count_flag_bits(63),
-  % <<"C", PLen:CBitsPosLen, RPayload/bitstring>> = Payload,
-  % <<Pos:PLen/binary, Rest/bitstring>> = RPayload,
-  % Data_bin = (bit_size(Rest) rem 8) =/= 0,
-  % CDTData =
-  % if Data_bin =:= false ->
-  %   Add = bit_size(Rest) rem 8,
-  %   <<_:Add, Data/binary>> = Rest,
-  %   Data;
-  % true ->
-  %   Rest
-  % end,
-  % io:format("!!!!!!! extract_CDT_msg   ~p   ~p  ~p ~p~n", [Local_address, Pos, PLen, PayloadData]),
-  % SM.
+% extract_CDT_msg(SM, Msg) ->
+%   %TODO: check LA, parse ther Rest of the mesg
+%   Local_address = share:get(SM, local_address),
+%   {recvpbm, _Len, _Dst, _Src, _, _Rssi, _Int, _, Payload} = Msg,
+%   CBitsPosLen = nl_mac_hf:count_flag_bits(63),
+%   <<"C", PLen:CBitsPosLen, RPayload/bitstring>> = Payload,
+%   <<Pos:PLen/binary, Rest/bitstring>> = RPayload,
+%   Data_bin = (bit_size(Rest) rem 8) =/= 0,
+%   CDTData =
+%   if Data_bin =:= false ->
+%     Add = bit_size(Rest) rem 8,
+%     <<_:Add, Data/binary>> = Rest,
+%     Data;
+%   true ->
+%     Rest
+%   end,
+%   io:format("!!!!!!! extract_CDT_msg   ~p ~p  ~p ~n", [Local_address, Pos, CDTData]),
+%   SM.
 
 
 extract_poll_data(_SM, Payload) ->

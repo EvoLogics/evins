@@ -35,6 +35,12 @@
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
     fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
-register_fsms(_Mod_ID, Role_IDs, _Share, _ArgS) ->
-    Roles = fsm_worker:role_info(Role_IDs, [at, polling_mux, polling_nmea]),
+register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
+  parse_conf(Mod_ID, ArgS, Share),
+  Roles = fsm_worker:role_info(Role_IDs, [at, polling_mux, polling_nmea]),
 	[#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_polling_mux}].
+
+parse_conf(_Mod_ID, ArgS, Share) ->
+  ShareID = #sm{share = Share},
+  [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
+  share:put(ShareID, [{nl_protocol, NL_Protocol}]).
