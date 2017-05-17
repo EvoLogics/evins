@@ -40,6 +40,7 @@
 -define(TRANS, [
                 {idle,
                  [{internal, idle},
+                 {init_counter, idle},
                  {poll_start, polling},
                  {poll_stop, idle},
                  {recv_poll_seq, poll_response_pbm},
@@ -122,7 +123,7 @@ start_link(SM) -> fsm:start_link(SM).
 init(SM)       -> SM.
 trans()        -> ?TRANS.
 final()        -> [alarm].
-init_event()   -> internal.
+init_event()   -> eps.
 stop(_SM)      -> ok.
 
 %%--------------------------------Handler functions-------------------------------
@@ -140,11 +141,13 @@ handle_event(MM, SM, Term) ->
   %     _ -> nothing
   % end,
 
+  io:format("!!!!!!!!!!!!! handle_event ~p: ~p ~p ~p~n", [Local_address, Term, SM#sm.event, SM#sm.state]),
   case Term of
     {timeout, answer_timeout} ->
       TupleResponse = {response, {error, <<"ANSWER TIMEOUT">>}},
       fsm:cast(SM, polling_mux, {send, TupleResponse}),
       SM;
+
     {timeout, {send_burst, SBurstTuple}} ->
       fsm:run_event(MM, SM#sm{event = send_poll_pbm, event_params = SBurstTuple}, {});
     {timeout, {retransmit_im, STuple}} ->
@@ -155,8 +158,7 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
-      SM;
-
+      fsm:run_event(MM, SM#sm{event=internal}, {});
     {rcv_ul, {nl, send, _TransmitLen, Local_address, _MsgType, _Payload}} ->
       fsm:cast(SM, polling_mux, {send, {response, {nl, error}}}),
       SM;
@@ -226,10 +228,15 @@ handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   case SM#sm.event of
     internal ->
-      init_poll(SM);
-    _ -> nothing
-  end,
-  SM#sm{event = eps}.
+      init_poll(SM),
+      fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, init_counter);
+      %SM#sm{event = init_counter};
+    init_counter ->
+      SM1 = fsm:send_at_command(SM, {at, "?PC", ""}),
+      SM1#sm{event = eps};
+    _ ->
+      SM#sm{event = eps}
+  end.
 
 handle_polling(_MM, #sm{event = poll_next_addr} = SM, Term) ->
   ?TRACE(?ID, "handle_polling ~120p~n", [Term]),
@@ -370,8 +377,7 @@ handle_final(_MM, SM, Term) ->
 %%--------------------------------------Helper functions------------------------
 init_poll(SM)->
   share:put(SM, polling_seq, []),
-  init_poll_index(SM),
-  SM.
+  init_poll_index(SM).
 
 init_poll_index(SM) ->
   share:put(SM, current_polling_i, 1).
