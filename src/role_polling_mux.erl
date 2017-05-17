@@ -83,9 +83,10 @@ try_send(L, Cfg) ->
   case re:run(L, "\n") of
     {match, [{_, _}]} ->
       case re:run(L,
-        "^(NL,send,|NL,set,polling,seq,|NL,set,polling,start|NL,set,polling,stop)(.*)",
+        "^(NL,send,|NL,set,polling,seq,|NL,set,polling,start|NL,set,polling,stop|NL,flush,buffer)(.*)",
         [dotall, {capture, [1, 2], binary}]) of
         {match, [<<"NL,send,">>, P]}  -> nl_send_extract(P, Cfg);
+        {match, [<<"NL,flush,buffer">>, _P]}  -> [{rcv_ul, {flush, buffer} }];
         {match, [<<"NL,set,polling,seq,">>, P]}  -> nl_set_polling_seq(P, Cfg);
         {match, [<<"NL,set,polling,start">>, _P]}  -> [{rcv_ul, {set, polling, start} }];
         {match, [<<"NL,set,polling,stop">>, _P]}  -> [{rcv_ul, {set, polling, stop} }];
@@ -108,15 +109,18 @@ nl_send_extract(P, Cfg) ->
   try
     {match, [BTransmitLen, BDst, PayloadSTail]} = re:run(P,"([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3], binary}]),
 
-    Match_CDT_msg_type = re:run(PayloadSTail,"([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]),
-    [PayloadTail, MsgTypeCDT] =
+    Match_CDT_msg_type = re:run(PayloadSTail,"([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3], binary}]),
+    [PayloadTail, BurstTypeCDT, MsgTypeCDT] =
     case Match_CDT_msg_type of
-      {match, [MsgType, PP]} ->
+      {match, [MsgType, BurstType, PP]} ->
           AMsgType = binary_to_atom(MsgType, utf8),
+          ABurstType = binary_to_atom(BurstType, utf8),
           Messages = [dtolerant, dsensitive], %alarm????
+          BurstTypes = [b, nb],
           [AMsgType] = lists:filter(fun(X)-> X == AMsgType end, Messages),
-          [PP, AMsgType];
-      nomatch -> [PayloadSTail, nothing]
+          [ABurstType] = lists:filter(fun(X)-> X == ABurstType end, BurstTypes),
+          [PP, ABurstType, AMsgType];
+      nomatch -> [PayloadSTail, nothing, nothing]
     end,
 
     PLLen = byte_size(PayloadTail),
@@ -135,7 +139,7 @@ nl_send_extract(P, Cfg) ->
     Tuple =
     case MsgTypeCDT of
       nothing -> {nl, send, TransmitLen, IDst, Payload};
-      _ -> {nl, send, TransmitLen, IDst, MsgTypeCDT, Payload}
+      _ -> {nl, send, TransmitLen, IDst, MsgTypeCDT, BurstTypeCDT, Payload}
     end,
 
     [{rcv_ul, Tuple} | split(Tail1,Cfg)]
