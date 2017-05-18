@@ -51,9 +51,6 @@ to_term(Tail, Chunk, Cfg) ->
 from_term(Term, Cfg) ->
   Tuple = from_term_helper(Term, Cfg),
   Bin = list_to_binary(Tuple),
-  
-  io:format("POLL !!!!!!!!!!!!! ~p~n", [Bin]),
-
   [Bin, Cfg].
 
 from_term_helper(Tuple, _) when is_binary(Tuple) ->
