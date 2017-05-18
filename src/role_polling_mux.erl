@@ -83,13 +83,13 @@ try_send(L, Cfg) ->
   case re:run(L, "\n") of
     {match, [{_, _}]} ->
       case re:run(L,
-        "^(NL,send,|NL,set,polling,seq,|NL,set,polling,start|NL,set,polling,stop|NL,flush,buffer|NL,get,protocol|NL,set,routing,|NL,set,neighbours,|NL,get,routing)(.*)",
+        "^(NL,send,|NL,set,polling,seq,|NL,set,polling,start,|NL,set,polling,stop|NL,flush,buffer|NL,get,protocol|NL,set,routing,|NL,set,neighbours,|NL,get,routing)(.*)",
         [dotall, {capture, [1, 2], binary}]) of
         {match, [<<"NL,send,">>, P]}  -> nl_send_extract(P, Cfg);
         {match, [<<"NL,get,protocol">>, _P]}  -> [{rcv_ul, {get, protocol}}];
         {match, [<<"NL,flush,buffer">>, _P]}  -> [{rcv_ul, {flush, buffer}}];
         {match, [<<"NL,set,polling,seq,">>, P]}  -> nl_set_polling_seq(P, Cfg);
-        {match, [<<"NL,set,polling,start">>, _P]}  -> [{rcv_ul, {set, polling, start} }];
+        {match, [<<"NL,set,polling,start,">>, P]}  -> nl_set_polling_start(P, Cfg);
         {match, [<<"NL,set,polling,stop">>, _P]}  -> [{rcv_ul, {set, polling, stop} }];
         {match, [<<"NL,set,neighbours,">>, P]}  -> nl_set_neighbours(P, Cfg);
         {match, [<<"NL,set,routing,">>, P]}  -> nl_set_routing(P, Cfg);
@@ -100,6 +100,15 @@ try_send(L, Cfg) ->
       [{more, L}]
   end.
 
+nl_set_polling_start(P, _Cfg) ->
+  try
+    {match, [BFlag]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
+    AFlag = binary_to_atom(BFlag, utf8),
+    Flags = [nb, b],
+    [AFlag] = lists:filter(fun(X)-> X == AFlag end, Flags),
+    [{rcv_ul, {set, polling, start, AFlag} }]
+  catch error: _Reason -> [{nl, error}]
+  end.
 
 nl_set_routing(P, _Cfg) ->
   try
@@ -148,18 +157,15 @@ nl_send_extract(P, Cfg) ->
   try
     {match, [BTransmitLen, BDst, PayloadSTail]} = re:run(P,"([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3], binary}]),
 
-    Match_CDT_msg_type = re:run(PayloadSTail,"([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3], binary}]),
-    [PayloadTail, BurstTypeCDT, MsgTypeCDT] =
+    Match_CDT_msg_type = re:run(PayloadSTail,"([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]),
+    [PayloadTail, MsgTypeCDT] =
     case Match_CDT_msg_type of
-      {match, [MsgType, BurstType, PP]} ->
+      {match, [MsgType, PP]} ->
           AMsgType = binary_to_atom(MsgType, utf8),
-          ABurstType = binary_to_atom(BurstType, utf8),
           Messages = [dtolerant, dsensitive], %alarm????
-          BurstTypes = [b, nb],
           [AMsgType] = lists:filter(fun(X)-> X == AMsgType end, Messages),
-          [ABurstType] = lists:filter(fun(X)-> X == ABurstType end, BurstTypes),
-          [PP, ABurstType, AMsgType];
-      nomatch -> [PayloadSTail, nothing, nothing]
+          [PP, AMsgType];
+      nomatch -> [PayloadSTail, nothing]
     end,
 
     PLLen = byte_size(PayloadTail),
@@ -178,7 +184,7 @@ nl_send_extract(P, Cfg) ->
     Tuple =
     case MsgTypeCDT of
       nothing -> {nl, send, TransmitLen, IDst, Payload};
-      _ -> {nl, send, TransmitLen, IDst, MsgTypeCDT, BurstTypeCDT, Payload}
+      _ -> {nl, send, TransmitLen, IDst, MsgTypeCDT, Payload}
     end,
 
     [{rcv_ul, Tuple} | split(Tail1,Cfg)]

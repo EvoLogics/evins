@@ -187,7 +187,7 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, {nl, send, _TransmitLen, Local_address, _MsgType, _Payload}} ->
       fsm:cast(SM, polling_mux, {send, {response, {nl, error}}}),
       SM;
-    {rcv_ul, STuple = {nl, send, _TransmitLen, _IDst, _MsgType, _BurstType, _Payload}} ->
+    {rcv_ul, STuple = {nl, send, _TransmitLen, _IDst, _MsgType, _Payload}} ->
       fsm:cast(SM, polling_mux, {send, {response, {nl, ok}}}),
       add_to_CDT_queue(SM, STuple),
       SM;
@@ -200,11 +200,11 @@ handle_event(MM, SM, Term) ->
       init_poll_index(SM),
       share:put(SM, polling_seq, LSeq),
       SM;
-    {rcv_ul, {set, polling, start}} when (SeqPollAddrs =/= []) ->
+    {rcv_ul, {set, polling, start, Flag}} when (SeqPollAddrs =/= []) ->
       SM1 = fsm:clear_timeouts(SM),
       fsm:cast(SM1, polling_mux, {send, {response, {nl, ok}}}),
-      fsm:run_event(MM, SM1#sm{event = poll_start}, {});
-    {rcv_ul, {set, polling, start}} ->
+      fsm:run_event(MM, SM1#sm{event = poll_start}, {flag_burst, Flag});
+    {rcv_ul, {set, polling, start, _Flag}} ->
       fsm:cast(SM, polling_mux, {send, {response, {nl, seq, empty}}}),
       SM;
     {rcv_ul, {set, polling, stop}} ->
@@ -325,6 +325,8 @@ handle_polling(_MM, #sm{event = retransmit_im} = SM, Term) ->
   SM#sm{event = poll_next_addr};
 handle_polling(_MM, #sm{event = poll_start} = SM, Term) ->
   ?TRACE(?ID, "handle_polling ~120p~n", [Term]),
+  {flag_burst, NB} = Term,
+  share:put(SM, burst_mode, NB),
   init_poll_index(SM),
   SM#sm{event = poll_next_addr};
 handle_polling(_MM, SM, Term) ->
@@ -450,15 +452,14 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   Event_params = SM#sm.event_params,
 
-  {recv, {Pid, _Len, Src, _Dst, _Flag, _DataCDT}} = Event_params,
-  %extract_CDT_msg(SM, DataCDT),
-
-  Data = create_VDT_pbm_msg(SM, Src),
-
   case Answer_timeout of
     true ->
       fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_pbm, Event_params} );
     false ->
+      {recv, {Pid, _Len, Src, _Dst, _Flag, _DataCDT}} = Event_params,
+      %extract_CDT_msg(SM, DataCDT),
+
+      Data = create_VDT_pbm_msg(SM, Src),
       SPMTuple = {at, {pid, Pid}, "*SENDPBM", Src, Data},
       SM1 = fsm:send_at_command(SM, SPMTuple),
       SM1#sm{event = send_poll_pbm, event_params = Event_params}
@@ -553,9 +554,21 @@ extract_VDT_pbm_msg(SM, Pbm) ->
     Local_address = share:get(SM, local_address),
     {recvpbm, _Len, _Dst, Local_address, _, _Rssi, _Int, _, Payload} = Pbm,
     <<"VPbm", BLenBurst/binary>> = Payload,
+    io:format(".............. ~p~n", [BLenBurst]),
     binary:decode_unsigned(BLenBurst, big)
   catch error: _Reason -> 0 %!!! ignore
   end.
+
+create_VDT_pbm_msg(SM, Dst) ->
+  %Local_address = share:get(SM, local_address),
+  DstA = binary_to_atom(integer_to_binary(Dst), utf8),
+
+  DS = queue_to_data(SM, DstA, dsensitive),
+  DT = queue_to_data(SM, DstA, dtolerant),
+  Len = byte_size(DS) + byte_size(DT),
+  BLenBurst = binary:encode_unsigned(Len, big),
+  io:format("!!!!!!!!!!!!!!!! ~p ~p~n", [Len, DstA]),
+  <<"VPbm", BLenBurst/binary>>.
 
 create_next_poll_data_response(_SM, LTransmission) ->
   case LTransmission of
@@ -611,16 +624,6 @@ create_data_queue(SM, Dst) ->
   end, [], NL).
 
 
-create_VDT_pbm_msg(SM, Dst) ->
-  %Local_address = share:get(SM, local_address),
-  DstA = binary_to_atom(integer_to_binary(Dst), utf8),
-
-  DS = queue_to_data(SM, DstA, dsensitive),
-  DT = queue_to_data(SM, DstA, dtolerant),
-  Len = byte_size(DS) + byte_size(DT),
-  BLenBurst = binary:encode_unsigned(Len, big),
-  <<"VPbm", BLenBurst/binary>>.
-
 create_CDT_msg(SM) ->
   % TODO: DATA? Fused Position + CDT ?
   % Burst fomt CDT? or dummy with POS?
@@ -673,7 +676,7 @@ add_to_CDT_queue(SM, STuple) ->
   LocalPC = share:get(SM, local_pc),
   increase_local_pc(SM),
   % TODO: maybe we have to same messages to a file
-  {nl, send, TransmitLen, IDst, MsgType, _BurstType, Payload} = STuple,
+  {nl, send, TransmitLen, IDst, MsgType, Payload} = STuple,
 
   Polling_seq_msgs = share:get(SM, polling_seq_msgs),
   Member = lists:member(IDst, Polling_seq_msgs),
