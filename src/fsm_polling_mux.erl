@@ -46,6 +46,7 @@
 
                  {recv_poll_data, idle},
                  {recv_poll_pbm, idle},
+                 {process_poll_pbm, idle},
 
                  {send_poll_data, idle}
                  ]},
@@ -203,8 +204,9 @@ handle_event(MM, SM, Term) ->
       SM;
     {rcv_ul, {set, polling, start, Flag}} when (SeqPollAddrs =/= []) ->
       SM1 = fsm:clear_timeouts(SM),
+      share:put(SM, poll_flag_burst, Flag),
       fsm:cast(SM1, polling_mux, {send, {response, {nl, ok}}}),
-      fsm:run_event(MM, SM1#sm{event = poll_start}, {flag_burst, Flag});
+      fsm:run_event(MM, SM1#sm{event = poll_start}, {});
     {rcv_ul, {set, polling, start, _Flag}} ->
       fsm:cast(SM, polling_mux, {send, {response, {nl, seq, empty}}}),
       SM;
@@ -231,26 +233,21 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, polling_mux, {send, {response, Answer}}),
       SM;
     {async, {pid, _Pid}, RTuple = {recv, _Len, Src, Local_address , _,  _,  _,  _,  _, Data}} ->
-
       Poll_data = extract_poll_data(SM, Data),
       Poll_data_len = byte_size(Poll_data),
-
       fsm:cast(SM, polling_mux, {send, {response, {nl, recv, Poll_data_len, Local_address, Src, Poll_data}}}),
       io:format("<<<<  Poll_data ~p ~p~n", [Src, Poll_data]),
-
       fsm:run_event(MM, SM#sm{event = recv_poll_data}, {recv_poll_data, RTuple});
     {async, {pid, _Pid}, RTuple = {recvpbm, _Len, _Src, Local_address, _, _, _, _, _Data}} ->
       fsm:run_event(MM, SM#sm{event = process_poll_pbm}, {recv_poll_pbm, RTuple});
     {async, {pid, Pid}, {recvim, Len, Src, Local_address, Flag, _, _, _,_, Data}} ->
       RecvTuple = {recv, {Pid, Len, Src, Local_address, Flag, Data}},
       fsm:run_event(MM, SM#sm{event = recv_poll_seq, event_params = RecvTuple}, {});
-
     {async, {pid, _Pid}, {recvim, _Len, _Src, _Dst, _Flag, _, _, _, _, _Data}} ->
       % TODO: ooverhearing
       SM;
     {async, PosTerm = {usbllong, _FCurrT, _FMeasT, _Src, _X, _Y, _Z,
                       _E, _N, _U, _Roll, _Pitch, _Yaw, _P, _Rssi, _I, _Acc}} ->
-
       fsm:cast(SM, polling_nmea, {send, PosTerm}),
       SM;
     {async, {delivered, PC, Src}} ->
@@ -271,12 +268,12 @@ handle_event(MM, SM, Term) ->
     {sync,"?PC", PC} ->
       SM1 = fsm:clear_timeout(SM, answer_timeout),
       init_packet_counter(SM1, PC);
-
     {sync, "*SEND", "OK"} when Send_next_poll_data == true ->
-      SM2 = fsm:clear_timeout(SM, send_next_poll_data_tmo),
-      SM3 = nl_mac_hf:clear_spec_timeout(SM2, send_burst),
-      SM1 = fsm:send_at_command(SM3, {at, "?PC", ""}),
-      fsm:set_timeout(SM1#sm{event_params = Event_params}, ?ANSWER_TIMEOUT, wait_pc);
+      SM1 = fsm:clear_timeout(SM, send_next_poll_data_tmo),
+      SM2 = nl_mac_hf:clear_spec_timeout(SM1, send_burst),
+      SM3 = fsm:clear_timeout(SM2, answer_timeout),
+      SM4 = fsm:send_at_command(SM3, {at, "?PC", ""}),
+      fsm:set_timeout(SM4#sm{event_params = Event_params}, ?ANSWER_TIMEOUT, wait_pc);
     {sync, "*SEND", "OK"} ->
       SM1 = fsm:clear_timeout(SM, answer_timeout),
       SM2 = nl_mac_hf:clear_spec_timeout(SM1, send_burst),
@@ -286,7 +283,6 @@ handle_event(MM, SM, Term) ->
       SM1;
     {nl, error} ->
       fsm:cast(SM, polling_mux, {send, {response, {nl, error}}});
-
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -310,10 +306,11 @@ handle_polling(_MM, #sm{event = poll_next_addr} = SM, Term) ->
   % TODO: multiple burst messages, what msg is the request msg?
   % TODO: remove delivered message
 
-  STuple = create_CDT_msg(SM),
+  Poll_flag_burst = share:get(SM, poll_flag_burst),
+  STuple = create_CDT_msg(SM, Poll_flag_burst),
   Current_poll_addr = get_current_poll_addr(SM),
 
-  io:format("handle_polling ======================================>  ~p ~n", [Current_poll_addr]),
+  io:format("handle_polling ======================================> ~p ~p ~n", [Poll_flag_burst, Current_poll_addr]),
 
   case Answer_timeout of
     true ->
@@ -329,8 +326,6 @@ handle_polling(_MM, #sm{event = retransmit_im} = SM, Term) ->
   SM#sm{event = poll_next_addr};
 handle_polling(_MM, #sm{event = poll_start} = SM, Term) ->
   ?TRACE(?ID, "handle_polling ~120p~n", [Term]),
-  {flag_burst, NB} = Term,
-  share:put(SM, burst_mode, NB),
   init_poll_index(SM),
   SM#sm{event = poll_next_addr};
 handle_polling(_MM, SM, Term) ->
@@ -461,17 +456,26 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
       fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_pbm, Event_params} );
     false ->
       {recv, {Pid, _Len, Src, Dst, _Flag, DataCDT}} = Event_params,
-      [Poll_data_len, Poll_data, Position, Process] = extract_CDT_msg(SM, DataCDT),
+      [Poll_data_len, Poll_data, Position, PollingFlagBurst, Process] = extract_CDT_msg(SM, DataCDT),
       case Process of
         ignore ->
           SM#sm{event = ignore_recv_poll_seq};
         answer_pbm ->
-          fsm:cast(SM, polling_mux, {send, {response, {nl, recv, Poll_data_len, Src, Dst, Poll_data}}}),
+          if Poll_data_len > 0 ->
+            fsm:cast(SM, polling_mux, {send, {response, {nl, recv, Poll_data_len, Src, Dst, Poll_data}}});
+          true -> nothing
+          end,
           fsm:cast(SM, polling_nmea, {send, Position}),
-          Data = create_VDT_pbm_msg(SM, Src),
+
+          Data = create_VDT_pbm_msg(SM, Src, PollingFlagBurst),
           SPMTuple = {at, {pid, Pid}, "*SENDPBM", Src, Data},
           SM1 = fsm:send_at_command(SM, SPMTuple),
-          SM1#sm{event = send_poll_pbm, event_params = Event_params}
+
+          if PollingFlagBurst == nb ->
+            SM1#sm{event = ignore_recv_poll_seq};
+          true ->
+            SM1#sm{event = send_poll_pbm, event_params = Event_params}
+          end
       end
   end;
 handle_poll_response_pbm(_MM, SM, _Term) ->
@@ -491,6 +495,7 @@ init_poll(SM)->
   share:put(SM, local_pc, 1),
   share:put(SM, polling_pc, 1),
   share:put(SM, recv_packages, []),
+  share:put(SM, poll_flag_burst, nb),
   init_poll_index(SM).
 
 init_packet_counter(SM, PC) ->
@@ -550,7 +555,10 @@ extract_VDT_pbm_msg(SM, Pbm) ->
   catch error: _Reason -> 0 %!!! ignore
   end.
 
-create_VDT_pbm_msg(SM, Dst) ->
+create_VDT_pbm_msg(_SM, _Dst, nb) ->
+  BLenBurst = binary:encode_unsigned(0, big),
+  <<"VPbm", BLenBurst/binary>>;
+create_VDT_pbm_msg(SM, Dst, b) ->
   %Local_address = share:get(SM, local_address),
   DstA = binary_to_atom(integer_to_binary(Dst), utf8),
 
@@ -615,10 +623,11 @@ create_data_queue(SM, Dst) ->
 
 
 extract_CDT_msg(SM, Msg) ->
+  CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
   CBitsPosLen = nl_mac_hf:count_flag_bits(63),
   CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
 
-  <<"C", PC:CPollingCounterLen, PLen:CBitsPosLen, RPayload/bitstring>> = Msg,
+  <<"C", PollingFlagBurst:CPollingFlagBurst, PC:CPollingCounterLen, PLen:CBitsPosLen, RPayload/bitstring>> = Msg,
   <<Pos:PLen/binary, Rest/bitstring>> = RPayload,
   Data_bin = (bit_size(Msg) rem 8) =/= 0,
   CDTData =
@@ -634,12 +643,39 @@ extract_CDT_msg(SM, Msg) ->
   ResAdd = add_to_limited_list(SM, Recv_packages, PC, recv_packages, 10),
   case ResAdd of
     nothing  ->
-      [nothing, nothing, nothing, ignore];
-    _ ->
-      [byte_size(CDTData), CDTData, Pos, answer_pbm]
+      [nothing, nothing, nothing, nothing, ignore];
+    _ when  PollingFlagBurst == 1 ->
+      [byte_size(CDTData), CDTData, Pos, nb, answer_pbm];
+    _ when  PollingFlagBurst == 0 ->
+      [byte_size(CDTData), CDTData, Pos, b, answer_pbm]
   end.
 
-create_CDT_msg(SM) ->
+create_CDT_msg(SM, nb) ->
+  Current_polling_addr = get_current_poll_addr(SM),
+  PollingCounter = share:get(SM, polling_pc),
+  DataPos = <<"POS....">>,
+  LenDataPos = byte_size(DataPos),
+  PollFlagBurst = 1,
+
+  CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
+  CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
+  CBitsPosLen = nl_mac_hf:count_flag_bits(63),
+
+  BPollFlagBurst = <<PollFlagBurst:CPollingFlagBurst>>,
+  BPollingCounter = <<PollingCounter:CPollingCounterLen>>,
+  BLenPos = <<LenDataPos:CBitsPosLen>>,
+  TmpData = <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary>>,
+  Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
+  Data =
+  if Data_bin =:= false ->
+    Add = (8 - bit_size(TmpData) rem 8) rem 8,
+    <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add>>;
+  true ->
+    TmpData
+  end,
+  increase_local_pc(SM, polling_pc),
+  {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data};
+create_CDT_msg(SM, b) ->
   % TODO: DATA? Fused Position + CDT ?
   % Burst fomt CDT? or dummy with POS?
   Current_polling_addr = get_current_poll_addr(SM),
@@ -654,19 +690,22 @@ create_CDT_msg(SM) ->
   DataCDT = list_to_binary([DS, DT]),
 
   % TODO: Set max pos len
-  CBitsPosLen = nl_mac_hf:count_flag_bits(63),
+  CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
   CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
+  CBitsPosLen = nl_mac_hf:count_flag_bits(63),
 
+  PollFlagBurst = 0,
+  BPollFlagBurst = <<PollFlagBurst:CPollingFlagBurst>>,
   BPollingCounter = <<PollingCounter:CPollingCounterLen>>,
   BLenPos = <<LenDataPos:CBitsPosLen>>,
 
-  TmpData = <<"C", BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, DataCDT/binary>>,
+  TmpData = <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, DataCDT/binary>>,
 
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   Data =
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<"C", BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add, DataCDT/binary>>;
+    <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add, DataCDT/binary>>;
   true ->
     TmpData
   end,
