@@ -110,6 +110,7 @@
                  {poll_start, polling},
                  {poll_stop, idle},
 
+                 {ignore_recv_poll_seq, idle},
                  {send_poll_data, poll_response_pbm}
                  ]},
 
@@ -305,10 +306,13 @@ handle_polling(_MM, #sm{event = poll_next_addr} = SM, Term) ->
   ?TRACE(?ID, "handle_polling ~120p~n", [Term]),
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
 
-  %TODO: PID ?
-  STuple = create_CDT_msg(SM),
+  % TODO: PID ?
+  % TODO: multiple burst messages, what msg is the request msg?
+  % TODO: remove delivered message
 
+  STuple = create_CDT_msg(SM),
   Current_poll_addr = get_current_poll_addr(SM),
+
   io:format("handle_polling ======================================>  ~p ~n", [Current_poll_addr]),
 
   case Answer_timeout of
@@ -456,13 +460,19 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
     true ->
       fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_pbm, Event_params} );
     false ->
-      {recv, {Pid, _Len, Src, _Dst, _Flag, _DataCDT}} = Event_params,
-      %extract_CDT_msg(SM, DataCDT),
-
-      Data = create_VDT_pbm_msg(SM, Src),
-      SPMTuple = {at, {pid, Pid}, "*SENDPBM", Src, Data},
-      SM1 = fsm:send_at_command(SM, SPMTuple),
-      SM1#sm{event = send_poll_pbm, event_params = Event_params}
+      {recv, {Pid, _Len, Src, Dst, _Flag, DataCDT}} = Event_params,
+      [Poll_data_len, Poll_data, Position, Process] = extract_CDT_msg(SM, DataCDT),
+      case Process of
+        ignore ->
+          SM#sm{event = ignore_recv_poll_seq};
+        answer_pbm ->
+          fsm:cast(SM, polling_mux, {send, {response, {nl, recv, Poll_data_len, Src, Dst, Poll_data}}}),
+          fsm:cast(SM, polling_nmea, {send, Position}),
+          Data = create_VDT_pbm_msg(SM, Src),
+          SPMTuple = {at, {pid, Pid}, "*SENDPBM", Src, Data},
+          SM1 = fsm:send_at_command(SM, SPMTuple),
+          SM1#sm{event = send_poll_pbm, event_params = Event_params}
+      end
   end;
 handle_poll_response_pbm(_MM, SM, _Term) ->
   SM#sm{event = eps}.
@@ -479,18 +489,20 @@ init_poll(SM)->
   share:put(SM, polling_seq, []),
   share:put(SM, polling_seq_msgs, []),
   share:put(SM, local_pc, 1),
+  share:put(SM, polling_pc, 1),
+  share:put(SM, recv_packages, []),
   init_poll_index(SM).
 
 init_packet_counter(SM, PC) ->
   PCI = list_to_integer(PC),
   share:put(SM, packet_counter, PCI).
 
-increase_local_pc(SM) ->
-  PC = share:get(SM, local_pc),
-  if PC > 255 ->
-    share:put(SM, local_pc, 1);
+increase_local_pc(SM, CounterName) ->
+  PC = share:get(SM, CounterName),
+  if PC > 127 ->
+    share:put(SM, CounterName, 1);
   true ->
-    share:put(SM, local_pc, PC + 1)
+    share:put(SM, CounterName, PC + 1)
   end.
 
 init_poll_index(SM) ->
@@ -522,26 +534,6 @@ clear_buffer(SM) ->
   end,
   [ F(X) || X <- LSeq].
 
-% extract_CDT_msg(SM, Msg) ->
-%   %TODO: check LA, parse ther Rest of the mesg
-%   Local_address = share:get(SM, local_address),
-%   {recvpbm, _Len, _Dst, _Src, _, _Rssi, _Int, _, Payload} = Msg,
-%   CBitsPosLen = nl_mac_hf:count_flag_bits(63),
-%   <<"C", PLen:CBitsPosLen, RPayload/bitstring>> = Payload,
-%   <<Pos:PLen/binary, Rest/bitstring>> = RPayload,
-%   Data_bin = (bit_size(Rest) rem 8) =/= 0,
-%   CDTData =
-%   if Data_bin =:= false ->
-%     Add = bit_size(Rest) rem 8,
-%     <<_:Add, Data/binary>> = Rest,
-%     Data;
-%   true ->
-%     Rest
-%   end,
-%   io:format("!!!!!!! extract_CDT_msg   ~p ~p  ~p ~n", [Local_address, Pos, CDTData]),
-%   SM.
-
-
 extract_poll_data(_SM, Payload) ->
   try
     <<"V", DataVDT/binary>> = Payload,
@@ -554,7 +546,6 @@ extract_VDT_pbm_msg(SM, Pbm) ->
     Local_address = share:get(SM, local_address),
     {recvpbm, _Len, _Dst, Local_address, _, _Rssi, _Int, _, Payload} = Pbm,
     <<"VPbm", BLenBurst/binary>> = Payload,
-    io:format(".............. ~p~n", [BLenBurst]),
     binary:decode_unsigned(BLenBurst, big)
   catch error: _Reason -> 0 %!!! ignore
   end.
@@ -567,7 +558,6 @@ create_VDT_pbm_msg(SM, Dst) ->
   DT = queue_to_data(SM, DstA, dtolerant),
   Len = byte_size(DS) + byte_size(DT),
   BLenBurst = binary:encode_unsigned(Len, big),
-  io:format("!!!!!!!!!!!!!!!! ~p ~p~n", [Len, DstA]),
   <<"VPbm", BLenBurst/binary>>.
 
 create_next_poll_data_response(_SM, LTransmission) ->
@@ -624,6 +614,31 @@ create_data_queue(SM, Dst) ->
   end, [], NL).
 
 
+extract_CDT_msg(SM, Msg) ->
+  CBitsPosLen = nl_mac_hf:count_flag_bits(63),
+  CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
+
+  <<"C", PC:CPollingCounterLen, PLen:CBitsPosLen, RPayload/bitstring>> = Msg,
+  <<Pos:PLen/binary, Rest/bitstring>> = RPayload,
+  Data_bin = (bit_size(Msg) rem 8) =/= 0,
+  CDTData =
+  if Data_bin =:= false ->
+    Add = bit_size(Rest) rem 8,
+    <<_:Add, Data/binary>> = Rest,
+    Data;
+  true ->
+    Rest
+  end,
+
+  Recv_packages = share:get(SM, recv_packages),
+  ResAdd = add_to_limited_list(SM, Recv_packages, PC, recv_packages, 10),
+  case ResAdd of
+    nothing  ->
+      [nothing, nothing, nothing, ignore];
+    _ ->
+      [byte_size(CDTData), CDTData, Pos, answer_pbm]
+  end.
+
 create_CDT_msg(SM) ->
   % TODO: DATA? Fused Position + CDT ?
   % Burst fomt CDT? or dummy with POS?
@@ -633,26 +648,31 @@ create_CDT_msg(SM) ->
   DS = queue_to_data(SM, Dst, dsensitive),
   DT = queue_to_data(SM, Dst, dtolerant),
 
+  PollingCounter = share:get(SM, polling_pc),
   DataPos = <<"POS....">>,
   LenDataPos = byte_size(DataPos),
   DataCDT = list_to_binary([DS, DT]),
 
   % TODO: Set max pos len
   CBitsPosLen = nl_mac_hf:count_flag_bits(63),
+  CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
+
+  BPollingCounter = <<PollingCounter:CPollingCounterLen>>,
   BLenPos = <<LenDataPos:CBitsPosLen>>,
 
-  TmpData = <<"C", BLenPos/bitstring, DataPos/binary, DataCDT/binary>>,
+  TmpData = <<"C", BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, DataCDT/binary>>,
 
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   Data =
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<"C", BLenPos/bitstring, DataPos/binary, 0:Add, DataCDT/binary>>;
+    <<"C", BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add, DataCDT/binary>>;
   true ->
     TmpData
   end,
 
   LenData = byte_size(Data),
+  increase_local_pc(SM, polling_pc),
 
   if LenData < 64 ->
     {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data};
@@ -672,19 +692,29 @@ queue_to_data(SM, Dst, Name) ->
       list_to_binary(lists:join(<<"">>, [ F(X)  || X <- LData]))
   end.
 
+add_to_limited_list(SM, L, Key, NameQ, Max) ->
+  NL =
+  case length(L) > Max of
+    true -> lists:delete(lists:nth(length(L), L), L);
+    false -> L
+  end,
+
+  Member = lists:member(Key, L),
+  case Member of
+    false ->
+      share:put(SM, NameQ, [Key | NL]);
+    true  ->
+      nothing
+  end.
+
 add_to_CDT_queue(SM, STuple) ->
   LocalPC = share:get(SM, local_pc),
-  increase_local_pc(SM),
-  % TODO: maybe we have to same messages to a file
+  increase_local_pc(SM, local_pc),
+  % TODO: maybe we have to save messages to a file
   {nl, send, TransmitLen, IDst, MsgType, Payload} = STuple,
 
   Polling_seq_msgs = share:get(SM, polling_seq_msgs),
-  Member = lists:member(IDst, Polling_seq_msgs),
-
-  case Member of
-    false -> share:put(SM, polling_seq_msgs, [IDst | Polling_seq_msgs]);
-    true  -> nothing
-  end,
+  add_to_limited_list(SM, Polling_seq_msgs, IDst, polling_seq_msgs, 10),
 
   ADst = binary_to_atom(integer_to_binary(IDst), utf8),
   Qname = list_to_atom(atom_to_list(MsgType) ++ atom_to_list(ADst)),
