@@ -100,7 +100,7 @@ try_recv(L, Cfg) ->
         [_, L1] -> [{rcv_ll, L} | split(L1, Cfg#{waitsync => no})];
         _ -> [{rcv_ll, L}]
       end;
-    nomatch ->  [{nl, error}]
+    nomatch ->  try_send(L, Cfg)
   end.
 
 try_send(L, Cfg) ->

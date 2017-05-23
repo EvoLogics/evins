@@ -64,22 +64,6 @@ from_term_helper(Tuple, Cfg) when is_tuple(Tuple) ->
   end.
 
 split(L, Cfg) ->
-  case re:run(L, "\r\n") of
-    {match, [{_, _}]} -> try_recv(L, Cfg);
-    nomatch -> try_send(L, Cfg)
-  end.
-
-try_recv(_L, _Cfg) ->
-  [{nl, error}].
-
-% NL,send..
-% NL,set,polling,seq,...
-% NL,set,polling,start
-% NL,set,polling,stop
-% NL,flush,buffer
-% NL,get,polling,queue
-
-try_send(L, Cfg) ->
   case re:run(L, "\n") of
     {match, [{_, _}]} ->
       case re:run(L,
@@ -178,7 +162,6 @@ nl_send_extract(P, Cfg) ->
       _ ->
         binary_to_integer(BTransmitLen)
     end,
-
     %true = PLLen < 50,
     {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(TransmitLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
     Tuple =
