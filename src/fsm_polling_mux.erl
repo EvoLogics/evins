@@ -630,7 +630,6 @@ get_part_of_list(Max, Q) ->
   case Max >= queue:len(Q) of
     true -> Q;
     false ->
-      io:format("!!!!!!!!!!!!!!!!!!!!!!!!! ~p ~p   ~n", [Max, Q]),
       {Q1, _Q2} = queue:split(Max, Q),
       Q1
   end.

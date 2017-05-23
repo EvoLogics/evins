@@ -111,9 +111,9 @@ try_send(L, Cfg) ->
       case re:run(L, "\n") of
         {match, [{_, _}]} ->
           case re:run(L,
-            "^(NL,set,protocol,|NL,discovery,stop|NL,discovery|NL,get,discovery|NL,get,protocols,configured)(.*)",
+            "^(NL,send,|NL,set,protocol,|NL,discovery,stop|NL,discovery|NL,get,discovery|NL,get,protocols,configured)(.*)",
             [dotall, {capture, [1, 2], binary}]) of
-
+            {match, [<<"NL,send,">>, P]}  -> nl_send_extract(L, P, Cfg);
             {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
             {match, [<<"NL,discovery">>, P]}  -> nl_discovery(P, Cfg);
             {match, [<<"NL,discovery,stop">>, _P]}  -> [{rcv_ul, stop, discovery}];
@@ -125,6 +125,13 @@ try_send(L, Cfg) ->
         nomatch when Waitsync == multiline -> [{more, L}];
         nomatch -> [{more, L}]
       end
+  end.
+
+nl_send_extract(L, P, _Cfg) ->
+  try
+    {match, [Len, Src, Data]} = re:run(P,"([^,]*),([^,]*),alarm,(.*)\n", [dotall, {capture, [1, 2, 3], binary}]),
+    [{rcv_ul, send, {alarm, Len, Src, Data}}]
+  catch error: _Reason -> [{rcv_ul, L}]
   end.
 
 nl_get_discovery(P, _Cfg) ->
@@ -165,8 +172,8 @@ nl_set_protocol(P, _Cfg) ->
 
 nl_recv_extract(P, L) ->
    try
-    {match, [_Len, _Src, Dst, Data]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
-    {rcv_ll, {recv, nl_mac_hf:bin_to_num(Dst), Data, L}}
+    {match, [_Len, Src, Dst, Data]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    {rcv_ll, {recv, nl_mac_hf:bin_to_num(Src), nl_mac_hf:bin_to_num(Dst), Data, L}}
   catch error: _Reason -> {nl, error}
   end.
 
