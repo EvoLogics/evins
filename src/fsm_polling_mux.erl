@@ -84,6 +84,8 @@
                  {recv_poll_pbm, wait_poll_data},
                  {recv_poll_data, wait_poll_data},
 
+                 {process_poll_pbm, wait_poll_data},
+
                  {poll_next_addr, polling},
                  {send_poll_data, wait_poll_data}
                  ]},
@@ -258,7 +260,6 @@ handle_event(MM, SM, Term) ->
     {async, _Tuple} ->
       SM;
     {sync,"?PC", PC} when Wait_pc == true ->
-      % TODO: check counter, agter firmware upfate
       SM1 = fsm:clear_timeout(SM, wait_pc),
       SM2 = fsm:clear_timeout(SM1, answer_timeout),
       SM3 = init_packet_counter(SM2, PC),
@@ -316,9 +317,9 @@ handle_polling(_MM, #sm{event = poll_next_addr} = SM, Term) ->
     true ->
       fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_im, STuple});
     false ->
-      % TODO: change 20 to be a parameter
+      Time_wait_recv = share:get(SM, time_wait_recv),
       SM1 = fsm:send_at_command(SM, STuple),
-      SM2 = fsm:set_timeout(SM1, {s, 20}, wait_recv_pbm),
+      SM2 = fsm:set_timeout(SM1, {s, Time_wait_recv}, wait_recv_pbm),
       SM2#sm{event = send_poll_data}
   end;
 handle_polling(_MM, #sm{event = retransmit_im} = SM, Term) ->
@@ -334,7 +335,7 @@ handle_polling(_MM, SM, Term) ->
 
 handle_wait_poll_pbm(_MM, SM, Term = {recv_poll_pbm, Pbm}) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  % TODO: if pbm contains burst data flag, wait till recv_poll_data
+  % if pbm contains burst data flag, wait till recv_poll_data
   % if not, directly to poll next address
   % or timeout, nothing was received
 
@@ -356,7 +357,7 @@ handle_wait_poll_pbm(_MM, SM, Term = {recv_poll_pbm, Pbm}) ->
           SM1#sm{event = recv_poll_pbm, event_params = {poll_data_len, ExtrLen}}
       end;
     _ ->
-      % TODO: Maybe timetout, if no conn to VDT, no pbm
+      % if no conn to VDT, no pbm, wait till timeout and poll next address
       SM#sm{event = eps}
   end;
 handle_wait_poll_pbm(_MM, SM, Term) ->
@@ -385,8 +386,8 @@ handle_wait_poll_data(_MM, SMW, Term = {recv_poll_data, RTuple}) ->
       poll_next_addr(SM),
       SM#sm{event = poll_next_addr};
     _ ->
-      % TODO: set timeout, if data could not be delivered, add a paramer
-      SM1 = fsm:set_timeout(SM, {s, 20}, wait_rest_poll_data),
+      Time_wait_recv = share:get(SM, time_wait_recv),
+      SM1 = fsm:set_timeout(SM, {s, Time_wait_recv}, wait_rest_poll_data),
       SM1#sm{event = eps, event_params = {poll_data_len, WaitingRestData}}
   end;
 handle_wait_poll_data(_MM, SM, Term) ->
@@ -420,8 +421,7 @@ handle_poll_response_data(_MM, #sm{event = send_poll_pbm} = SM, _Term) ->
   Local_address = share:get(SM, local_address),
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   Event_params = SM#sm.event_params,
-  % TODO: processed data!
-
+  
   {recv, {Pid, _Len, Src, Dst, _Flag, _}} = Event_params,
 
   [Tail, MsgType, LocalPC, Data] = create_poll_data_response(SM, Src),
@@ -434,7 +434,6 @@ handle_poll_response_data(_MM, #sm{event = send_poll_pbm} = SM, _Term) ->
           fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {send_burst, Event_params});
         false ->
           SM1 = fsm:send_at_command(SM, {at, "?PC", ""}),
-
           SBurstTuple = {at, {pid, Pid}, "*SEND", Src, Data},
           Tuple = {Event_params, {MsgType, LocalPC, SBurstTuple}, Tail},
           fsm:set_timeout(SM1#sm{event_params = Tuple}, ?ANSWER_TIMEOUT, wait_pc)
@@ -559,7 +558,6 @@ create_VDT_pbm_msg(_SM, _Dst, nb) ->
   BLenBurst = binary:encode_unsigned(0, big),
   <<"VPbm", BLenBurst/binary>>;
 create_VDT_pbm_msg(SM, Dst, b) ->
-  %Local_address = share:get(SM, local_address),
   DstA = binary_to_atom(integer_to_binary(Dst), utf8),
 
   DS = queue_to_data(SM, DstA, sensitive),
@@ -602,15 +600,22 @@ create_data_queue(SM, Dst) ->
   QNtol = list_to_atom(atom_to_list(tolerant) ++ atom_to_list(DstA)),
   QTol = share:get(SM, QNtol),
 
+  Max_packets_sensitive_transmit = share:get(SM, max_packets_sensitive_transmit),
+  Max_packets_tolerant_transmit = share:get(SM, max_packets_tolerant_transmit),  
+
   NL =
   case QTol of
     _ when QTol =/= nothing, QSens =/= nothing ->
-      NQ = queue:join(QSens, QTol),
+      QTolPart = get_part_of_list(Max_packets_tolerant_transmit, QTol),
+      QSensPart = get_part_of_list(Max_packets_sensitive_transmit, QSens),
+      NQ = queue:join(QSensPart, QTolPart),
       queue:to_list(NQ);
     nothing when QSens =/= nothing ->
-      queue:to_list(QSens);
+      QSensPart = get_part_of_list(Max_packets_sensitive_transmit, QSens),
+      queue:to_list(QSensPart);
     _ when QTol =/= nothing, QSens == nothing ->
-      queue:to_list(QTol);
+      QTolPart = get_part_of_list(Max_packets_tolerant_transmit, QTol),
+      queue:to_list(QTolPart);
     _ ->
       []
   end,
@@ -621,6 +626,14 @@ create_data_queue(SM, Dst) ->
     [{Type, LocalPC, Dst, Data} | A]
   end, [], NL).
 
+get_part_of_list(Max, Q) ->
+  case Max >= queue:len(Q) of
+    true -> Q;
+    false ->
+      io:format("!!!!!!!!!!!!!!!!!!!!!!!!! ~p ~p   ~n", [Max, Q]),
+      {Q1, _Q2} = queue:split(Max, Q),
+      Q1
+  end.
 
 extract_CDT_msg(SM, Msg) ->
   CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
@@ -678,6 +691,8 @@ create_CDT_msg(SM, nb) ->
 create_CDT_msg(SM, b) ->
   % TODO: DATA? Fused Position + CDT ?
   % Burst fomt CDT? or dummy with POS?
+  % Set max pos len
+  
   Current_polling_addr = get_current_poll_addr(SM),
   Dst = binary_to_atom(integer_to_binary(Current_polling_addr), utf8),
 
@@ -689,7 +704,6 @@ create_CDT_msg(SM, b) ->
   LenDataPos = byte_size(DataPos),
   DataCDT = list_to_binary([DS, DT]),
 
-  % TODO: Set max pos len
   CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
   CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
   CBitsPosLen = nl_mac_hf:count_flag_bits(63),
@@ -749,7 +763,7 @@ add_to_limited_list(SM, L, Key, NameQ, Max) ->
 add_to_CDT_queue(SM, STuple) ->
   LocalPC = share:get(SM, local_pc),
   increase_local_pc(SM, local_pc),
-  % TODO: maybe we have to save messages to a file
+
   {nl, send, TransmitLen, IDst, MsgType, Payload} = STuple,
 
   Polling_seq_msgs = share:get(SM, polling_seq_msgs),
@@ -774,8 +788,8 @@ add_to_CDT_queue(SM, STuple) ->
     tolerant ->
       queue:in(Item, Q);
     sensitive ->
-      %TODO: configurable parameter Max
-      nl_mac_hf:queue_limited_push(Q, Item, 3)
+      Max_sensitive_queue = share:get(SM, max_sensitive_queue),
+      nl_mac_hf:queue_limited_push(Q, Item, Max_sensitive_queue)
   end,
   share:put(SM, Qname, NQ),
   ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, Qname)]).
@@ -803,6 +817,7 @@ delete_delivered_item(SM, Name, PC, Dst) ->
 
 change_status_item(SM, PC, {MsgType, LocalPC, ATSendTuple}) ->
   {at, {pid, _}, "*SEND", Dst, Data} = ATSendTuple,
+  Max_sensitive_queue = share:get(SM, max_sensitive_queue),
   DstA = binary_to_atom(integer_to_binary(Dst), utf8),
 
   Qname = list_to_atom(atom_to_list(MsgType) ++ atom_to_list(DstA)),
@@ -819,11 +834,11 @@ change_status_item(SM, PC, {MsgType, LocalPC, ATSendTuple}) ->
         queue:in(Item, Q);
       {_, LocalPC, Status, Time, MsgType, TransmitLen, Payload} when MsgType == sensitive ->
         Item = {PC, LocalPC, Status, Time, MsgType, TransmitLen, Payload},
-        nl_mac_hf:queue_limited_push(Q, Item, 3);
+        nl_mac_hf:queue_limited_push(Q, Item, Max_sensitive_queue);
       Rest when MsgType == tolerant ->
         queue:in(Rest, Q);
       Rest when MsgType == sensitive ->
-        nl_mac_hf:queue_limited_push(Q, Rest, 3)
+        nl_mac_hf:queue_limited_push(Q, Rest, Max_sensitive_queue)
     end
   end, queue:new(), QueueItemsList),
 

@@ -42,5 +42,26 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
 
 parse_conf(_Mod_ID, ArgS, Share) ->
   ShareID = #sm{share = Share},
+
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
-  share:put(ShareID, [{nl_protocol, NL_Protocol}]).
+  Time_wait_recv_set  = [Time  || {time_wait_recv, Time} <- ArgS],
+  Max_sensitive_queue_set  = [Max  || {max_sensitive_queue, Max} <- ArgS],
+  Max_packets_transmit_sens_set  = [Max  || {max_packets_sensitive_transmit, Max} <- ArgS],
+  Max_packets_tolerant_transmit_set  = [Max  || {max_packets_tolerant_transmit, Max} <- ArgS],
+
+  Time_wait_recv  = set_params(Time_wait_recv_set, 20), %s
+  Max_sensitive_queue  = set_params(Max_sensitive_queue_set, 3),
+  Max_packets_transmit_sens  = set_params(Max_packets_transmit_sens_set, 3),
+  Max_packets_tolerant_transmit  = set_params(Max_packets_tolerant_transmit_set, 3),
+
+  share:put(ShareID, [{nl_protocol, NL_Protocol}]),
+  share:put(ShareID, [{time_wait_recv, Time_wait_recv}]),
+  share:put(ShareID, [{max_sensitive_queue, Max_sensitive_queue}]),
+  share:put(ShareID, [{max_packets_sensitive_transmit, Max_packets_transmit_sens}]),
+  share:put(ShareID, [{max_packets_tolerant_transmit, Max_packets_tolerant_transmit}]).
+
+set_params(Param, Default) ->
+  case Param of
+    []     -> Default;
+    [Value]-> Value
+  end.
