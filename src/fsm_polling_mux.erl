@@ -252,8 +252,8 @@ handle_event(MM, SM, Term) ->
       SM;
     {async, {delivered, PC, Src}} ->
       io:format(">>>>>>>>>>>>> DELIVERED ~p ~p~n", [?ID, PC]),
-      delete_delivered_item(SM, dtolerant, PC, Src),
-      delete_delivered_item(SM, dsensitive, PC, Src),
+      delete_delivered_item(SM, tolerant, PC, Src),
+      delete_delivered_item(SM, sensitive, PC, Src),
       SM;
     {async, _Tuple} ->
       SM;
@@ -532,9 +532,9 @@ clear_buffer(SM) ->
   LSeq = share:get(SM, polling_seq_msgs),
   F = fun(X) ->
     DstA = binary_to_atom(integer_to_binary(X), utf8),
-    QSens = list_to_atom(atom_to_list(dsensitive) ++ atom_to_list(DstA)),
+    QSens = list_to_atom(atom_to_list(sensitive) ++ atom_to_list(DstA)),
     share:put(SM, QSens, queue:new()),
-    QTol = list_to_atom(atom_to_list(dtolerant) ++ atom_to_list(DstA)),
+    QTol = list_to_atom(atom_to_list(tolerant) ++ atom_to_list(DstA)),
     share:put(SM, QTol, queue:new())
   end,
   [ F(X) || X <- LSeq].
@@ -562,8 +562,8 @@ create_VDT_pbm_msg(SM, Dst, b) ->
   %Local_address = share:get(SM, local_address),
   DstA = binary_to_atom(integer_to_binary(Dst), utf8),
 
-  DS = queue_to_data(SM, DstA, dsensitive),
-  DT = queue_to_data(SM, DstA, dtolerant),
+  DS = queue_to_data(SM, DstA, sensitive),
+  DT = queue_to_data(SM, DstA, tolerant),
   Len = byte_size(DS) + byte_size(DT),
   BLenBurst = binary:encode_unsigned(Len, big),
   <<"VPbm", BLenBurst/binary>>.
@@ -583,8 +583,8 @@ create_poll_data_response(SM, Dst) ->
   DstA = binary_to_atom(integer_to_binary(Dst), utf8),
 
   Res = create_data_queue(SM, Dst),
-  DS = queue_to_data(SM, DstA, dsensitive),
-  DT = queue_to_data(SM, DstA, dtolerant),
+  DS = queue_to_data(SM, DstA, sensitive),
+  DT = queue_to_data(SM, DstA, tolerant),
   Len = byte_size(DS) + byte_size(DT),
   case Len of
     0 ->
@@ -597,9 +597,9 @@ create_poll_data_response(SM, Dst) ->
 create_data_queue(SM, Dst) ->
   % TODO : we have to implement the limit of the transmission list, parameter
   DstA = binary_to_atom(integer_to_binary(Dst), utf8),
-  QNsens = list_to_atom(atom_to_list(dsensitive) ++ atom_to_list(DstA)),
+  QNsens = list_to_atom(atom_to_list(sensitive) ++ atom_to_list(DstA)),
   QSens = share:get(SM, QNsens),
-  QNtol = list_to_atom(atom_to_list(dtolerant) ++ atom_to_list(DstA)),
+  QNtol = list_to_atom(atom_to_list(tolerant) ++ atom_to_list(DstA)),
   QTol = share:get(SM, QNtol),
 
   NL =
@@ -681,8 +681,8 @@ create_CDT_msg(SM, b) ->
   Current_polling_addr = get_current_poll_addr(SM),
   Dst = binary_to_atom(integer_to_binary(Current_polling_addr), utf8),
 
-  DS = queue_to_data(SM, Dst, dsensitive),
-  DT = queue_to_data(SM, Dst, dtolerant),
+  DS = queue_to_data(SM, Dst, sensitive),
+  DT = queue_to_data(SM, Dst, tolerant),
 
   PollingCounter = share:get(SM, polling_pc),
   DataPos = <<"POS....">>,
@@ -771,9 +771,9 @@ add_to_CDT_queue(SM, STuple) ->
   Item = {PC, LocalPC, Status, Time, MsgType, TransmitLen, Payload},
   NQ =
   case MsgType of
-    dtolerant ->
+    tolerant ->
       queue:in(Item, Q);
-    dsensitive ->
+    sensitive ->
       %TODO: configurable parameter Max
       nl_mac_hf:queue_limited_push(Q, Item, 3)
   end,
@@ -814,15 +814,15 @@ change_status_item(SM, PC, {MsgType, LocalPC, ATSendTuple}) ->
   lists:foldr(
   fun(X, Q) ->
     case X of
-      {_, LocalPC, Status, Time, MsgType, TransmitLen, Payload} when MsgType == dtolerant ->
+      {_, LocalPC, Status, Time, MsgType, TransmitLen, Payload} when MsgType == tolerant ->
         Item = {PC, LocalPC, Status, Time, MsgType, TransmitLen, Payload},
         queue:in(Item, Q);
-      {_, LocalPC, Status, Time, MsgType, TransmitLen, Payload} when MsgType == dsensitive ->
+      {_, LocalPC, Status, Time, MsgType, TransmitLen, Payload} when MsgType == sensitive ->
         Item = {PC, LocalPC, Status, Time, MsgType, TransmitLen, Payload},
         nl_mac_hf:queue_limited_push(Q, Item, 3);
-      Rest when MsgType == dtolerant ->
+      Rest when MsgType == tolerant ->
         queue:in(Rest, Q);
-      Rest when MsgType == dsensitive ->
+      Rest when MsgType == sensitive ->
         nl_mac_hf:queue_limited_push(Q, Rest, 3)
     end
   end, queue:new(), QueueItemsList),
