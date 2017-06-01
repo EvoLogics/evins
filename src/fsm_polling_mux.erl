@@ -191,6 +191,14 @@ handle_event(MM, SM, Term) ->
     {rcv_ul, {nl, send, _TransmitLen, Local_address, _MsgType, _Payload}} ->
       fsm:cast(SM, polling_mux, {send, {response, {nl, error}}}),
       SM;
+    {rcv_ul, STuple = {nl, send, TransmitLen, _IDst, broadcast, _Payload}} ->
+      if TransmitLen < 50 ->
+        fsm:cast(SM, polling_mux, {send, {response, {nl, ok}}}),
+        add_to_CDT_queue(SM, STuple);
+      true ->
+        fsm:cast(SM, polling_mux, {send, {response, {nl, error}}})
+      end,
+      SM;
     {rcv_ul, STuple = {nl, send, _TransmitLen, _IDst, _MsgType, _Payload}} ->
       fsm:cast(SM, polling_mux, {send, {response, {nl, ok}}}),
       add_to_CDT_queue(SM, STuple),
@@ -252,11 +260,30 @@ handle_event(MM, SM, Term) ->
                       _E, _N, _U, _Roll, _Pitch, _Yaw, _P, _Rssi, _I, _Acc}} ->
       fsm:cast(SM, polling_nmea, {send, PosTerm}),
       SM;
+    {async, {deliveredim, Src}} ->
+      BroadcastExist = get_share_var(Src, broadcast),
+      BroadcastExistMsg = share:get(SM, BroadcastExist),
+      case BroadcastExistMsg of
+        nothing -> SM;
+        _ -> share:clean(SM, BroadcastExist), SM
+      end;
     {async, {delivered, PC, Src}} ->
-      io:format(">>>>>>>>>>>>> DELIVERED ~p ~p~n", [?ID, PC]),
       delete_delivered_item(SM, tolerant, PC, Src),
       delete_delivered_item(SM, sensitive, PC, Src),
       SM;
+    {async, Tuple = {failedim, _}} ->
+      io:format(">>>>>>>>>>>>> Failed ~p ~p ~p~n", [?ID, SM#sm.state, Tuple]),
+      SM;
+    % TODO: ack, pbm was delivered?
+    {async, {sendstart, Src, _, _, _}} ->
+      BroadcastExist = get_share_var(Src, broadcast),
+      BroadcastExistMsg = share:get(SM, BroadcastExist),
+      case BroadcastExistMsg of
+        {_, broadcast, sent, _, _} ->
+          share:clean(SM, BroadcastExist),
+          SM;
+        _ -> SM
+      end;
     {async, _Tuple} ->
       SM;
     {sync,"?PC", PC} when Wait_pc == true ->
@@ -307,12 +334,16 @@ handle_polling(_MM, #sm{event = poll_next_addr} = SM, Term) ->
   % TODO: multiple burst messages, what msg is the request msg?
   % TODO: remove delivered message
 
-  Poll_flag_burst = share:get(SM, poll_flag_burst),
-  STuple = create_CDT_msg(SM, Poll_flag_burst),
   Current_poll_addr = get_current_poll_addr(SM),
+  Poll_flag_burst = share:get(SM, poll_flag_burst),
 
-  io:format("handle_polling ======================================> ~p ~p ~n", [Poll_flag_burst, Current_poll_addr]),
+  BroadcastExist = get_share_var(Current_poll_addr, broadcast),
+  BroadcastExistMsg = share:get(SM, BroadcastExist),
 
+  STuple = create_CDT_msg(SM, Poll_flag_burst, BroadcastExistMsg),
+
+  io:format("handle_polling ======================================> ~p ~p ~p~n", [Poll_flag_burst, Current_poll_addr, BroadcastExistMsg]),
+  
   case Answer_timeout of
     true ->
       fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_im, STuple});
@@ -340,13 +371,19 @@ handle_wait_poll_pbm(_MM, SM, Term = {recv_poll_pbm, Pbm}) ->
   % or timeout, nothing was received
 
   Current_poll_addr = get_current_poll_addr(SM),
-  {recvpbm, _, Src, _, _, _, _, _, _} = Pbm,
+  {recvpbm, _, Src, Dst, _, _, _, _, _} = Pbm,
 
   case Src of
     Current_poll_addr ->
-      ExtrLen = extract_VDT_pbm_msg(SM, Pbm),
+      [ExtrLen, BroadcastData] = extract_VDT_pbm_msg(SM, Pbm),
 
       io:format("<<<<  Extr ~p ~120p~n", [Src, ExtrLen]),
+
+      if BroadcastData =/= <<>> ->
+        BroadcastDataLen = byte_size(BroadcastData),
+        fsm:cast(SM, polling_mux, {send, {response, {nl, recv, BroadcastDataLen, Src, Dst, BroadcastData}}});
+      true -> nothing
+      end,
 
       case ExtrLen of
         0 ->
@@ -421,7 +458,7 @@ handle_poll_response_data(_MM, #sm{event = send_poll_pbm} = SM, _Term) ->
   Local_address = share:get(SM, local_address),
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   Event_params = SM#sm.event_params,
-  
+
   {recv, {Pid, _Len, Src, Dst, _Flag, _}} = Event_params,
 
   [Tail, MsgType, LocalPC, Data] = create_poll_data_response(SM, Src),
@@ -456,6 +493,7 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
     false ->
       {recv, {Pid, _Len, Src, Dst, _Flag, DataCDT}} = Event_params,
       [Poll_data_len, Poll_data, Position, PollingFlagBurst, Process] = extract_CDT_msg(SM, DataCDT),
+
       case Process of
         ignore ->
           SM#sm{event = ignore_recv_poll_seq};
@@ -466,14 +504,16 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
           end,
           fsm:cast(SM, polling_nmea, {send, Position}),
 
-          Data = create_VDT_pbm_msg(SM, Src, PollingFlagBurst),
+          BroadcastExist = get_share_var(Src, broadcast),
+          BroadcastExistMsg = share:get(SM, BroadcastExist),
+
+          Data = create_VDT_pbm_msg(SM, Src, PollingFlagBurst, BroadcastExistMsg),
           SPMTuple = {at, {pid, Pid}, "*SENDPBM", Src, Data},
           SM1 = fsm:send_at_command(SM, SPMTuple),
 
-          if PollingFlagBurst == nb ->
-            SM1#sm{event = ignore_recv_poll_seq};
-          true ->
-            SM1#sm{event = send_poll_pbm, event_params = Event_params}
+          case PollingFlagBurst of
+            nb -> SM1#sm{event = ignore_recv_poll_seq};
+            b -> SM1#sm{event = send_poll_pbm, event_params = Event_params}
           end
       end
   end;
@@ -530,13 +570,18 @@ get_current_poll_addr(SM) ->
 clear_buffer(SM) ->
   LSeq = share:get(SM, polling_seq_msgs),
   F = fun(X) ->
-    DstA = binary_to_atom(integer_to_binary(X), utf8),
-    QSens = list_to_atom(atom_to_list(sensitive) ++ atom_to_list(DstA)),
+    QSens = get_share_var(X, sensitive),
     share:put(SM, QSens, queue:new()),
-    QTol = list_to_atom(atom_to_list(tolerant) ++ atom_to_list(DstA)),
-    share:put(SM, QTol, queue:new())
+    QTol = get_share_var(X, tolerant),
+    share:put(SM, QTol, queue:new()),
+    BroadcastExist = get_share_var(X, broadcast),
+    share:clean(SM, BroadcastExist)
   end,
   [ F(X) || X <- LSeq].
+
+get_share_var(Dst, Name) ->
+  DstA = binary_to_atom(integer_to_binary(Dst), utf8),
+  list_to_atom(atom_to_list(Name) ++ atom_to_list(DstA)).
 
 extract_poll_data(_SM, Payload) ->
   try
@@ -549,22 +594,71 @@ extract_VDT_pbm_msg(SM, Pbm) ->
   try
     Local_address = share:get(SM, local_address),
     {recvpbm, _Len, _Dst, Local_address, _, _Rssi, _Int, _, Payload} = Pbm,
-    <<"VPbm", BLenBurst/binary>> = Payload,
-    binary:decode_unsigned(BLenBurst, big)
-  catch error: _Reason -> 0 %!!! ignore
+
+    Max_burst_len = share:get(SM, max_burst_len),
+    CMaxBurstLenBits = nl_mac_hf:count_flag_bits(Max_burst_len),
+
+
+    <<"VPbm", BLenBurst:CMaxBurstLenBits, Rest/bitstring>> = Payload,
+    Data_bin = (bit_size(Payload) rem 8) =/= 0,
+    BroadCastData =
+    if Data_bin =:= false ->
+      Add = bit_size(Rest) rem 8,
+      <<_:Add, Data/binary>> = Rest,
+      Data;
+    true ->
+      Rest
+    end,
+    [BLenBurst, BroadCastData]
+
+  catch error: _Reason -> [0, <<>>]
   end.
 
-create_VDT_pbm_msg(_SM, _Dst, nb) ->
-  BLenBurst = binary:encode_unsigned(0, big),
-  <<"VPbm", BLenBurst/binary>>;
-create_VDT_pbm_msg(SM, Dst, b) ->
-  DstA = binary_to_atom(integer_to_binary(Dst), utf8),
+create_VDT_pbm_msg(SM, Dst, FlagBurst, nothing) ->
+  Max_burst_len = share:get(SM, max_burst_len),
+  CMaxBurstLenBits = nl_mac_hf:count_flag_bits(Max_burst_len),
+  Len =
+  case FlagBurst of
+    nb -> 0;
+    b -> get_length_all_msgs(SM, Dst)
+  end,
 
-  DS = queue_to_data(SM, DstA, sensitive),
-  DT = queue_to_data(SM, DstA, tolerant),
-  Len = byte_size(DS) + byte_size(DT),
-  BLenBurst = binary:encode_unsigned(Len, big),
-  <<"VPbm", BLenBurst/binary>>.
+  BLenBurst = <<Len:CMaxBurstLenBits>>,
+
+  TmpData = <<"VPbm", BLenBurst/bitstring>>,
+  Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
+  if Data_bin =:= false ->
+    Add = (8 - bit_size(TmpData) rem 8) rem 8,
+    <<"VPbm", BLenBurst/bitstring, 0:Add>>;
+  true ->
+    TmpData
+  end;
+create_VDT_pbm_msg(SM, Dst, FlagBurst, BroadcastExistMsg) ->
+  BroadcastExist = get_share_var(Dst, broadcast),
+
+  Max_burst_len = share:get(SM, max_burst_len),
+  CMaxBurstLenBits = nl_mac_hf:count_flag_bits(Max_burst_len),
+
+  {Time, broadcast, _Status, TransmitLen, BroadcastPayload} = BroadcastExistMsg,
+  NTuple = {Time, broadcast, sent, TransmitLen, BroadcastPayload},
+  share:put(SM, BroadcastExist, NTuple),
+
+  Len =
+  case FlagBurst of
+    nb -> 0;
+    b -> get_length_all_msgs(SM, Dst)
+  end,
+
+  BLenBurst = <<Len:CMaxBurstLenBits>>,
+
+  TmpData = <<"VPbm", BLenBurst/bitstring, BroadcastPayload/binary>>,
+  Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
+  if Data_bin =:= false ->
+    Add = (8 - bit_size(TmpData) rem 8) rem 8,
+    <<"VPbm", BLenBurst/bitstring, 0:Add, BroadcastPayload/binary>>;
+  true ->
+    TmpData
+  end.
 
 create_next_poll_data_response(_SM, LTransmission) ->
   case LTransmission of
@@ -578,12 +672,8 @@ create_next_poll_data_response(_SM, LTransmission) ->
   end.
 
 create_poll_data_response(SM, Dst) ->
-  DstA = binary_to_atom(integer_to_binary(Dst), utf8),
-
   Res = create_data_queue(SM, Dst),
-  DS = queue_to_data(SM, DstA, sensitive),
-  DT = queue_to_data(SM, DstA, tolerant),
-  Len = byte_size(DS) + byte_size(DT),
+  Len = get_length_all_msgs(SM, Dst),
   case Len of
     0 ->
       [nothing, nothing, nothing, nothing];
@@ -592,16 +682,20 @@ create_poll_data_response(SM, Dst) ->
     [Tail, Type, LocalPC, <<"V", DataVDT/binary>>]
   end.
 
+get_length_all_msgs(SM, Dst) ->
+  DS = queue_to_data(SM, Dst, sensitive),
+  DT = queue_to_data(SM, Dst, tolerant),
+  byte_size(DS) + byte_size(DT).
+
 create_data_queue(SM, Dst) ->
   % TODO : we have to implement the limit of the transmission list, parameter
-  DstA = binary_to_atom(integer_to_binary(Dst), utf8),
-  QNsens = list_to_atom(atom_to_list(sensitive) ++ atom_to_list(DstA)),
+  QNsens = get_share_var(Dst, sensitive),
   QSens = share:get(SM, QNsens),
-  QNtol = list_to_atom(atom_to_list(tolerant) ++ atom_to_list(DstA)),
+  QNtol = get_share_var(Dst, tolerant),
   QTol = share:get(SM, QNtol),
 
   Max_packets_sensitive_transmit = share:get(SM, max_packets_sensitive_transmit),
-  Max_packets_tolerant_transmit = share:get(SM, max_packets_tolerant_transmit),  
+  Max_packets_tolerant_transmit = share:get(SM, max_packets_tolerant_transmit),
 
   NL =
   case QTol of
@@ -653,6 +747,7 @@ extract_CDT_msg(SM, Msg) ->
 
   Recv_packages = share:get(SM, recv_packages),
   ResAdd = add_to_limited_list(SM, Recv_packages, PC, recv_packages, 10),
+
   case ResAdd of
     nothing  ->
       [nothing, nothing, nothing, nothing, ignore];
@@ -662,11 +757,12 @@ extract_CDT_msg(SM, Msg) ->
       [byte_size(CDTData), CDTData, Pos, b, answer_pbm]
   end.
 
-create_CDT_msg(SM, nb) ->
+create_CDT_msg(SM, nb, nothing) ->
   Current_polling_addr = get_current_poll_addr(SM),
   PollingCounter = share:get(SM, polling_pc),
   DataPos = <<"POS....">>,
   LenDataPos = byte_size(DataPos),
+
   PollFlagBurst = 1,
 
   CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
@@ -676,6 +772,7 @@ create_CDT_msg(SM, nb) ->
   BPollFlagBurst = <<PollFlagBurst:CPollingFlagBurst>>,
   BPollingCounter = <<PollingCounter:CPollingCounterLen>>,
   BLenPos = <<LenDataPos:CBitsPosLen>>,
+
   TmpData = <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   Data =
@@ -687,16 +784,15 @@ create_CDT_msg(SM, nb) ->
   end,
   increase_local_pc(SM, polling_pc),
   {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data};
-create_CDT_msg(SM, b) ->
+create_CDT_msg(SM, b, nothing) ->
   % TODO: DATA? Fused Position + CDT ?
   % Burst fomt CDT? or dummy with POS?
   % Set max pos len
-  
-  Current_polling_addr = get_current_poll_addr(SM),
-  Dst = binary_to_atom(integer_to_binary(Current_polling_addr), utf8),
 
-  DS = queue_to_data(SM, Dst, sensitive),
-  DT = queue_to_data(SM, Dst, tolerant),
+  Current_polling_addr = get_current_poll_addr(SM),
+
+  DS = queue_to_data(SM, Current_polling_addr, sensitive),
+  DT = queue_to_data(SM, Current_polling_addr, tolerant),
 
   PollingCounter = share:get(SM, polling_pc),
   DataPos = <<"POS....">>,
@@ -708,6 +804,7 @@ create_CDT_msg(SM, b) ->
   CBitsPosLen = nl_mac_hf:count_flag_bits(63),
 
   PollFlagBurst = 0,
+
   BPollFlagBurst = <<PollFlagBurst:CPollingFlagBurst>>,
   BPollingCounter = <<PollingCounter:CPollingCounterLen>>,
   BLenPos = <<LenDataPos:CBitsPosLen>>,
@@ -730,10 +827,44 @@ create_CDT_msg(SM, b) ->
     {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data};
   true ->
     {at, {pid, 0},"*SEND", Current_polling_addr, Data}
-  end.
+  end;
+create_CDT_msg(SM, FlagBurst, BroadcastExistMsg) ->
+  Current_polling_addr = get_current_poll_addr(SM),
+  DataPos = <<"POS....">>,
+  LenDataPos = byte_size(DataPos),
+  PollingCounter = share:get(SM, polling_pc),
+
+  PollFlagBurst =
+  case FlagBurst of
+    nb -> 1;
+    b -> 0
+  end,
+
+  CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
+  CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
+  CBitsPosLen = nl_mac_hf:count_flag_bits(63),
+
+  {_Time, broadcast, _Status, _TransmitLen, BroadcastPayload} = BroadcastExistMsg,
+
+  BPollFlagBurst = <<PollFlagBurst:CPollingFlagBurst>>,
+  BLenPos = <<LenDataPos:CBitsPosLen>>,
+  BPollingCounter = <<PollingCounter:CPollingCounterLen>>,
+
+  TmpData = <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, BroadcastPayload/binary>>,
+  Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
+  Data =
+  if Data_bin =:= false ->
+    Add = (8 - bit_size(TmpData) rem 8) rem 8,
+    <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add, BroadcastPayload/binary>>;
+  true ->
+    TmpData
+  end,
+
+  increase_local_pc(SM, polling_pc),
+  {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data}.
 
 queue_to_data(SM, Dst, Name) ->
-  Qname = list_to_atom(atom_to_list(Name) ++ atom_to_list(Dst)),
+  Qname = get_share_var(Dst, Name),
   Q = share:get(SM, Qname),
   case Q of
     nothing -> <<"">>;
@@ -759,17 +890,21 @@ add_to_limited_list(SM, L, Key, NameQ, Max) ->
       nothing
   end.
 
-add_to_CDT_queue(SM, STuple) ->
+add_to_CDT_queue(SM, {nl, send, TransmitLen, IDst, broadcast, Payload}) ->
+  Polling_seq_msgs = share:get(SM, polling_seq_msgs),
+  add_to_limited_list(SM, Polling_seq_msgs, IDst, polling_seq_msgs, 10),
+  Time = erlang:monotonic_time(micro_seconds),
+  MsgTuple = {Time, broadcast, not_sent, TransmitLen, Payload},
+  MsgName = get_share_var(IDst, broadcast),
+  share:put(SM, MsgName, MsgTuple),
+  ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, MsgName)]);
+add_to_CDT_queue(SM, {nl, send, TransmitLen, IDst, MsgType, Payload}) ->
   LocalPC = share:get(SM, local_pc),
   increase_local_pc(SM, local_pc),
 
-  {nl, send, TransmitLen, IDst, MsgType, Payload} = STuple,
-
   Polling_seq_msgs = share:get(SM, polling_seq_msgs),
   add_to_limited_list(SM, Polling_seq_msgs, IDst, polling_seq_msgs, 10),
-
-  ADst = binary_to_atom(integer_to_binary(IDst), utf8),
-  Qname = list_to_atom(atom_to_list(MsgType) ++ atom_to_list(ADst)),
+  Qname = get_share_var(IDst, MsgType),
 
   QShare = share:get(SM, Qname),
   Q =
@@ -794,8 +929,7 @@ add_to_CDT_queue(SM, STuple) ->
   ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, Qname)]).
 
 delete_delivered_item(SM, Name, PC, Dst) ->
-  DstA = binary_to_atom(integer_to_binary(Dst), utf8),
-  Qname = list_to_atom(atom_to_list(Name) ++ atom_to_list(DstA)),
+  Qname = get_share_var(Dst, Name),
   QueueItems = share:get(SM, Qname),
   case QueueItems of
     nothing -> nothing;
@@ -817,9 +951,8 @@ delete_delivered_item(SM, Name, PC, Dst) ->
 change_status_item(SM, PC, {MsgType, LocalPC, ATSendTuple}) ->
   {at, {pid, _}, "*SEND", Dst, Data} = ATSendTuple,
   Max_sensitive_queue = share:get(SM, max_sensitive_queue),
-  DstA = binary_to_atom(integer_to_binary(Dst), utf8),
+  Qname = get_share_var(Dst, MsgType),
 
-  Qname = list_to_atom(atom_to_list(MsgType) ++ atom_to_list(DstA)),
   QueueItems = share:get(SM, Qname),
   QueueItemsList = queue:to_list(QueueItems),
 

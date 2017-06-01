@@ -146,7 +146,7 @@ nl_send_extract(P, Cfg) ->
     case Match_CDT_msg_type of
       {match, [MsgType, PP]} ->
           AMsgType = binary_to_atom(MsgType, utf8),
-          Messages = [tolerant, sensitive], %alarm????
+          Messages = [tolerant, sensitive, broadcast], %alarm????
           [AMsgType] = lists:filter(fun(X)-> X == AMsgType end, Messages),
           [PP, AMsgType];
       nomatch -> [PayloadSTail, nothing]
