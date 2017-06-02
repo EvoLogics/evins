@@ -1,4 +1,4 @@
-%% Copyright (c) 2015, Oleksiy Kebkal <lesha@evologics.de>
+%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
 %% 
 %% Redistribution and use in source and binary forms, with or without 
 %% modification, are permitted provided that the following conditions 
@@ -100,7 +100,7 @@ try_recv(L, Cfg) ->
         [_, L1] -> [{rcv_ll, L} | split(L1, Cfg#{waitsync => no})];
         _ -> [{rcv_ll, L}]
       end;
-    nomatch ->  [{nl, error}]
+    nomatch ->  try_send(L, Cfg)
   end.
 
 try_send(L, Cfg) ->
@@ -111,9 +111,9 @@ try_send(L, Cfg) ->
       case re:run(L, "\n") of
         {match, [{_, _}]} ->
           case re:run(L,
-            "^(NL,set,protocol,|NL,discovery,stop|NL,discovery|NL,get,discovery|NL,get,protocols,configured)(.*)",
+            "^(NL,send,|NL,set,protocol,|NL,discovery,stop|NL,discovery|NL,get,discovery|NL,get,protocols,configured)(.*)",
             [dotall, {capture, [1, 2], binary}]) of
-
+            {match, [<<"NL,send,">>, P]}  -> nl_send_extract(L, P, Cfg);
             {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
             {match, [<<"NL,discovery">>, P]}  -> nl_discovery(P, Cfg);
             {match, [<<"NL,discovery,stop">>, _P]}  -> [{rcv_ul, stop, discovery}];
@@ -125,6 +125,13 @@ try_send(L, Cfg) ->
         nomatch when Waitsync == multiline -> [{more, L}];
         nomatch -> [{more, L}]
       end
+  end.
+
+nl_send_extract(L, P, _Cfg) ->
+  try
+    {match, [Len, Src, Data]} = re:run(P,"([^,]*),([^,]*),alarm,(.*)\n", [dotall, {capture, [1, 2, 3], binary}]),
+    [{rcv_ul, send, {alarm, Len, Src, Data}}]
+  catch error: _Reason -> [{rcv_ul, L}]
   end.
 
 nl_get_discovery(P, _Cfg) ->
@@ -154,6 +161,8 @@ nl_set_protocol(P, _Cfg) ->
     case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
       true ->
         [{rcv_ul, {set, protocol, AProtocolID} }];
+      false when AProtocolID == polling ->
+        [{rcv_ul, {set, protocol, AProtocolID} }];
       false -> [{nl, error}]
     end
   catch error: _Reason -> [{nl, error}]
@@ -163,8 +172,8 @@ nl_set_protocol(P, _Cfg) ->
 
 nl_recv_extract(P, L) ->
    try
-    {match, [_Len, _Src, Dst, Data]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
-    {rcv_ll, {recv, nl_mac_hf:bin_to_num(Dst), Data, L}}
+    {match, [_Len, Src, Dst, Data]} = re:run(P,"([^,]*),([^,]*),([^,]*),([^,]*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    {rcv_ll, {recv, nl_mac_hf:bin_to_num(Src), nl_mac_hf:bin_to_num(Dst), Data, L}}
   catch error: _Reason -> {nl, error}
   end.
 
@@ -186,8 +195,10 @@ nl_neighbours_extract(L, NeighboursBin, _Cfg) ->
 nl_protocol_extract(P, _Cfg) ->
    try
     {match, [Name]} = re:run(P,"([^,]*)", [dotall, {capture, [1], binary}]),
-    case lists:member(NPA = binary_to_atom(Name, utf8), ?LIST_ALL_PROTOCOLS) of
+    NPA = binary_to_atom(Name, utf8),
+    case lists:member(NPA, ?LIST_ALL_PROTOCOLS) of
       true  -> {rcv_ll, {nl, protocol, NPA}};
+      false when NPA == polling -> {rcv_ll, {nl, protocol, NPA}};
       false -> {nl, error}
     end
   catch error: _Reason -> {nl, error}

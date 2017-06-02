@@ -100,36 +100,35 @@ split(L, Cfg) ->
         {match, [<<"OK">>, P, L1]}            -> [ok_extract(P)		| split(L1, Cfg)];
         {match, [<<"BUSY">>, P, L1]}          -> [busy_extract(P)		| split(L1, Cfg)];
         {match, [<<"ERROR">>, P, L1]}         -> [error_extract(P)		| split(L1, Cfg)];
-        nomatch	->
-        case patter_matcher(L,"(.*?)[\r\n]+(.*)", 2) of
-          {match, [P, L1]} ->
-          [{ignore, P} | split(L1, Cfg) ]
-        end
+        nomatch	-> try_send(L, Cfg)
       end
     end;
   nomatch ->
-    case re:run(L, "\n") of
-      {match, [{_, _}]} ->
-      %% Temporary only instant messages can be used!
-        case patter_matcher(L, "^(AT[*]SEND,p|AT[*]SEND,|AT[*]SENDIM,p|AT[*]SENDIM,|AT[*]SENDIMS,p|AT[*]SENDIMS,)(.*)", 2) of
-          {match, [<<"AT*SEND,p">>, P]}   -> send_extract(L, P, Cfg, pid);
-          {match, [<<"AT*SEND,">>, P]}    -> send_extract(L, P, Cfg, nopid);
-          {match, [<<"AT*SENDIM,p">>, P]}	-> sendim_extract(L, P, Cfg, pid);
-          {match, [<<"AT*SENDIM,">>, P]}  -> sendim_extract(L, P, Cfg, nopid);
-          {match, [<<"AT*SENDIMS,p">>, P]}-> sendims_extract(L, P, Cfg, pid);
-          {match, [<<"AT*SENDIMS,">>, P]}	-> sendims_extract(L, P, Cfg, nopid);
-          nomatch ->
-            case patter_matcher(L, "^(AT)(.*?)[\n]+(.*)", 3) of
-              {match, [<<"AT">>, P, L1]} -> [{rcv_ul, {command, P} } | split(L1, Cfg)];
-              nomatch ->
-                case patter_matcher(L,"(.*?)[\n]+(.*)", 2) of
-                {match, [P, L1]} -> [ {rcv_ul, {other, P}}| split(L1, Cfg)];
-                nomatch 		-> [{more, L}]
-              end
+    try_send(L, Cfg)
+  end.
+
+try_send(L, Cfg) ->
+  case re:run(L, "\n") of
+    {match, [{_, _}]} ->
+    %% Temporary only instant messages can be used!
+      case patter_matcher(L, "^(AT[*]SEND,p|AT[*]SEND,|AT[*]SENDIM,p|AT[*]SENDIM,|AT[*]SENDIMS,p|AT[*]SENDIMS,)(.*)", 2) of
+        {match, [<<"AT*SEND,p">>, P]}   -> send_extract(L, P, Cfg, pid);
+        {match, [<<"AT*SEND,">>, P]}    -> send_extract(L, P, Cfg, nopid);
+        {match, [<<"AT*SENDIM,p">>, P]} -> sendim_extract(L, P, Cfg, pid);
+        {match, [<<"AT*SENDIM,">>, P]}  -> sendim_extract(L, P, Cfg, nopid);
+        {match, [<<"AT*SENDIMS,p">>, P]}-> sendims_extract(L, P, Cfg, pid);
+        {match, [<<"AT*SENDIMS,">>, P]} -> sendims_extract(L, P, Cfg, nopid);
+        nomatch ->
+          case patter_matcher(L, "^(AT)(.*?)[\n]+(.*)", 3) of
+            {match, [<<"AT">>, P, L1]} -> [{rcv_ul, {command, P} } | split(L1, Cfg)];
+            nomatch ->
+              case patter_matcher(L,"(.*?)[\r\n]+(.*)", 2) of
+              {match, [P, L1]} -> [ {ignore, P}| split(L1, Cfg)];
+              nomatch     -> [{more, L}]
             end
-        end;
-      nomatch -> [{more, L}]
-    end
+          end
+      end;
+    nomatch -> [{more, L}]
   end.
 
 send_extract(L, P, Cfg, IfPid) ->

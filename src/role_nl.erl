@@ -77,7 +77,7 @@ try_recv(L, Cfg) ->
         {match, [<<"NL,error">>, L1]} -> [ {rcv_ll, {nl, error}} | split(L1, Cfg)];
         {match, [<<"NL,failed,">>, L1]} -> [ {rcv_ll, {nl, failed}} | split(L1, Cfg)];
         {match, [<<"NL,delivered,">>, L1]} -> [ {rcv_ll, {nl, delivered}} | split(L1, Cfg)];
-        nomatch -> [{nl, error}]
+        nomatch -> try_send(L, Cfg)
       end
   end.
 

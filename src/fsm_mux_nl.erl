@@ -84,7 +84,8 @@ handle_event(MM, SM, Term) ->
   Setting_routing = share:get(SM, setting_routing),
   Waiting_sync = share:get(SM, waiting_sync),
   Discovery_perod_tmo = fsm:check_timeout(SM, discovery_perod_tmo),
-  
+  Stop_polling = share:get(SM, stop_polling),
+
   case Term of
     {timeout, discovery_perod_tmo} ->
         Discovery_perod = share:get(SM, discovery_perod),
@@ -149,6 +150,8 @@ handle_event(MM, SM, Term) ->
             cast(Main_role, {send, {answer, {nl, error}}} )
         end,
         SM;
+    {rcv_ul, send, {alarm, _Len, _Src, Data}} ->
+        stop_polling(SM, Data);
     {rcv_ul, NLCommand} when State =/= discovery ->
         process_ul_command(SM, NLCommand);
     {rcv_ul, _} ->
@@ -193,14 +196,27 @@ handle_event(MM, SM, Term) ->
                 fsm:run_event(MM, SM2, {})
         end;
 
-    {rcv_ll, {recv, Dst, Data, _Tuple}} when Dst == 255,
+    {rcv_ll, {recv, _, Dst, Data, _Tuple}} when Dst == 255,
                                             Data == <<"D">> ->
         share:put(SM, waiting_neighbours, true),
         get_neighbours(SM),
         SM;
-    {rcv_ll, {recv, _Dst, _Data, Tuple}} ->
-        cast(Main_role, {send, Tuple}),
+    {rcv_ll, {recv, Src, Dst, Data, Tuple}} ->
+        NTuple =
+        case Data of
+            <<"A", DataT/binary>> ->
+                {answer, {nl, recv, byte_size(DataT), Src, Dst, DataT}};
+            _ ->
+                Tuple
+        end,
+        cast(Main_role, {send, NTuple}),
         SM;
+
+    {rcv_ll, {sync, _Tuple}} when Stop_polling == true ->
+        Data = share:get(SM, polling_data),
+        share:put(SM, stop_polling, false),
+        send_alarm_msg(SM, Data),
+        fsm:clear_timeouts(SM#sm{state = ready_nl});
     {rcv_ll, {sync, _Tuple}} when Setting_routing =/= false ->
         {true, LNeighbours} = share:get(SM, setting_routing),
         NLBin = neighbours_to_bin(LNeighbours),
@@ -210,7 +226,7 @@ handle_event(MM, SM, Term) ->
         SM;
     {rcv_ll, {sync, Tuple}} when State =/= discovery,
                                  Waiting_neighbours == false,
-                                 Waiting_sync == false ->
+                                 Waiting_sync == false->
         cast(Main_role, {send, Tuple}),
         SM;
     {rcv_ll, Tuple} when State =/= discovery,
@@ -302,13 +318,30 @@ process_ul_command(SM, NLCommand) ->
     end,
     SM.
 
+stop_polling(SM, Data) ->
+    Burst_protocol = share:get(SM, burst_protocol),
+    ConfProtocol = share:get(SM, Burst_protocol),
+    Protocol_configured = (ConfProtocol =/= nothing) and (Burst_protocol =/= nothing),
+    case Protocol_configured of
+        true ->
+            {StaticrRole, _} = share:get(SM, Burst_protocol),
+            Tuple = {nl, set, polling, stop},
+            cast(StaticrRole, {send, Tuple}),
+            share:put(SM, stop_polling, true),
+            share:put(SM, polling_data, Data),
+            SM;
+            %fsm:set_timeout(SM, {s, 2}, {stop_polling, Data});
+        _ ->
+            ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+            SM
+    end.
+
 start_discovery(SM) ->
     Time_discovery  = share:get(SM, time_discovery),
     Discovery_perod = share:get(SM, discovery_perod),
     get_routing(SM),
     SM1 = fsm:set_timeout(SM, {s, Time_discovery }, discovery_end_tmo),
     fsm:set_timeout(SM1, {s, Discovery_perod}, discovery_perod_tmo).
-
 
 
 get_routing(SM) ->
@@ -395,6 +428,21 @@ get_neighbours(SM) ->
             Tuple = {nl, get, neighbours },
             cast(SncfloodrRole, {send, Tuple}),
             share:put(SM, current_protocol, CurrProtocol);
+        _ ->
+            ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
+            SM
+    end.
+
+send_alarm_msg(SM, Data) ->
+    Discovery_protocol = share:get(SM, discovery_protocol),
+    ConfProtocol = share:get(SM, Discovery_protocol),
+    Protocol_configured = (ConfProtocol =/= nothing) and (Discovery_protocol =/= nothing),
+    case Protocol_configured of
+        true ->
+            {SncfloodrRole, _} = share:get(SM, Discovery_protocol),
+            AData = list_to_binary(["A", Data]),
+            Tuple = {nl, send, byte_size(AData), 255, AData },
+            cast(SncfloodrRole, {send, Tuple});
         _ ->
             ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
             SM

@@ -56,7 +56,7 @@
 %% Process NL functions
 -export([add_neighbours/5, process_pkg_id/3, process_relay/2, process_path_life/2, routing_to_bin/1, check_dubl_in_path/2]).
 %% RTT functions
--export([getRTT/2, smooth_RTT/3]).
+-export([getRTT/2, smooth_RTT/3, queue_limited_push/3]).
 %% command functions
 -export([process_command/3, save_stat_time/3, update_states_list/1, save_stat_total/2]).
 %% Only MAC functions
