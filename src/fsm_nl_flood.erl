@@ -1,4 +1,5 @@
 %% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
+%%                     Oleksiy Kebkal <lesha@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -175,27 +176,27 @@ handle_event(MM, SM, Term) ->
           fsm:run_event(MM, SM#sm{event=send_path,  state=rwv}, {send_path, PkgID, Tuple});
         {wack_timeout, {_Packet_id, Real_src, Real_dst}} ->
           case share:get(SM, current_pkg) of
-            {nl, send, _, _, Payload} ->
+            {nl, send, _, Payload} ->
               nl_mac_hf:analyse(SM, st_data, {Payload, Real_dst, 0, "Failed"}, {Real_src, Real_dst});
             _ ->
               nothing
           end,
           nl_mac_hf:smooth_RTT(SM, reverse, {rtt, Local_address, Real_dst}),
           if (Real_src =:= Local_address) ->
-               fsm:cast(SM, nl, {send, {sync, {nl, failed, Real_src, Real_dst}}});
+               fsm:cast(SM, nl_impl, {send, {nl, failed, Real_src, Real_dst}});
              true ->
                nothing
           end,
           fsm:run_event(MM, SM#sm{event=timeout_ack,  state=wack}, {});
         {wpath_timeout, {_Packet_id, Real_src, Real_dst}} ->
           case share:get(SM, current_pkg) of
-            {nl, send, _, _, Payload} ->
+            {nl, send, _, Payload} ->
               nl_mac_hf:analyse(SM, st_data, {Payload, Real_dst, 0, "Failed"}, {Real_src, Real_dst});
             _ ->
               nothing
           end,
           if ((Real_src =:= Local_address) and Protocol#pr_conf.ack) ->
-               fsm:cast(SM, nl, {send, {sync, {nl, failed, Real_src, Real_dst}}});
+               fsm:cast(SM, nl_impl, {send, {nl, failed, Real_src, Real_dst}});
              true -> nothing
           end,
           fsm:run_event(MM, SM#sm{event=timeout_path,  state = wpath}, {});
@@ -209,6 +210,9 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
+    {disconnected} ->
+      ?INFO(?ID, "disconnected ~n", []),
+      SM;
     T={sync, _} ->
       %case NLMsg = share:get(SM, last_nl_sent) of
       case share:get(SM, last_nl_sent) of
@@ -219,12 +223,12 @@ handle_event(MM, SM, Term) ->
           SMC =
           case parse_ll_msg(SM, T) of
             nothing -> SM;
-            [SMN, NT = {sync, {nl, busy}}] ->
+            [SMN, NT = {nl, send, busy}] ->
               % !!!!!!!!!!!!!! TODO: if busy, how much should be transmitted?
               %fsm:set_timeout(SMN#sm{event = eps}, {s, 2}, {relay_wv, NLMsg});
-              fsm:cast(SMN, nl, {send, NT});
+              fsm:cast(SMN, nl_impl, {send, NT});
             [SMN, NT] when Print_to_NL == true ->
-              fsm:cast(SMN, nl, {send, NT});
+              fsm:cast(SMN, nl_impl, {send, NT});
             _ ->
               SM
           end,
@@ -235,9 +239,9 @@ handle_event(MM, SM, Term) ->
       end;
 
     {async, {delivered, mac, BDst}} ->
-      fsm:cast(SM, nl, {send, {sync, {nl, delivered, Local_address, BDst}}});
+      fsm:cast(SM, nl_impl, {send, {nl, delivered, Local_address, BDst}});
     {async, {failed, mac, BDst}} ->
-      fsm:cast(SM, nl, {send, {sync, {nl, failed, Local_address, BDst}}});
+      fsm:cast(SM, nl_impl, {send, {nl, failed, Local_address, BDst}});
     {async, {pid, _}, Tuple} ->
       [SMN, NT] = parse_ll_msg(SM, {async, Tuple}),
 
@@ -256,20 +260,20 @@ handle_event(MM, SM, Term) ->
           end,
           fsm:run_event(MM, SMN#sm{event=rcv_wv}, {relay_wv, Params, NTuple});
         {rcv_processed, {data, _}, DTuple} ->
-          {async, {nl,recv,ISrc,IDst,Payload}} = DTuple,
-          {LenData, NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
-          fsm:cast(SM, nl, {send, {async, {nl, recv, LenData, ISrc, IDst, NData}}});
+          {nl,recv,ISrc,IDst,Payload} = DTuple,
+          {_, NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
+          fsm:cast(SM, nl_impl, {send, {nl, recv, ISrc, IDst, NData}});
         {dst_reached, Params, DTuple} ->
           SMN1 = nl_mac_hf:save_path(SMN, Params, DTuple),
           fsm:run_event(MM, SMN1#sm{event=rcv_wv}, {dst_reached, Params, DTuple});
         {dst_and_relay, DstTuple, RyTuple} ->
           {dst_reached, {Flag,_}, Send_tuple} = DstTuple,
-          {async, {nl,recv, ISrc, IDst, BData}} = Send_tuple,
-          {LenData, NData, _} = nl_mac_hf:parse_path_data(SM, BData),
-          BroadcastTuple = {async, {nl, recv, LenData, ISrc, IDst, NData}},
+          {nl, recv, ISrc, IDst, BData} = Send_tuple,
+          {_, NData, _} = nl_mac_hf:parse_path_data(SM, BData),
+          BroadcastTuple = {nl, recv, ISrc, IDst, NData},
           case Flag of
             data when ISrc =/= Local_address ->
-              fsm:cast(SMN, nl, {send, BroadcastTuple});
+              fsm:cast(SMN, nl_impl, {send, BroadcastTuple});
             _ -> nothing
           end,
           case RyTuple of
@@ -283,103 +287,108 @@ handle_event(MM, SM, Term) ->
         end;
     {async, _Tuple} ->
       SM;
-    {nl,error} ->
-      fsm:cast(SM, nl, {send, {nl, error}}),
+    {nl,error,_} ->
+      fsm:cast(SM, nl_impl, {send, {nl, error}}),
       SM;
-    {rcv_ul, {reset, state} } ->
-      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
+    {nl, reset, state} ->
+      fsm:cast(SM, nl_impl, {send, {nl, state, ok}}),
       SM#sm{state = idle};
-    {rcv_ul, {clear, stats, data} } ->
+    {nl, clear, statistics, data} ->
       share:clean(SM, st_data),
       share:put(SM, st_data, queue:new()),
-      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
-      SM;
-    {rcv_ul, {get, protocol}} ->
-      AProtocolID =
-      case P = share:get(SM, nlp) of
-        nothing -> "nothing";
-        _ -> P
-      end,
-      fsm:cast(SM, nl, {send, {sync, {nl, protocol, AProtocolID} } }),
-      SM;
-    {rcv_ul, {get, help}} ->
-      fsm:cast(SM, nl, {send, {sync, {nl, help, ?HELP}}  }),
-      SM;
-    {rcv_ul, {get, Command}} ->
-      nl_mac_hf:process_command(SM, false, Command),
-      SM;
-    {rcv_ul, {set, address, Addr} } ->
+      fsm:cast(SM, nl_impl, {send, {nl, statistics, data, empty}});
+    {nl, get, protocol} ->
+      fsm:cast(SM, nl_impl, {send, {nl, protocol, share:get(SM, nlp)}});
+    {nl, get, help} ->
+      fsm:cast(SM, nl_impl, {send, {nl, help, ?HELP}});
+    {nl, get, version} ->
+      %% FIXME: define rultes to generate version
+      fsm:cast(SM, nl_impl, {send, {nl, version, 0, 1, "emb"}});
+    {nl, get, statistics, Some_statistics} ->
+      nl_mac_hf:process_command(SM, false, {statistics, Some_statistics});
+    {nl, get, protocolinfo, Some_protocol} ->
+      nl_mac_hf:process_command(SM, false, {protocolinfo, Some_protocol});
+    {nl, get, Command} ->
+      nl_mac_hf:process_command(SM, false, Command);
+    {nl, set, address, Addr} ->
       share:put(SM, local_address, Addr),
-      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
-      SM;
-    {rcv_ul, {set, neighbours, Flag, NL} } when NProtocol =:= staticr;
-                                                NProtocol =:= staticrack ->
-      case Flag of
-        normal ->
+      fsm:cast(SM, nl_impl, {send, {nl, address, Addr}});
+    {nl, set, neighbours, NL} when NProtocol =:= staticr;
+                                   NProtocol =:= staticrack ->
+      case NL of
+        empty ->
+          share:put(SM, current_neighbours, []),
+          share:put(SM, neighbours_channel, []);
+        [H|_] when is_integer(H) ->
           share:put(SM, current_neighbours, NL),
           share:put(SM, neighbours_channel, NL);
-        add ->
+        _ ->
           CurrentTime = erlang:monotonic_time(milli_seconds),
           Neighbours_channel = [ {A, I, R, CurrentTime - T } || {A, I, R, T} <- NL],
           Neighbours = [ A || {A, _, _, _} <- NL],
           share:put(SM, neighbours_channel, Neighbours_channel),
           share:put(SM, current_neighbours, Neighbours)
       end,
-      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
-      SM;
-    {rcv_ul, {set, routing, Routing} } when NProtocol =:= staticr;
-                                            NProtocol =:= staticrack ->
-     share:put(SM, routing_table, Routing),
-      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
-      SM;
-    {rcv_ul, {set, routing, _, _} } ->
-      fsm:cast(SM, nl, {send, {sync, {nl, error} } }),
-      SM;
-    {rcv_ul, {set, protocol, AProtocolID} } ->
+      fsm:cast(SM, nl_impl, {send, {nl, neighbours, NL}});
+    {nl, set, neighbours, _} ->
+      fsm:cast(SM, nl_impl, {send, {nl, neighbours, error}});
+    {nl, set, routing, Routing} when NProtocol =:= staticr;
+                                     NProtocol =:= staticrack ->
+      Routing_inner_format = lists:map(fun({default,To}) -> To; (Other) -> Other end, Routing),
+      share:put(SM, routing_table, Routing_inner_format),
+      fsm:cast(SM, nl_impl, {send, {nl, routing, Routing}});
+    {nl, set, routing, _} ->
+      fsm:cast(SM, nl_impl, {send, {nl, routing, error}});
+    {nl, set, protocol, AProtocolID} ->
       share:put(SM, nlp, AProtocolID),
-      fsm:cast(SM, nl, {send, {sync, {nl, ok} } }),
-      SM;
-    {rcv_ul, Command = {delete, neighbour, _Addr} } ->
-      nl_mac_hf:process_command(SM, false, Command),
-      SM;
-    {rcv_ul, _Tuple} when SM#sm.state =/= idle ->
-      fsm:cast(SM, nl, {send, {sync, {nl, busy}}});
-
-    {rcv_ul, Tuple = {nl, send, TransmitLen, IDst, _Payload}} when  NProtocol =:= staticr,
-                                                                    TransmitLen < ?MAX_IM_LEN;
-                                                                    NProtocol =:= staticrack,
-                                                                    TransmitLen < ?MAX_IM_LEN ->
-      Routing_table = share:get(SM, routing_table),
-      RAddr = nl_mac_hf:find_in_routing_table(Routing_table, IDst),
-      if RAddr =/= ?ADDRESS_MAX ->
-        ?TRACE(?ID, "Routing exists ~p ~p~n", [Routing_table, RAddr]),
-        case process_sendim(SM, Tuple) of
-          error  -> fsm:cast(SM, nl, {send, {nl, error}});
-          Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
-        end;
+      fsm:cast(SM, nl_impl, {send, {nl, protocol, AProtocolID}});
+    {nl, delete, neighbour, Addr} ->
+      nl_mac_hf:process_command(SM, false, {delete, neighbour, Addr});
+    {nl, send, _, _} when SM#sm.state =/= idle ->
+      fsm:cast(SM, nl_impl, {send, {nl, send, busy}});
+    {nl, send, IDst, Payload} ->
+      case byte_size(Payload) < ?MAX_IM_LEN of
+        true when NProtocol =:= staticr; NProtocol =:= staticrack ->
+          Routing_table = share:get(SM, routing_table),
+          RAddr = nl_mac_hf:find_in_routing_table(Routing_table, IDst),
+          if RAddr =/= ?ADDRESS_MAX ->
+              ?TRACE(?ID, "Routing exists ~p ~p~n", [Routing_table, RAddr]),
+              case process_sendim(SM, Term) of
+                error  -> fsm:cast(SM, nl_impl, {send, {nl, send, error}});
+                Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
+              end;
+             true ->
+              ?TRACE(?ID, "NO routing available ~p ~p~n", [Routing_table, RAddr]),
+              fsm:cast(SM, nl_impl, {send, {nl, error, norouting}})
+          end;
         true ->
-        ?TRACE(?ID, "NO routing available ~p ~p~n", [Routing_table, RAddr]),
-        fsm:cast(SM, nl, {send, {nl, error, norouting}})
-      end;
-    {rcv_ul, Tuple = {nl, send, TransmitLen, _IDst, _Payload}} when TransmitLen < ?MAX_IM_LEN ->
-      case process_sendim(SM, Tuple) of
-        error  -> fsm:cast(SM, nl, {send, {nl, error}});
-        Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
-      end;
-    {rcv_ul, Tuple = {nl, send, _TransmitLen, IDst, _Payload}} ->
-      Routing_table = share:get(SM, routing_table),
-      RAddr = nl_mac_hf:find_in_routing_table(Routing_table, IDst),
-      if RAddr =/= ?ADDRESS_MAX ->
-        ?TRACE(?ID, "Routing exists ~p ~p~n", [Routing_table, RAddr]),
-        case process_send(SM, Tuple) of
-          error  -> fsm:cast(SM, nl, {send, {nl, error}});
-          Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
-        end;
-      true ->
-        ?TRACE(?ID, "NO routing available ~p ~p~n", [Routing_table, RAddr]),
-        fsm:cast(SM, nl, {send, {nl, error, norouting}})
+          case process_sendim(SM, Term) of
+            error  -> fsm:cast(SM, nl_impl, {send, {nl, send, error}});
+            Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
+          end;
+        false ->
+          Routing_table = share:get(SM, routing_table),
+          RAddr = nl_mac_hf:find_in_routing_table(Routing_table, IDst),
+          if RAddr =/= ?ADDRESS_MAX ->
+              ?TRACE(?ID, "Routing exists ~p ~p~n", [Routing_table, RAddr]),
+              case process_send(SM, Term) of
+                error  -> fsm:cast(SM, nl_impl, {send, {nl, send, error}});
+                Params -> fsm:run_event(MM, SM#sm{event = send_wv}, Params)
+              end;
+             true ->
+              ?TRACE(?ID, "NO routing available ~p ~p~n", [Routing_table, RAddr]),
+              fsm:cast(SM, nl_impl, {send, {nl, error, norouting}})
+          end
       end;
     {ignore,_} -> SM;
+    _ when MM#mm.role == nl_impl ->
+      case tuple_to_list(Term) of
+        [nl | _] ->
+          fsm:cast(SM, nl_impl, {send, {nl, error}});
+        _ ->
+          ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, Term]),
+          SM
+      end;
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -419,12 +428,12 @@ handle_idle(_MM, SMP, Term) ->
       case Param_Term of
         {error, {Real_src, Real_dst}} when (Real_dst =:= Local_address) ->
           case share:get(SM, current_pkg) of
-            {nl, send, _, _, Payload} ->
+            {nl, send, _, Payload} ->
               nl_mac_hf:analyse(SM, st_data, {Payload, Real_dst, 0, "Failed"}, {Real_src, Real_dst});
             _ ->
               nothing
           end,
-          fsm:cast(SM, nl, {send, {sync, {nl, failed, Real_dst, Real_src}}});
+          fsm:cast(SM, nl_impl, {send, {nl, failed, Real_dst, Real_src}});
         _ ->
           nothing
       end;
@@ -458,11 +467,11 @@ handle_rwv(_MM, SM, Term) ->
   case Term of
     {relay_wv, Params, Tuple} ->
       SM#sm{event = relay_wv, event_params = {relay_wv, {send, Params, Tuple}} };
-    {dst_reached, Params={Flag, _}, Tuple={async, {nl, recv, ISrc, IDst, Payload}}} ->
+    {dst_reached, Params={Flag, _}, Tuple={nl, recv, ISrc, IDst, Payload}} ->
 
       if Flag =:= data ->
-          {LenData, NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
-          fsm:cast(SM, nl, {send, {async, {nl, recv, LenData, ISrc, IDst, NData}}});
+          {_, NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
+          fsm:cast(SM, nl_impl, {send, {nl, recv, ISrc, IDst, NData}});
          true ->
            nothing
       end,
@@ -474,7 +483,7 @@ handle_sack(_MM, SM, Term) ->
   Protocol    = share:get(SM, protocol_config, share:get(SM, nlp)),
   ?TRACE(?ID, "handle_sack ~120p~n", [Term]),
   case Term of
-    {send_ack, _, {async, {nl, recv, ISrc, IDst, Payload}}} ->
+    {send_ack, _, {nl, recv, ISrc, IDst, Payload}} ->
       [SM1,_] =
       if (Protocol#pr_conf.pf and Protocol#pr_conf.ry_only) ->
            {_, Add, Path} = nl_mac_hf:parse_path_data(SM, Payload),
@@ -498,7 +507,7 @@ handle_spath(_MM, SM, Term) ->
   Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
   case Term of
     {send_path, Params={Flag, [Packet_id, ISrc,_]},{nl, send, IDst, Data}} ->
-      NTerm = {async, {nl, recv, ISrc, IDst, Data}},
+      NTerm = {nl, recv, ISrc, IDst, Data},
       SM1 = nl_mac_hf:send_path(SM, {send_path, Params, NTerm}),
       Local_address = share:get(SM, local_address),
       WTP = if Local_address =:= IDst -> {Packet_id, IDst, ISrc}; true -> {Packet_id, ISrc, IDst} end,
@@ -507,7 +516,7 @@ handle_spath(_MM, SM, Term) ->
         SM#sm{event = error, event_params={error, {ISrc, IDst}}};
       true -> fsm:set_timeout(SM1#sm{event=wait_pf}, {s, share:get(SM, wpath_tmo)}, {wpath_timeout,WTP})
       end;
-    {send_path,_,{async,{nl,recv,_,_,_}}} ->
+    {send_path,_,{nl,recv,_,_,_}} ->
       %% choose path with best integrity and rssii
       NTerm =
       case Protocol#pr_conf.evo of
@@ -520,7 +529,7 @@ handle_spath(_MM, SM, Term) ->
         false ->
           Term
       end,
-      {send_path,_, {async,{nl,recv,ISrc,IDst,_}}} = NTerm,
+      {send_path,_, {nl,recv,ISrc,IDst,_}} = NTerm,
       SM1 = nl_mac_hf:send_path(SM, NTerm),
       if SM1 =:= error ->
            print_nl_error(SM, ISrc, path),
@@ -543,9 +552,9 @@ handle_wack(_MM, SM, Term) ->
            nothing
       end,
       SM1#sm{event = relay_wv, event_params = {relay_wv, {send, Params, Tuple}}};
-    {dst_reached, {ack, [Packet_id,_, PAdditional]} ,{async,{nl, recv, Real_dst, Real_src, Payl}}} ->
+    {dst_reached, {ack, [Packet_id,_, PAdditional]} ,{nl, recv, Real_dst, Real_src, Payl}} ->
       case share:get(SM, current_pkg) of
-        {nl, send, _, TIDst, Payload} ->
+        {nl, send, TIDst, Payload} ->
           Count_hops = nl_mac_hf:extract_ack(SM, Payl),
           nl_mac_hf:analyse(SM, st_data, {Payload, TIDst, Count_hops + 1, "Delivered"}, {Real_src, Real_dst});
         _ ->
@@ -555,7 +564,7 @@ handle_wack(_MM, SM, Term) ->
       if {Packet_id, Real_src, Real_dst} == Ack_last_nl_sent  ->
         SM1 = nl_mac_hf:send_nl_command(SM, alh, {dst_reached, [Packet_id, Real_dst, PAdditional]}, {nl,send,Real_src,<<"">>}),
         SM2 = fsm:clear_timeout(SM1, {wack_timeout, {Packet_id, Real_src, Real_dst}}),
-        fsm:cast(SM2, nl, {send, {sync, {nl, delivered, Real_src, Real_dst}}}),
+        fsm:cast(SM2, nl_impl, {send, {nl, delivered, Real_src, Real_dst}}),
         nl_mac_hf:smooth_RTT(SM, direct, {rtt, Local_address, Real_dst}),
         SM2#sm{event = dst_rcv_ack};
       true ->
@@ -601,7 +610,7 @@ handle_wpath(_MM, SM, Term) ->
           nl_mac_hf:analyse(SM1, paths, BPath, {Real_src, Real_dst}),
           SM1#sm{event = relay_wv, event_params = {relay_wv, {send, Params, Tuple}}}
       end;
-    {dst_reached, {path, Params = [Packet_id, _, _]}, Tuple = {async,{nl,recv, Real_dst, Real_src, Data}}} ->
+    {dst_reached, {path, Params = [Packet_id, _, _]}, Tuple = {nl,recv, Real_dst, Real_src, Data}} ->
       ?TRACE(?ID, "Path tuple on src ~120p~n", [Data]),
       Res = nl_mac_hf:prepare_send_path(SM, Params, Tuple),
       case Res of
@@ -639,14 +648,14 @@ handle_final(_MM, SM, _Term) ->
 %%------------------------------------------ process helper functions -----------------------------------------------------
 process_send(SM, Tuple) ->
   Local_address = share:get(SM, local_address),
-  {nl, send, TransmitLen, Dst, Data} = Tuple,
+  {nl, send, Dst, Data} = Tuple,
   PkgID = nl_mac_hf:increase_pkgid(SM, Local_address, Dst),
 
   if Dst =:= Local_address ->
     error;
   true ->
     share:put(SM, path_exists, true),
-    Payl = nl_mac_hf:fill_msg(data, {TransmitLen, Data}),
+    Payl = nl_mac_hf:fill_msg(data, {byte_size(Data), Data}),
     NTuple = {nl, send, Dst, Payl},
     {send, {data, [PkgID, Local_address, []]}, NTuple}
   end.
@@ -655,8 +664,8 @@ process_sendim(SM, Tuple) ->
   NP = share:get(SM, nlp),
   Protocol    = share:get(SM, protocol_config, NP),
   Local_address = share:get(SM, local_address),
-  {nl, send, TransmitLen, Dst, Data} = Tuple,
-
+  {nl, send, Dst, Data} = Tuple,
+  TransmitLen = byte_size(Data),
   PkgID = nl_mac_hf:increase_pkgid(SM, Local_address, Dst),
 
   if Dst =:= Local_address ->
@@ -712,22 +721,23 @@ parse_ll_msg(SM, Tuple) ->
 
 process_sync(Msg) ->
   case Msg of
-    {error,_} -> {sync, {nl,error}};
-    {busy, _} -> {sync, {nl,busy}};
-    {ok}    -> {sync, {nl,ok}};
+    {error,_} -> {nl,send,error};
+    {busy, _} -> {nl,send,busy};
+    {ok}    -> {nl,send,ok};
     _     -> nothing
   end.
 
 process_async(SM, Msg) ->
+  Local_address = share:get(SM, local_address),
   case Msg of
     {recv,_,ISrc,IDst,_,_,IRssi,IIntegrity,_,PayloadTail} ->
       process_recv(SM, [ISrc, IDst, IRssi, IIntegrity, PayloadTail]);
     {recvim,_,ISrc,IDst,_,_,IRssi,IIntegrity,_,PayloadTail} ->
       process_recv(SM, [ISrc, IDst, IRssi, IIntegrity, PayloadTail]);
     {deliveredim, BDst} ->
-      [SM, {async, {nl, delivered, BDst}}];
+      [SM, {nl, delivered, Local_address, BDst}];
     {failedim, BDst} ->
-      [SM, {async, {nl, failed, BDst}}];
+      [SM, {nl, failed, Local_address, BDst}];
     _ ->
       [SM, nothing]
   end.
@@ -747,7 +757,7 @@ process_recv(SM, L) ->
        case lists:member(NLSrcAT, Blacklist) of
          false ->
            %!!!!!!
-           %fsm:cast(SM, nl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
+           %fsm:cast(SM, nl_impl, {send, {recvim, ISrc, IDst, IRssi, IIntegrity, PayloadTail} }),
            case IDst of
               255 ->
                 Params = [NLSrcAT, NLDstAT, IRssi, IIntegrity],
@@ -815,7 +825,7 @@ process_rcv_wv(SMT, RcvParams, DataParams) ->
   ?TRACE(?ID, " ~p : la ~p   :  ~p -> ~p     flag ~p  localID ~p remoteID ~p~n", [PPkg_id, Local_address, RecvNLSrc, RecvNLDst, Flag, LocalPkgID, RemotePkgID]),
 
   RParams   = {Flag, [RemotePkgID, RecvNLSrc, [IRssi, IIntegrity] ]},
-  RAsyncTuple = {async, {nl, recv, RecvNLSrc, RecvNLDst, Tail}},
+  RAsyncTuple = {nl, recv, RecvNLSrc, RecvNLDst, Tail},
   RSendTuple  = {nl, send, RecvNLDst, Tail},
 
   RProcTuple  = {rcv_processed, RParams, RAsyncTuple},
@@ -938,7 +948,7 @@ process_send_flag(SM, Params, Tuple) ->
       SM#sm{event = noack_data_sent}
   end.
 
-process_rcv_flag(SM, Params={Flag,[Packet_id, _Real_src, PAdditional]}, Tuple={async,{nl,recv,ISrc,IDst,_}}) ->
+process_rcv_flag(SM, Params={Flag,[Packet_id, _Real_src, PAdditional]}, Tuple={nl,recv,ISrc,IDst,_}) ->
   Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
   Rand_timeout_spath = nl_mac_hf:rand_float(SM, spath_tmo),
   Rand_timeout_wack = nl_mac_hf:rand_float(SM, wack_tmo),
@@ -976,6 +986,6 @@ if_print_to_nl(SM, Real_src, Flag) ->
 print_nl_error(SM, Real_src, Flag) ->
   Print_to_NL = if_print_to_nl(SM, Real_src, Flag),
   if Print_to_NL ->
-    fsm:cast(SM, nl, {send, {nl, error}});
+    fsm:cast(SM, nl_impl, {send, {nl, error}});
   true -> nothing
   end.

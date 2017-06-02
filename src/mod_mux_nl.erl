@@ -38,22 +38,22 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   parse_conf(Mod_ID, ArgS, Share),
-  Roles = fsm_worker:role_info(Role_IDs, [nl_mux, nl]),
+  Roles = fsm_worker:role_info(Role_IDs, [nl_impl, nl]),
   [#sm{roles = Roles, module = fsm_mux_nl}].
 
 parse_conf(_Mod_ID, ArgS, Share) ->
   Time_discovery_set  = [Time  || {time_discovery, Time} <- ArgS],
-  Discovery_perod_set = [Time  || {discovery_perod, Time} <- ArgS],
+  Discovery_period_set = [Time  || {discovery_period, Time} <- ArgS],
   Protocols_set = [P  || {protocols, P} <- ArgS],
 
   Time_discovery  = set_params(Time_discovery_set, 30), %s
-  Discovery_perod = set_params(Discovery_perod_set, 10), %s
+  Discovery_period = set_params(Discovery_period_set, 10), %s
 
   ShareID = #sm{share = Share},
 
   set_protocols(ShareID, Protocols_set, [{discovery, sncfloodr}, {burst, polling}]),
   share:put(ShareID, [{time_discovery, Time_discovery},
-                      {discovery_perod, Discovery_perod}]).
+                      {discovery_period, Discovery_period}]).
 
 set_params(Param, Default) ->
   case Param of

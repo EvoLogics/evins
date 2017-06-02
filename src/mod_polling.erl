@@ -28,7 +28,7 @@
 -module(mod_polling).
 -behaviour(fsm_worker).
 
--include_lib("evins/include/fsm.hrl").
+-include("fsm.hrl").
 
 -export([start/4, register_fsms/4]).
 
@@ -37,13 +37,14 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   parse_conf(Mod_ID, ArgS, Share),
-  Roles = fsm_worker:role_info(Role_IDs, [at, polling_mux, polling_nmea]),
-	[#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_polling_mux}].
+  Roles = fsm_worker:role_info(Role_IDs, [at, nl_impl, nmea]),
+  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_polling_mux}].
 
 parse_conf(_Mod_ID, ArgS, Share) ->
   ShareID = #sm{share = Share},
 
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
+
   Time_wait_recv_set  = [Time  || {time_wait_recv, Time} <- ArgS],
   Max_sensitive_queue_set  = [Max  || {max_sensitive_queue, Max} <- ArgS],
   Max_packets_transmit_sens_set  = [Max  || {max_packets_sensitive_transmit, Max} <- ArgS],

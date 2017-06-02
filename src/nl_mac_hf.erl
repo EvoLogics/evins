@@ -54,7 +54,7 @@
 %% Parse NL functions
 -export([prepare_send_path/3, parse_path/3, save_path/3]).
 %% Process NL functions
--export([add_neighbours/5, process_pkg_id/3, process_relay/2, process_path_life/2, routing_to_bin/1, check_dubl_in_path/2]).
+-export([add_neighbours/5, process_pkg_id/3, process_relay/2, process_path_life/2, routing_to_list/1, check_dubl_in_path/2]).
 %% RTT functions
 -export([getRTT/2, smooth_RTT/3, queue_limited_push/3]).
 %% command functions
@@ -171,11 +171,11 @@ send_mac(SM, _Interface, Flag, MACP) ->
   AT = mac2at(SM, Flag, MACP),
   fsm:send_at_command(SM, AT).
 
-send_ack(SM,  {send_ack, {_, [Packet_id, _, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src, _}}}, Count_hops) ->
+send_ack(SM,  {send_ack, {_, [Packet_id, _, _PAdditional]}, {nl, recv, Real_dst, Real_src, _}}, Count_hops) ->
   BCount_hops = create_ack(Count_hops),
   send_nl_command(SM, alh, {ack, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BCount_hops}).
 
-send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {async, {nl, recv, Real_dst, Real_src, Payload}}}) ->
+send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {nl, recv, Real_dst, Real_src, Payload}}) ->
   MAC_addr  = convert_la(SM, integer, mac),
   case share:get(SM, current_neighbours) of
     nothing -> error;
@@ -746,10 +746,11 @@ fill_msg(path_data, {TransmitLen, Data, Path}) ->
 fill_msg(path_addit, {Path, Additional}) ->
   create_path_addit(Path, Additional).
 
-prepare_send_path(SM, [_ , _, PAdditional], {async,{nl, recv, Real_dst, Real_src, Payload}}) ->
+prepare_send_path(SM, [_ , _, PAdditional], {nl, recv, Real_dst, Real_src, Payload}) ->
   MAC_addr = convert_la(SM, integer, mac),
-  {nl, send, CurrentLen, IDst, Data} = share:get(SM, current_pkg),
-
+  {nl, send, IDst, Data} = share:get(SM, current_pkg),
+  CurrentLen = byte_size(Data),
+  
   [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
   NPathTuple = {ListNeighbours, ListPath},
   [SM1, BPath] = parse_path(SM, NPathTuple, {Real_src, Real_dst}),
@@ -804,8 +805,8 @@ add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {IRssi, IIntegrity}) ->
               [NLSrcAT];
            true ->
               El = {_, ETSrssi, ETSintegrity, _} = lists:keyfind(NLSrcAT, 1, Neighbours_channel),
-              NewRssi = (IRssi + ETSrssi) / 2,
-              NewIntegrity = (ETSintegrity + IIntegrity) / 2,
+              NewRssi = get_aver_value(IRssi, ETSrssi),
+              NewIntegrity = get_aver_value(IIntegrity, ETSintegrity),
               Updated_neighbours_channel = lists:delete(El, Neighbours_channel),
               share:put(SM1, neighbours_channel, [ {NLSrcAT, NewRssi, NewIntegrity, Current_time} | Updated_neighbours_channel]),
               Neighbours;
@@ -962,11 +963,11 @@ save_path(SM, {Flag,_} = Params, Tuple) ->
   Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
   case Flag of
     data when Protocol#pr_conf.ry_only and Protocol#pr_conf.pf ->
-      {async,{nl,recv, Real_src, Real_dst, Payload}} = Tuple,
+      {nl,recv, Real_src, Real_dst, Payload} = Tuple,
       {_, _, Path} = parse_path_data(SM, Payload),
       analyse(SM, paths, Path, {Real_src, Real_dst});
     path_addit when Protocol#pr_conf.evo ->
-      {async,{nl,recv, _, _, Payload}} = Tuple,
+      {nl,recv, _, _, Payload} = Tuple,
       [_, [DIRssi, DIIntegr]] = extract_path_addit(SM, Payload),
       El = { DIRssi, DIIntegr, {Params, Tuple} },
       share:update_with(SM, list_current_wvp, fun(L) -> L ++ [El] end);
@@ -1184,37 +1185,17 @@ neighbours_to_list(SM,Neigbours, mac) ->
 neighbours_to_list(_,Neigbours, nl) ->
   Neigbours.
 
-neighbours_to_bin(SM) ->
-  F = fun(X) ->
-      case X of
-        {Addr, Rssi, Integrity, Time} ->
-          Baddr = convert_type_to_bin(Addr),
-          Brssi = convert_type_to_bin(Rssi),
-          Bintegrity = convert_type_to_bin(Integrity),
-          CurrentTime = erlang:monotonic_time(milli_seconds) - Time,
-          BTime = convert_type_to_bin(CurrentTime),
-          list_to_binary([Baddr, ":", Brssi, ":", Bintegrity, ":", BTime]);
-        Addr ->
-          Baddr = convert_type_to_bin(Addr),
-          list_to_binary([Baddr])
-      end
-  end,
-
-  list_to_binary(lists:join(",", [F(X) || X <- share:get(SM, neighbours_channel)])).
-
-routing_to_bin(SM) ->
+routing_to_list(SM) ->
   Routing_table = share:get(SM, routing_table),
   Local_address = share:get(SM, local_address),
   case Routing_table of
     ?ADDRESS_MAX ->
-      list_to_binary(["default->",integer_to_binary(?ADDRESS_MAX)]);
+      [{default,?ADDRESS_MAX}];
     _ ->
-      Path = lists:filtermap(fun({From, To}) when From =/= Local_address ->
-                                 {true, [integer_to_binary(From),"->",integer_to_binary(To)]};
-                                ({_,_}) -> false;
-                                (X) -> {true, ["default->",integer_to_binary(X)]}
-                             end, Routing_table),
-      list_to_binary(lists:join(",", Path))
+      lists:filtermap(fun({From, To}) when From =/= Local_address -> {true, {From, To}};
+                         ({_,_}) -> false;
+                         (To) -> {true, {default, To}}
+                      end, Routing_table)
   end.
 
 add_item_to_queue(SM, Qname, Item, Max) ->
@@ -1347,26 +1328,44 @@ increaseTTL(CurrentTTL) ->
   end.
 %%--------------------------------------------------  command functions -------------------------------------------
 process_command(SM, Debug, Command) ->
-  Protocol   = share:get(SM, protocol_config, share:get(SM, nlp)),
+  Protocol = share:get(SM, protocol_config, share:get(SM, nlp)),
   [Req, Asw] =
   case Command of
     protocols ->
-      [?PROTOCOL_DESCR, protocols];
-    {protocol, _} ->
+      [?LIST_ALL_PROTOCOLS, protocols];
+    {protocolinfo, _} ->
       [share:get(SM, nlp), protocol_info];
     {statistics, paths} when Protocol#pr_conf.pf ->
-      [share:get(SM, paths), paths];
+      Paths =
+        lists:map(fun({{Role, Path}, Duration, Count, TS}) ->
+                      {Role, Path, Duration, Count, TS}
+                  end, queue:to_list(share:get(SM, paths))),
+      [case Paths of []  -> empty; _ -> Paths end, paths];
+    {statistics, paths} ->
+      [error, paths];
     {statistics, neighbours} ->
-      [share:get(SM, st_neighbours), neighbours];
+      Neighbours =
+        lists:map(fun({{Role, Address}, _Time, Count, TS}) ->
+                      {Role, Address, Count, TS}
+                  end, queue:to_list(share:get(SM, nothing, st_neighbours, empty))),
+      [case Neighbours of []  -> empty; _ -> Neighbours end, neighbours];
     {statistics, data} when Protocol#pr_conf.ack ->
-      [share:get(SM, st_data), data];
+      Data =
+        lists:map(fun({{Role, Payload}, Time, Length, State, TS, Dst, Hops}) ->
+                      TRole = case Role of source -> source; _ -> relay end,
+                      <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
+                      {TRole,Hash,Length,Time,State,TS,Dst,Hops}
+                  end, queue:to_list(share:get(SM, nothing, st_data, empty))),
+      [case Data of []  -> empty; _ -> Data end, data];
+    {statistics, data} ->
+      [error, data];
     {delete, neighbour, _} ->
       [share:get(SM, current_neighbours), neighbours];
     states ->
       Last_states = share:get(SM, last_states),
       [queue:to_list(Last_states), states];
     state ->
-      States = list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")"]),
+      States = {SM#sm.state, SM#sm.event},
       [States, state];
     address ->
       [share:get(SM, local_address), address];
@@ -1379,46 +1378,44 @@ process_command(SM, Debug, Command) ->
 
   Answer =
   case Req of
-    error ->
-      {nl, error};
+    %% error ->
+    %%   {nl, error};
     Req when Req =:= nothing; Req =:= []; Req =:= {[],[]} ->
       {nl, Asw, empty};
     _ ->
       case Command of
-        {statistics, paths} when Protocol#pr_conf.pf ->
-          {nl, statistics, paths, get_stat(SM, paths) };
+        {statistics, paths} ->
+          {nl, statistics, paths, Req};
         {statistics, neighbours} ->
-          {nl, statistics, neighbours, get_stat(SM, st_neighbours) };
-        {statistics, data} when Protocol#pr_conf.ack ->
-          {nl, statistics, data, get_stat_data(SM, st_data) };
+          {nl, statistics, neighbours, Req};
+        {statistics, data} ->
+          {nl, statistics, data, Req};
         protocols ->
           {nl, Command, Req};
-        {protocol, Name} ->
-          {nl, protocolinfo, get_protocol_info(SM, Name)};
+        {protocolinfo, Name} ->
+          {nl, protocolinfo, Name, get_protocol_info(SM, Name)};
         neighbours ->
-          {nl, neighbours, neighbours_to_bin(SM)};
+          {nl, neighbours, share:get(SM, neighbours_channel)};
         {delete, neighbour, Addr} ->
           LNeighbours = neighbours_to_list(SM, share:get(SM, current_neighbours), mac),
           delete_neighbour(SM, Addr, LNeighbours),
-          {nl, ok};
+          {nl, neighbour, ok};
         routing ->
-          {nl, routing, routing_to_bin(SM)};
+          {nl, routing, routing_to_list(SM)};
         state ->
-          {nl, state, Req};
+          {nl, Command, Req};
         states ->
-          L = list_to_binary(Req),
-          {nl, states, L};
+          {nl, Command, Req};
         address ->
-          L = integer_to_binary(Req),
-          {nl, address, L};
+          {nl, Command, Req};
         _ ->
           {nl, error}
       end
   end,
   if Debug =:= true ->
-    ?TRACE(?ID, "Command answer ~p~n", [Answer]);
-  true ->
-    fsm:cast(SM, nl, {send, {sync, Answer}})
+      ?TRACE(?ID, "Command answer ~p~n", [Answer]);
+     true ->
+      fsm:cast(SM, nl_impl, {send, Answer})
   end,
   SM.
 
@@ -1469,37 +1466,25 @@ update_states_list(SM) ->
   lists:filter(fun({St, _Descr}) -> St =:= SM#sm.state end, ?STATE_DESCR),
   share:put(SM, pr_state, Msg),
   add_item_to_queue(SM, pr_states, Msg, 50),
-  add_item_to_queue(SM, last_states, list_to_binary([atom_to_binary(SM#sm.state,utf8), "(", atom_to_binary(SM#sm.event,utf8), ")\n"]), 50).
+  add_item_to_queue(SM, last_states, {SM#sm.state, SM#sm.event}, 50).
 
 get_protocol_info(SM, Name) ->
-  BName = atom_to_binary(Name, utf8),
-  Conf  = share:get(SM, protocol_config, Name),
-  list_to_binary(["\nName\t\t: ", BName,"\n", ?PROTOCOL_SPEC(Conf)]).
-
-get_stat_data(SM, Qname) ->
-  lists:map(fun({ {Role, Payload}, Time, Length, State, TS, Dst, Count_hops}) ->
-                TRole = if Role =:= source -> "Source"; true -> "Relay" end,
-                BTime = convert_type_to_bin(Time),
-                list_to_binary(
-                  ["\n ", TRole, " Data:",Payload, " Len:", convert_type_to_bin(Length),
-                   " Duration:", BTime, " State:", State, " Total:", integer_to_binary(TS),
-                   " Dst:", integer_to_binary(Dst), " Hops:", integer_to_binary(Count_hops)])
-            end, queue:to_list(share:get(SM, Qname))).
-
-get_stat(SM, Qname) ->
-  lists:map(fun({ {Role, Val}, Time, Count, TS}) ->
-                TRole = if Role =:= source -> "Source"; true -> "Relay" end,
-                BTime = convert_type_to_bin(Time),
-                Specific = case Qname of
-                             paths -> ["Path:", convert_type_to_bin(Val), " Time:", BTime];
-                             st_neighbours -> ["Neighbour:", convert_type_to_bin(Val)]
-                           end,
-                list_to_binary(
-                  ["\n ", TRole, " ", Specific, 
-                   " Count:", integer_to_binary(Count),
-                   " Total:", integer_to_binary(TS)])
-               end, queue:to_list(share:get(SM, Qname))).
-
+  Conf = share:get(SM, protocol_config, Name),
+  Prop_list = 
+    lists:foldl(fun(stat,A) when Conf#pr_conf.stat -> [{"type","static routing"} | A];
+                   (ry_only,A) when Conf#pr_conf.ry_only -> [{"type", "only relay"} | A];
+                   (ack,A) when Conf#pr_conf.ack -> [{"ack", "true"} | A];
+                   (ack,A) when not Conf#pr_conf.ack -> [{"ack", "false"} | A];
+                   (br_na,A) when Conf#pr_conf.br_na -> [{"broadcast", "not available"} | A];
+                   (br_na,A) when not Conf#pr_conf.br_na -> [{"broadcast", "available"} | A];
+                   (pf,A) when Conf#pr_conf.pf -> [{"type", "path finder"} | A];
+                   (evo,A) when Conf#pr_conf.evo -> [{"specifics", "evologics dmac rssi and integrity"} | A];
+                   (dbl,A) when Conf#pr_conf.dbl -> [{"specifics", "2 waves to find bidirectional path"} | A];
+                   (rm,A) when Conf#pr_conf.rm   -> [{"route", "maintained"} | A];
+                   (_,A) -> A
+                end, [], ?LIST_ALL_PARAMS),
+  lists:reverse(Prop_list).
+  
 save_stat_total(SM, Role)->
   case Role of
     source ->
@@ -1545,9 +1530,9 @@ parse_tuple(Tuple) ->
       Tuple
   end.
 
-path_to_bin(SM, Path) ->
-  CheckDblPath = remove_dubl_in_path(lists:reverse(Path)),
-  list_to_binary(lists:join(",",[integer_to_binary(addr_mac2nl(SM, X)) || X <- CheckDblPath])).
+%% path_to_bin(SM, Path) ->
+%%   CheckDblPath = remove_dubl_in_path(lists:reverse(Path)),
+%%   list_to_binary(lists:join(",",[integer_to_binary(addr_mac2nl(SM, X)) || X <- CheckDblPath])).
 
 analyse(SM, QName, Path, {Real_src, Real_dst}) ->
   {Time, Role, TSC, _Addrs} = get_stats_time(SM, Real_src, Real_dst),
@@ -1555,10 +1540,12 @@ analyse(SM, QName, Path, {Real_src, Real_dst}) ->
   BPath =
   case QName of
     paths when Path =:= nothing ->
-      <<>>;
+      [];
+      %% <<>>;
     paths ->
       save_stat_total(SM, Role),
-      path_to_bin(SM, Path);
+      remove_dubl_in_path(lists:reverse(Path));
+      %% path_to_bin(SM, Path);
     st_neighbours ->
       Path;
     st_data ->

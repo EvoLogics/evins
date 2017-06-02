@@ -105,7 +105,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     ShareID = #sm{share = Share},
     La = share:get(ShareID, local_address),  
     DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
-    Roles = fsm_worker:role_info(Role_IDs, [alh, nl]),
+    Roles = fsm_worker:role_info(Role_IDs, [alh, nl, nl_impl]),
     {ok, Ref} = dets:open_file(DetsName,[]),
     [#sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
