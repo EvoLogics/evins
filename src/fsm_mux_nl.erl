@@ -31,7 +31,7 @@
 -behaviour(fsm).
 
 -include("fsm.hrl").
--include("sensor.hrl").
+-include("nl.hrl").
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
@@ -51,6 +51,7 @@
 
                 {ready_nl,
                  [
+                 {set_routing, ready_nl},
                  {discovery_start, discovery}
                  ]},
 
@@ -82,9 +83,9 @@ handle_event(MM, SM, Term) ->
   ?TRACE(?ID, "state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.event, Term]),
 
   State = SM#sm.state,
-  Waiting_neighbours = share:get(SM, waiting_neighbours),
   Discovery_period_tmo = fsm:check_timeout(SM, discovery_perod_tmo),
-  %% Stop_polling = share:get(SM, stop_polling),
+  Alarm_data = share:get(SM, alarm_data),
+
   case Term of
     {timeout, discovery_period_tmo} ->
       Discovery_period = share:get(SM, discovery_period),
@@ -134,6 +135,9 @@ handle_event(MM, SM, Term) ->
       Time = share:get(SM, time_discovery),
       TupleDiscovery = {nl, discovery, Period, Time},
       fsm:cast(SM,nl_impl, {send, TupleDiscovery});
+    {nl, get, help} ->
+      NHelp = string:concat(?MUXHELP, ?HELP),
+      fsm:cast(SM, nl_impl, {send, {nl, help, NHelp}});
     {nl, get, protocols} ->
       Tuple = {nl, protocols, share:get(SM, nothing, configured_protocols, [])},
       fsm:cast(SM, nl_impl, {send, Tuple});
@@ -166,31 +170,14 @@ handle_event(MM, SM, Term) ->
       ] (SM);
     {nl, set, protocol, Protocol} when State =/= discovery ->
       %% clear everything and set current protocol
-      set_protocol(SM, Protocol);
-    %% {rcv_ul, <<"\n">>} ->
-    %%   fsm:cast(nl_impl, {send, {answer, {nl, error}} });
-    %% {help, NLCommand} ->
-    %%   ConfPr = share:get(SM, configured_protocols),
-    %%   if ConfPr =/= [] ->
-    %%       {_, TmpRole, _} = lists:last(ConfPr),
-    %%       fsm:cast(SM, nl_impl, {send, list_to_binary(get_mux_commands())}),
-    %%       fsm:cast(SM, TmpRole, {send, NLCommand});
-    %%      true ->
-    %%       fsm:cast(SM, nl_impl, {send, {answer, {nl, error}}} )
-    %%   end;
-    
+      set_protocol(SM, MM#mm.role, Protocol);
     {nl, delivered, _, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, failed, _, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
-    %% {nl, routing, _} when State == discovery ->
-    %%   fsm:cast(SM, nl_impl, {send, Term}),
-    %%   fsm:run_event(MM, SM#sm{event = set_routing}, {});
-    {nl, routing, _} when Waiting_neighbours ->
-      share:put(SM, waiting_neighbours, false);
-    {nl, routing, _} ->
+    {nl, routing, _} when MM#mm.role == nl_impl ->
       fsm:cast(SM, nl_impl, {send, Term});
-    {nl, neighbours, NL} when Waiting_neighbours;
+    {nl, neighbours, NL} when MM#mm.role == nl;
                               State == discovery ->
       %% set protocol static
       %% set routing
@@ -203,6 +190,11 @@ handle_event(MM, SM, Term) ->
     {nl, protocol, NPA} when SM#sm.state == init_roles ->
       %% bind MM with protocol here
       %% NOTE: protocol must be unique per MM
+      Current_protocol = share:get(SM, current_protocol),
+      if Current_protocol == nothing ->
+        share:put(SM, current_protocol, NPA);
+        true -> nothing
+      end,
       NLRoles = [Role || {nl,_,_,_,_} = Role <- SM#sm.roles],
       Configured_protocols = share:get(SM, configured_protocols),
       Event = case length(NLRoles) of
@@ -216,27 +208,27 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, Event),
        fsm:run_event(MM, __, {})
       ] (SM);
-    {nl, recv, _Src, Dst, Data, _Tuple} when Dst == 255,
-                                        Data == <<"D">> ->
-      share:put(SM, waiting_neighbours, true),
-      get_neighbours(SM);
+    {nl, polling, ok} when MM#mm.role == nl,
+                           Alarm_data =/= nothing ->
+      send_alarm_msg(SM, Alarm_data),
+      fsm:clear_timeouts(SM#sm{state = ready_nl});
+    {nl, polling, PL} when is_list(PL) ->
+      set_protocol(SM, MM#mm.role, polling);
     {nl, send, alarm, _Src, Data} ->
-        stop_polling(SM, Data);
-    {recv, Src, Dst, Data, Tuple} ->
+      %TODO: we do not need a Src in alarm messages, it will be broadcasted
+      stop_polling(SM, Data);
+    {nl, recv, _Src, Dst, Data} when Dst == 255,
+                                     Data == <<"D">> ->
+      get_neighbours(SM);
+    {nl, recv, Src, Dst, Data} ->
         NTuple =
           case Data of
             <<"A", DataT/binary>> ->
               {nl, recv, Src, Dst, DataT};
             _ ->
-              Tuple
+              Term
           end,
         fsm:cast(SM, nl_impl, {send, NTuple});
-    %% ??? NOTE: what is the reason to update neighbours on each incoming sync telegram
-    %% {rcv_ll, {sync, _Tuple}} when Stop_polling == true ->
-    %%     Data = share:get(SM, polling_data),
-    %%     share:put(SM, stop_polling, false),
-    %%     send_alarm_msg(SM, Data),
-    %%     fsm:clear_timeouts(SM#sm{state = ready_nl});
     {nl, error, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, error}});
     _ when MM#mm.role == nl_impl, State =/= discovery ->
@@ -244,18 +236,9 @@ handle_event(MM, SM, Term) ->
     _ when MM#mm.role == nl_impl ->
       %% TODO: add Subject to busy report
       fsm:cast(SM, nl_impl, {send, {nl, busy}});
-    _ when MM#mm.role == nl, State =/= discovery,
-           Waiting_neighbours == false ->
+    _ when MM#mm.role == nl, State =/= discovery ->
            %% Waiting_sync == false ->
       fsm:cast(SM, nl_impl, {send, Term});
-    %% {rcv_ll, _} ->
-    %%   share:put(SM, waiting_sync, false);
-    %% {rcv_ll, _AProtocolID, Tuple} when State =/= discovery,
-    %%                                    Waiting_neighbours == false ->
-    %%   fsm:cast(nl_impl, {send, Tuple});
-    %% {nl, error} when State =/= discovery,
-    %%                  Waiting_neighbours == false ->
-    %%   fsm:cast(nl_impl, {send, Term});
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -270,7 +253,6 @@ handle_idle(_MM, SM, Term) ->
       %% Protocols = queue:from_list(NLRoles),
       %% share:put(SM, protocol_roles, Protocols),
       share:put(SM, configured_protocols, []),
-      share:put(SM, waiting_neighbours, false),
       %% share:put(SM, setting_routing, false),
       %% share:put(SM, waiting_sync, false),
       %% SM1 = init_nl_protocols(SM, Protocols),
@@ -299,12 +281,14 @@ handle_final(_MM, SM, Term) ->
     ?TRACE(?ID, "Final ~120p~n", [Term]).
 
 %%--------------------------------Helper functions-------------------------------
-set_protocol(SM, Protocol) ->
+set_protocol(SM, Role, Protocol) ->
   case share:get(SM, Protocol) of
     nothing ->
       %% this protocol is not configured yet
-      fsm:cast(SM, nl_impl, {send, {nl, protocol, error}}),
-      SM;
+      fsm:cast(SM, nl_impl, {send, {nl, protocol, error}});
+    _ when Role == nl ->
+      share:put(SM, current_protocol, Protocol),
+      fsm:clear_timeouts(SM);
     _ ->
       fsm:cast(SM, nl_impl, {send, {nl, protocol, ok}}),
       share:put(SM, current_protocol, Protocol),
@@ -312,15 +296,11 @@ set_protocol(SM, Protocol) ->
   end.
 
 process_ul_command(SM, NLCommand) ->
-  CurrProtocol = share:get(SM, current_protocol),
-  ProtocolMM = share:get(SM, CurrProtocol),
-  case {ProtocolMM, share:get(SM, configured_protocols)} of
-    {nothing, nothing} ->
+  Discovery_protocol = share:get(SM, current_protocol),
+  ProtocolMM = share:get(SM, Discovery_protocol),
+  case ProtocolMM of
+    nothing ->
       fsm:cast(SM, nl_impl, {send, {nl, error, noprotocol}});
-    {nothing, Protocols} ->
-      share:put(SM, current_protocol, hd(Protocols)),
-      MM = share:get(SM, hd(Protocols)),
-      fsm:cast(SM, MM, [], {send, NLCommand}, ?TO_MM);
     _ ->
       fsm:cast(SM, ProtocolMM, [], {send, NLCommand}, ?TO_MM)
   end.
@@ -333,10 +313,9 @@ stop_polling(SM, Data) ->
         ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
         SM;
       _ ->
-        Tuple = {nl, set, polling, stop},
+        Tuple = {nl, stop, polling},
         fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM),
-        share:put(SM, stop_polling, true),
-        share:put(SM, polling_data, Data)
+        share:put(SM, alarm_data, Data)
     end.
 
 start_discovery(SM) ->
@@ -373,32 +352,18 @@ set_routing(SM, empty) ->
 set_routing(SM, NL) ->
   Burst_protocol = share:get(SM, burst_protocol),
   ProtocolMM = share:get(SM, Burst_protocol),
+  Routing_table = lists:map(fun( {A, _I, _R, _T} ) -> {A, A} end, NL),
+  Neighbours    = lists:map(fun( {A, _I, _R, _T} ) -> A end, NL),
+  share:put(SM, neighbours, NL),
   case ProtocolMM of
     nothing ->
       ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
       SM;
-    _ ->
-      Routing_table = lists:map(fun( {A, _I, _R, _T} ) -> {A, A} end, NL),
-      %% Tuple = {nl, set, routing, Routing_table},
-      %% share:put(SM, setting_routing, {true, NL}),
-      share:put(SM, neighbours, NL),
-      fsm:cast(SM, nl_impl, {send, {nl, routing, Routing_table}})
-      %% fsm:cast(SM, ProtocolMM, [], {send, {nl, get, routing}}, ?TO_MM)
+    _ when SM#sm.state == discovery->
+      fsm:cast(SM, ProtocolMM, [], {send, {nl, set, polling, Neighbours}}, ?TO_MM),
+      fsm:cast(SM, nl_impl, {send, {nl, routing, Routing_table}});
+    _ -> SM
   end.
-
-%% set_neighbours(SM, empty) ->
-%%   SM;
-%% set_neighbours(SM, LNeighbours) ->
-%%   Burst_protocol = share:get(SM, burst_protocol),
-%%   ProtocolMM = share:get(SM, Burst_protocol),
-%%   case ProtocolMM of
-%%     nothing ->
-%%       ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
-%%       SM;
-%%     _ ->
-%%       Tuple = {nl, set, neighbours, LNeighbours},
-%%       fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
-%%   end.
 
 get_neighbours(SM) ->
   Discovery_protocol = share:get(SM, discovery_protocol),
@@ -412,28 +377,15 @@ get_neighbours(SM) ->
       fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
   end.
 
-%% send_alarm_msg(SM, Data) ->
-%%   Discovery_protocol = share:get(SM, discovery_protocol),
-%%   ProtocolMM = share:get(SM, Discovery_protocol),
-%%   case ProtocolMM of
-%%     nothing ->
-%%       ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
-%%       SM;
-%%     _ ->
-%%       Tuple = {nl, send, 255, <<"A",Data/binary>>},
-%%       fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
-%%   end.
-
-%% get_mux_commands() ->
-%%   ["=========================================== MUX commands ===========================================\r\n",
-%%    "NL,discovery,<Discovery_period>,<Time_discovery>\t- Run discovery, Time_discovery - whole discovery time in s,
-%%                                                     \t\t\tDiscovery_period - time for one discovery try in s
-%%                                                     \t\t\tTime_discovery / Discovery_period = Retry_count\r\n",
-%%    "NL,discovery,stop\t\t\t\t\t- Stop discovery\r\n\r\n"
-%%    "NL,get,protocols,configured\t\t\t\t- Get list of currently configured protocolsfor MUX\r\n\r\n",
-%%    "NL,get,discovery,period\t\t\t\t\t- Time for one discovery try in s\r\n\r\n",
-%%    "NL,get,discovery,time\t\t\t\t\t- Whole discovery time in s\r\n\r\n",
-%%    "=========================================== Sync MUX responses =====================================\r\n",
-%%    "NL,error,norouting\t\t\t\t- Sync error message, if no routing to dst exists (Static routing)\r\n",
-%%    "NL,error,noprotocol\t\t\t\t- Sync error message, if no protocol specified\r\n",
-%%    "\r\n\r\n\r\n"].
+send_alarm_msg(SM, Data) ->
+    Discovery_protocol = share:get(SM, discovery_protocol),
+    ProtocolMM = share:get(SM, Discovery_protocol),
+    case ProtocolMM of
+        nothing ->
+            ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
+            SM;
+        _ ->
+            share:clean(SM, alarm_data),
+            Tuple = {nl, send, 255, <<"A",Data/binary>>},
+            fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
+    end.

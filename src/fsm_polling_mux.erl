@@ -73,6 +73,7 @@
 
                  {recv_poll_pbm, wait_poll_data},
                  {recv_poll_data, wait_poll_pbm},
+                 {recv_poll_seq, wait_poll_pbm},
 
                  {poll_next_addr, polling}
                  ]},
@@ -139,14 +140,6 @@ handle_event(MM, SM, Term) ->
   SeqPollAddrs = share:get(SM, polling_seq),
   Local_address = share:get(SM, local_address),
 
-  % case Local_address of
-  %   2 ->
-  %    io:format("!!!!!!!!!!!!! handle_event ~p: ~p ~p ~p~n", [Local_address, Term, SM#sm.event, SM#sm.state]);
-  %   1 ->
-  %    io:format("!!!!!!!!!!!!! handle_event ~p: ~p ~p ~p~n", [Local_address, Term, SM#sm.event, SM#sm.state]);
-  %     _ -> nothing
-  % end,
-
   Wait_pc = fsm:check_timeout(SM, wait_pc),
   Send_next_poll_data = fsm:check_timeout(SM, send_next_poll_data_tmo),
   Event_params = SM#sm.event_params,
@@ -201,10 +194,10 @@ handle_event(MM, SM, Term) ->
       if TransmitLen < 50 ->
           [
            add_to_CDT_queue(__, Term),
-           fsm:cast(__, polling_mux, {send, {nl, send, ok}})
+           fsm:cast(__, nl_impl, {send, {nl, send, ok}})
           ] (SM);
          true ->
-          fsm:cast(SM, polling_mux, {send, {nl, send, error}})
+          fsm:cast(SM, nl_impl, {send, {nl, send, error}})
       end;
     {nl, send, _MsgType, _IDst, _Payload} ->
       [
@@ -237,27 +230,18 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, poll_stop),
        fsm:run_event(MM, __, {})
       ] (SM);
-    %% {nl, set, neighbours, NL} ->
-    %%   case NL of
-    %%     [H|_] when is_tuple(H) ->
-    %%       Neighbours = [ A || {A, _, _, _} <- NL],
-    %%       share:put(SM, current_neighbours, Neighbours);
-    %%     _ ->
-    %%       share:put(SM, current_neighbours, NL)
-    %%   end,
-    %%   fsm:cast(SM, nl_impl, {send, {nl, neighbours, ok}});
-    %% {nl, set, routing, Routing} ->
-    %%   share:put(SM, routing_table, Routing),
-    %%   fsm:cast(SM, nl_impl, {send, {nl, routing, ok}});
     {nl, get, routing} ->
       Answer = {nl, routing, nl_mac_hf:routing_to_list(SM)},
       fsm:cast(SM, nl_impl, {send, Answer});
     {async, {pid, _Pid}, RTuple = {recv, _Len, Src, Local_address , _,  _,  _,  _,  _, Data}} ->
       Poll_data = extract_poll_data(SM, Data),
-      Poll_data_len = byte_size(Poll_data),
-      fsm:cast(SM, nl_impl, {send, {nl, recv, Poll_data_len, Local_address, Src, Poll_data}}),
-      io:format("<<<<  Poll_data ~p ~p~n", [Src, Poll_data]),
-      fsm:run_event(MM, SM#sm{event = recv_poll_data}, {recv_poll_data, RTuple});
+      case Poll_data of
+        ignore -> SM;
+        _ ->
+          fsm:cast(SM, nl_impl, {send, {nl, recv, Local_address, Src, Poll_data}}),
+          io:format("<<<<  Poll_data ~p ~p~n", [Src, Poll_data]),
+          fsm:run_event(MM, SM#sm{event = recv_poll_data}, {recv_poll_data, RTuple})
+      end;
     {async, {pid, _Pid}, RTuple = {recvpbm, _Len, _Src, Local_address, _, _, _, _, _Data}} ->
       fsm:run_event(MM, SM#sm{event = process_poll_pbm}, {recv_poll_pbm, RTuple});
     {async, {pid, Pid}, {recvim, Len, Src, Local_address, Flag, _, _, _,_, Data}} ->
@@ -403,8 +387,7 @@ handle_wait_poll_pbm(_MM, SM, Term = {recv_poll_pbm, Pbm}) ->
       io:format("<<<<  Extr ~p ~120p~n", [Src, ExtrLen]),
 
       if BroadcastData =/= <<>> ->
-        BroadcastDataLen = byte_size(BroadcastData),
-        fsm:cast(SM, polling_mux, {send, {response, {nl, recv, BroadcastDataLen, Src, Dst, BroadcastData}}});
+        fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, BroadcastData}});
       true -> nothing
       end,
 
@@ -528,7 +511,7 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
           SM#sm{event = ignore_recv_poll_seq};
         answer_pbm ->
           if Poll_data_len > 0 ->
-            fsm:cast(SM, nl_impl, {send, {nl, recv, Poll_data_len, Src, Dst, Poll_data}});
+            fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, Poll_data}});
           true -> nothing
           end,
           fsm:cast(SM, nmea, {send, Position}),
@@ -541,7 +524,7 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
           
           SM1 = fsm:send_at_command(SM, SPMTuple),
           case PollingFlagBurst of
-            nl -> SM1#sm{event = ignore_recv_poll_seq};
+            nb -> SM1#sm{event = ignore_recv_poll_seq};
             b -> SM1#sm{event = send_poll_pbm, event_params = Event_params}
           end
       end
@@ -606,7 +589,8 @@ clear_buffer(SM) ->
     BroadcastExist = get_share_var(X, broadcast),
     share:clean(SM, BroadcastExist)
   end,
-  [ F(X) || X <- LSeq].
+  [ F(X) || X <- LSeq],
+  SM.
 
 get_share_var(Dst, Name) ->
   DstA = binary_to_atom(integer_to_binary(Dst), utf8),
@@ -919,15 +903,17 @@ add_to_limited_list(SM, L, Key, NameQ, Max) ->
       nothing
   end.
 
-add_to_CDT_queue(SM, {nl, send, TransmitLen, IDst, broadcast, Payload}) ->
+add_to_CDT_queue(SM, {nl, send, broadcast, IDst, Payload}) ->
   Polling_seq_msgs = share:get(SM, polling_seq_msgs),
   add_to_limited_list(SM, Polling_seq_msgs, IDst, polling_seq_msgs, 10),
   Time = erlang:monotonic_time(micro_seconds),
+  TransmitLen = byte_size(Payload),
   MsgTuple = {Time, broadcast, not_sent, TransmitLen, Payload},
   MsgName = get_share_var(IDst, broadcast),
   share:put(SM, MsgName, MsgTuple),
-  ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, MsgName)]);
-add_to_CDT_queue(SM, {nl, send, IDst, MsgType, Payload}) ->
+  ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, MsgName)]),
+  SM;
+add_to_CDT_queue(SM, {nl, send, MsgType, IDst, Payload}) ->
   LocalPC = share:get(SM, local_pc),
   increase_local_pc(SM, local_pc),
   TransmitLen = byte_size(Payload),
@@ -955,7 +941,8 @@ add_to_CDT_queue(SM, {nl, send, IDst, MsgType, Payload}) ->
       nl_mac_hf:queue_limited_push(Q, Item, Max_sensitive_queue)
   end,
   share:put(SM, Qname, NQ),
-  ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, Qname)]).
+  ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, Qname)]),
+  SM.
 
 delete_delivered_item(SM, Name, PC, Dst) ->
   Qname = get_share_var(Dst, Name),

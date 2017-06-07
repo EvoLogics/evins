@@ -183,8 +183,8 @@ nl_extract_subject(<<"polling">>, Params) when Params == <<"ok">>; Params == <<"
 nl_extract_subject(<<"polling">>, Params) ->
   {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]};
 %% NL,polling,Addr1,..,AddrN
-nl_extract_subject(<<"flush">>, <<"ok">>) ->
-  {nl, flush, ok};
+nl_extract_subject(<<"buffer">>, <<"ok">>) ->
+  {nl, buffer, ok};
 %% NL,delivered,Src,Dst
 nl_extract_subject(<<"delivered">>, Params) ->
   [Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params, <<$,>>)],
