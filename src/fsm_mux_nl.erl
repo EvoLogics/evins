@@ -177,8 +177,8 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, routing, _} when MM#mm.role == nl_impl ->
       fsm:cast(SM, nl_impl, {send, Term});
-    {nl, neighbours, NL} when MM#mm.role == nl;
-                              State == discovery ->
+    {nl, neighbours, NL} when is_list(NL), MM#mm.role == nl;
+                              is_list(NL), State == discovery ->
       %% set protocol static
       %% set routing
       set_routing(SM, NL),
@@ -348,6 +348,20 @@ set_routing(SM, empty) ->
       SM;
     _ ->
       fsm:cast(SM, ProtocolMM, [], {send, {nl, get, routing}}, ?TO_MM)
+  end;
+set_routing(SM, [H|_] = NL) when is_number(H) ->
+  Burst_protocol = share:get(SM, burst_protocol),
+  ProtocolMM = share:get(SM, Burst_protocol),
+  Routing_table = [ {X, X} ||  X <- NL],
+  share:put(SM, neighbours, NL),
+  case ProtocolMM of
+    nothing ->
+      ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+      SM;
+    _ when SM#sm.state == discovery->
+      fsm:cast(SM, ProtocolMM, [], {send, {nl, set, polling, NL}}, ?TO_MM),
+      fsm:cast(SM, nl_impl, {send, {nl, routing, Routing_table}});
+    _ -> SM
   end;
 set_routing(SM, NL) ->
   Burst_protocol = share:get(SM, burst_protocol),

@@ -75,6 +75,8 @@ split(L, Cfg) ->
 nl_send_extract(L, Cfg) ->
   try
     {match, [BType, BLen, BDst, Rest]} = re:run(L,"NL,send,([^0..9,]*?),?(\\d*),(\\d+),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    PLLen = byte_size(Rest),
+
     Len = case BLen of
             <<>> ->
               [Bin, _] = re:split(Rest,"\r?\n",[{parts,2}]),
@@ -90,6 +92,8 @@ nl_send_extract(L, Cfg) ->
             _ -> {nl, send, binary_to_existing_atom(BType,utf8), Dst, Data}
           end,
         [Tuple | split(Tail, Cfg)];
+      _ when Len + 1 =< PLLen ->
+        [{nl, error, {parseError, L}}];
       _ ->
         [{more, L}]
     end
