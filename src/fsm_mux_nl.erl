@@ -168,6 +168,9 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, discovery_start),
        fsm:run_event(MM, __, {})
       ] (SM);
+    {nl,neighbour,ok} ->
+      fsm:cast(SM, nl_impl, {send, Term}),
+      get_neighbours(SM);
     {nl, set, protocol, Protocol} when State =/= discovery ->
       %% clear everything and set current protocol
       set_protocol(SM, MM#mm.role, Protocol);
