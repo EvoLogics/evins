@@ -78,9 +78,13 @@ nl_recv_extract(L, Cfg) ->
   try
     {match, [BLen, BSrc, BDst, Rest]} = re:run(L,"NL,recv,([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
     [Len, Src, Dst] = [binary_to_integer(I) || I <- [BLen, BSrc, BDst]],
+
+    PLLen = byte_size(Rest),
     case re:run(Rest, "^(.{" ++ integer_to_list(Len) ++ "})\r?\n(.*)",[dotall,{capture,[1,2],binary}]) of
       {match, [Data, Tail]} ->
         [{nl, recv, Src, Dst, Data} | split(Tail, Cfg)];
+      _ when Len + 1 =< PLLen ->
+        [{nl, error, {parseError, L}}];
       _ ->
         [{more, L}]
     end
@@ -183,8 +187,8 @@ nl_extract_subject(<<"polling">>, Params) when Params == <<"ok">>; Params == <<"
 nl_extract_subject(<<"polling">>, Params) ->
   {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]};
 %% NL,polling,Addr1,..,AddrN
-nl_extract_subject(<<"flush">>, <<"ok">>) ->
-  {nl, flush, ok};
+nl_extract_subject(<<"buffer">>, <<"ok">>) ->
+  {nl, buffer, ok};
 %% NL,delivered,Src,Dst
 nl_extract_subject(<<"delivered">>, Params) ->
   [Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params, <<$,>>)],

@@ -75,6 +75,8 @@ split(L, Cfg) ->
 nl_send_extract(L, Cfg) ->
   try
     {match, [BType, BLen, BDst, Rest]} = re:run(L,"NL,send,([^0..9,]*?),?(\\d*),(\\d+),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    PLLen = byte_size(Rest),
+
     Len = case BLen of
             <<>> ->
               [Bin, _] = re:split(Rest,"\r?\n",[{parts,2}]),
@@ -90,6 +92,8 @@ nl_send_extract(L, Cfg) ->
             _ -> {nl, send, binary_to_existing_atom(BType,utf8), Dst, Data}
           end,
         [Tuple | split(Tail, Cfg)];
+      _ when Len + 1 =< PLLen ->
+        [{nl, error, {parseError, L}}];
       _ ->
         [{more, L}]
     end
@@ -147,6 +151,8 @@ from_term({nl,protocolinfo,Protocol,PropList}, Cfg) ->
   T = [[Key," : ",Value,EOL] || {Key,Value} <- PropList],
   [list_to_binary(["NL,protocolinfo,",atom_to_list(Protocol),$,,EOL,T,EOL]), Cfg];
 %% NL,routing,[<A1>-><A2>],..,[default->Default]
+from_term({nl, routing, []}, Cfg)  ->
+  [list_to_binary(["NL,routing,","default->63",Cfg#config.eol]), Cfg];
 from_term({nl, routing, Routing}, Cfg) when is_list(Routing) ->
   RoutingLst =
     lists:map(fun({default,To}) -> "default->" ++ integer_to_list(To);
@@ -222,7 +228,7 @@ from_term({nl,statistics,data,Data}, Cfg) ->
 from_term({nl,protocols,Protocols}, Cfg) ->
   [list_to_binary(["NL,protocols,",lists:join(",", [atom_to_binary(P,utf8) || P <- Protocols]),Cfg#config.eol]), Cfg];
 %% NL,polling,Addr,...,AddrN
-from_term({nl,polling,Sequence}, Cfg) ->
+from_term({nl,polling,Sequence}, Cfg) when is_list(Sequence) ->
   [list_to_binary(["NL,polling,",lists:join(",", [integer_to_binary(P) || P <- Sequence]),Cfg#config.eol]), Cfg];
 %% NL command with atoms or integers
 from_term(Tuple, Cfg) ->

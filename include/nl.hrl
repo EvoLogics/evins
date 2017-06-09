@@ -174,17 +174,18 @@
        "?\t\t\t\t\t\t- List of all commands\n",
        "\n\n\n",
        "===================================== Send and receive ======================================\n",
-       "NL,send,[<Datalen>],<Dst>,<Data>\t\t- Send data, <Datalen> - optional\n",
+       "NL,send[,<Type>],[<Datalen>],<Dst>,<Data>\t- Send data, <Datalen> - optional,
+        \t\t<Type> - optional, used for polling apps: alarm/tolerant/sensitive/broadcast\n",
        "NL,recv,<Datalen>,<Src>,<Dst>,<Data>\t\t- Recv data\n",
        "\n\n\n",
        "===================================== Immediate response =====================================\n",
-       "NL,ok\t\t\t\t\t\t- Message was accepted and will be transmitted\n",
-       "NL,error\t\t\t\t\t- Message was not accepted and will be dropped\n",
+       "NL,<Handling>,ok\t\t\t\t- Message was accepted and will be transmitted\n",
+       "NL[,<Handling>],error\t\t\t\t- Message was not accepted and will be dropped\n",
        "NL,error,norouting\t\t\t\t- Message was not accepted and will be dropped, no routing specified, only for static routing\n",
-       "NL,busy\t\t\t\t\t\t- NL is busy, message will be dropped\n",
+       "NL[,<Handling>],busy\t\t\t\t- NL is busy, message will be dropped\n",
        "\n\n\n",
        "==================================== Data delivery reports ====================================\n",
-       "NL,failed,<Src>,<Dst>\t\t\t\t- Message was not delivered to destination node\n",
+       "NL,failed,<Src>,<Dst>\t\t\t\t- Message wcat as not delivered to destination node\n",
        "NL,delivered,<Src>,<Dst>\t\t\t- Message was successfully delivered to destination node\n",
        "\n\n\n",
        "==================================== Set commands =====================================\n",
@@ -195,11 +196,12 @@
        "NL,set,routing,[<LA1>-><LA2>],[<LA3>-><LA4>],...,[<Default LA>]\t- Set routing only for static routing\n",
        "\n\n\n",
        "==================================== Information commands =====================================\n",
+       "NL,get,version\t\t\t\t\t- Get firmware version\n",
        "NL,get,address\t\t\t\t\t- Get local address\n",
-       "NL,get,protocols\t\t\t\t- Get description of all protocols\n",
+       "NL,get,protocols\t\t\t- Get description of all protocols\n",
        "NL,get,protocol\t\t\t\t\t- Get current routing protocol\n",
-       "NL,get,protocol,<Protocol_name>\t\t\t- Get description of specific protocol\n",
-       "NL,get,neighbours\t\t\t\t- Get current  neighbours\n
+       "NL,get,protocolinfo,<Protocol_name>\t\t\t- Get description of specific protocol\n",
+       "NL,get,neighbours\t\t\t\t- Get current  neighbours
        \t\t\tAnswer:
        \t\t\tNL,neighbours,[<Addr1>:<Integrity1>:<Rssi1>:<TimeLastUpdate1(ms)>],[<Addr2>:<Integrity2>:<Rssi2>:<TimeLastUpdate2(ms)>],..\n\n"
        "NL,get,routing\t\t\t\t\t- Get current routing table\n",
@@ -207,27 +209,44 @@
        "NL,get,states\t\t\t\t\t- Get last 50  states of protocol (sm)\n",
        "\n\n\n",
        "======================== Statistics commands for protocols of all types ========================\n",
-       "NL,get,stats,neighbours\t\t\t\t- Get statistics of all neighbours from start of program till the current time\n
+       "NL,get,statistics,neighbours\t\t\t- Get statistics of all neighbours from start of program till the current time
        \t\t\tAnswer:
        \t\t\t<Role : relay or source><Neighbours><Duration find path><Count found this path><Total count try findpath>\n"
        "\n",
        "================== Statistics commands only for protocols of path finding type ==================\n",
-       "NL,get,stats,paths\t\t\t\t- Get statistics of all paths from start of program till the current time\n
+       "NL,get,statistics,paths\t\t\t\t- Get statistics of all paths from start of program till the current time
        \t\t\tAnswer:
        \t\t\t<Role : relay or source><Path><Duration find path><Count found this path><Total count try findpath>\n"
        "\n",
        "========================= Statistics commands only for protocols with ack ========================\n",
-       "NL,get,stats,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time\n
+       "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time
        \t\t\tAnswer:
        \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
        "\n\n\n",
        "========================= Clear commands ========================\n",
        "NL,delete,neighbour,<Addr>\t\t\t-Remove a neighbour from the current neighbour list and updates the routing table\n",
-       "NL,clear,stats,data\t\t\t\t-Clear the data statistics\n"
+       "NL,clear,statistics,data\t\t\t-Clear the data statistics\n"
        "\n\n\n",
        "========================= Reset commands ========================\n",
        "NL,reset,state\t\t\t\t\t-Revert fsm state to idle state\n"
       ]).
+
+-define(MUXHELP, ["\n",
+      "=========================================== MUX commands ===========================================\n",
+      "NL,start,discovery,<Discovery_period>,<Time_discovery>- Run discovery, Time_discovery - whole discovery time in s,
+                                                       \tDiscovery_period - time for one discovery try in s
+                                                       \tTime_discovery / Discovery_period = Retry_count\n",
+      "NL,stop,discovery\t\t\t\t- Stop discovery\n\n"
+      "NL,get,discovery\t\t\t\t- Get discovery time info\n\n",
+      "=========================================== Polling commands ===========================================\n",
+      "NL,set,polling,[Addr1,...,AddrN]\t\t- Set polling sequence, the sequence is a list of addresses\n\n",
+      "NL,start,polling,[b|nb]\t\t\t\t- Start polling loop. Flag [nb | b] is used to control remotely, if we need to get remote burst data or not\n\n",
+      "NL,stop,polling\t\t\t\t\t- Stop polling loop\n\n",
+      "NL,flush,buffer\t\t\t\t\t- Clear all messages are saved in the queue. Sensitive and tolerant messages are queued. All messages will be removed\n\n",
+      "=========================================== Sync MUX responses =====================================\n",
+      "NL,error,norouting\t\t\t\t- Sync error message, if no routing to dst exists (Static routing)\n",
+      "NL,error,noprotocol\t\t\t\t- Sync error message, if no protocol specified\n",
+      "\n\n\n"]).
 
 -define(STATE_DESCR,
   [{idle, "Ready to proccess data\n"},

@@ -340,8 +340,13 @@ handle_event(MM, SM, Term) ->
     {nl, set, routing, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, error}});
     {nl, set, protocol, AProtocolID} ->
-      share:put(SM, nlp, AProtocolID),
-      fsm:cast(SM, nl_impl, {send, {nl, protocol, AProtocolID}});
+      case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
+        true ->
+          share:put(SM, nlp, AProtocolID),
+          fsm:cast(SM, nl_impl, {send, {nl, protocol, AProtocolID}});
+        _ ->
+          fsm:cast(SM, nl_impl, {send, {nl, protocol, error}})
+      end;
     {nl, delete, neighbour, Addr} ->
       nl_mac_hf:process_command(SM, false, {delete, neighbour, Addr});
     {nl, send, _, _} when SM#sm.state =/= idle ->
