@@ -387,7 +387,7 @@ handle_wait_poll_pbm(_MM, SM, Term = {recv_poll_pbm, Pbm}) ->
       io:format("<<<<  Extr ~p ~120p~n", [Src, ExtrLen]),
 
       if BroadcastData =/= <<>> ->
-        fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, BroadcastData}});
+        fsm:cast(SM, nl_impl, {send, {nl, recv, Dst, Src, BroadcastData}});
       true -> nothing
       end,
 
