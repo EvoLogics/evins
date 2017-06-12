@@ -147,7 +147,7 @@ stop(_SM)      -> ok.
 
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
-  ?INFO(?ID, "HANDLE EVENT  ~p   ~p ~n", [MM, SM]),
+  ?INFO(?ID, "HANDLE EVENT  ~150p~n~150p~n", [MM, SM]),
   ?TRACE(?ID, "~p~n", [Term]),
   case Term of
     {timeout, answer_timeout} ->

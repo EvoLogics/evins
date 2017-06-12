@@ -1,4 +1,4 @@
-%% Copyright (c) 2015, Oleksiy Kebkal <lesha@evologics.de>
+%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -25,61 +25,47 @@
 %% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 %% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
--module(mod_mux_nl).
+-module(mod_polling).
 -behaviour(fsm_worker).
 
 -include("fsm.hrl").
--include("nl.hrl").
 
 -export([start/4, register_fsms/4]).
 
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-  fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+    fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   parse_conf(Mod_ID, ArgS, Share),
-  Roles = fsm_worker:role_info(Role_IDs, [nl_impl, nl]),
-  [#sm{roles = Roles, module = fsm_mux_nl}].
+  Roles = fsm_worker:role_info(Role_IDs, [at, nl_impl, nmea]),
+  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_polling_mux}].
 
 parse_conf(_Mod_ID, ArgS, Share) ->
-  Time_discovery_set  = [Time  || {time_discovery, Time} <- ArgS],
-  Discovery_period_set = [Time  || {discovery_period, Time} <- ArgS],
-  Protocols_set = [P  || {protocols, P} <- ArgS],
-
-  Time_discovery  = set_params(Time_discovery_set, 30), %s
-  Discovery_period = set_params(Discovery_period_set, 10), %s
-
   ShareID = #sm{share = Share},
 
-  set_protocols(ShareID, Protocols_set, [{discovery, sncfloodr}, {burst, polling}]),
-  share:put(ShareID, [{time_discovery, Time_discovery},
-                      {discovery_period, Discovery_period}]).
+  [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
+
+  Time_wait_recv_set  = [Time  || {time_wait_recv, Time} <- ArgS],
+  Max_sensitive_queue_set  = [Max  || {max_sensitive_queue, Max} <- ArgS],
+  Max_packets_transmit_sens_set  = [Max  || {max_packets_sensitive_transmit, Max} <- ArgS],
+  Max_packets_tolerant_transmit_set  = [Max  || {max_packets_tolerant_transmit, Max} <- ArgS],
+  Max_burst_len_set  = [Max  || {max_burst_len, Max} <- ArgS],
+
+  Time_wait_recv  = set_params(Time_wait_recv_set, 20), %s
+  Max_sensitive_queue  = set_params(Max_sensitive_queue_set, 3),
+  Max_burst_len  = set_params(Max_burst_len_set, 127),
+  Max_packets_transmit_sens  = set_params(Max_packets_transmit_sens_set, 3),
+  Max_packets_tolerant_transmit  = set_params(Max_packets_tolerant_transmit_set, 3),
+
+  share:put(ShareID, [{nl_protocol, NL_Protocol}]),
+  share:put(ShareID, [{time_wait_recv, Time_wait_recv}]),
+  share:put(ShareID, [{max_burst_len, Max_burst_len}]),
+  share:put(ShareID, [{max_sensitive_queue, Max_sensitive_queue}]),
+  share:put(ShareID, [{max_packets_sensitive_transmit, Max_packets_transmit_sens}]),
+  share:put(ShareID, [{max_packets_tolerant_transmit, Max_packets_tolerant_transmit}]).
 
 set_params(Param, Default) ->
   case Param of
     []     -> Default;
     [Value]-> Value
   end.
-
-set_protocols(ShareID, Protocols_set, Default) ->
- Protocols =
-  lists:filtermap(
-    fun(X) ->
-      {Protocol_type, _} = X,
-      IfConf = lists:keyfind(Protocol_type, 1, Protocols_set),
-      case IfConf of
-        false -> {true, X};
-        _ -> {true, IfConf}
-      end
-    end, Default),
-
-  lists:map(
-    fun(X) ->
-      case X of
-        {discovery, P} ->
-          share:put(ShareID, [{discovery_protocol, P}]);
-        {burst, P} ->
-          share:put(ShareID, [{burst_protocol, P}]);
-        _ -> nothing
-      end
-    end, Protocols).

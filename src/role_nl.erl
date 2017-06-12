@@ -1,4 +1,4 @@
-%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
+%% Copyright (c) 2017, Oleksiy Kebkal <lesha@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -33,13 +33,16 @@
 
 -export([start/3, stop/1, to_term/3, from_term/2, ctrl/2, split/2]).
 
--record(config, {filter, mode, waitsync, request, telegram, eol, ext_networking, pid}).
--define(EOL_RECV, <<"\r">>).
+-record(config, {eol}).
 
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-  Cfg = #config{filter = nl, mode = data, waitsync = no, request = "", telegram = "", eol = "\n", ext_networking = no, pid = 0},
+  _ = {ok, busy, error, failed, delivered, send, recv}, %% atom vocabular
+  _ = {staticr, staticrack, sncfloodr, sncfloodrack, dpfloodr, dpfloodrack, icrpr, sncfloodpfr, sncfloodpfrack, evoicrppfr, evoicrppfrack, dblfloodpfr, dblfloodpfrack, laorp},
+  _ = {time, period},
+  _ = {source, relay},
+  Cfg = #config{eol = "\r\n"},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
 ctrl(_, Cfg) -> Cfg.
@@ -47,214 +50,269 @@ ctrl(_, Cfg) -> Cfg.
 to_term(Tail, Chunk, Cfg) ->
   role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
 
-from_term(Term, Cfg) ->
-  Tuple = from_term_helper(Term, Cfg#config.pid, Cfg#config.filter),
-  Bin = list_to_binary([Tuple, Cfg#config.eol]),
-  [Bin, Cfg].
-
-from_term_helper(Tuple,_,_) when is_tuple(Tuple) ->
-  case Tuple of
-    {nl, error} -> [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), ?EOL_RECV];
-    {nl, error, norouting} -> [nl_mac_hf:convert_to_binary(tuple_to_list(Tuple)), ?EOL_RECV];
-    {async, T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
-    {sync,  T} when is_tuple(T) -> [nl_mac_hf:convert_to_binary(tuple_to_list(T)), ?EOL_RECV];
-    T -> [nl_mac_hf:convert_to_binary(tuple_to_list(T))]
-  end.
-
 split(L, Cfg) ->
-  case re:run(L, "\r\n") of
-    {match, [{_, _}]} -> try_recv(L, Cfg);
-    nomatch -> try_send(L, Cfg)
-  end.
-
-try_recv(L, Cfg) ->
-  case re:run(L,"^(NL,recv,)(.*?)[\r\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
-    {match, [<<"NL,recv,">>, P, L1]} -> [nl_recv_extract(P, Cfg) | split(L1, Cfg)];
-    nomatch ->
-      case re:run(L,"^(NL,busy|NL,ok|NL,error|NL,failed,|NL,delivered,)[\r\n]+(.*)", [dotall, {capture, [1, 2], binary}]) of
-        {match, [<<"NL,busy">>, L1]} -> [ {rcv_ll, {nl, busy}} | split(L1, Cfg)];
-        {match, [<<"NL,ok">>, L1]} -> [ {rcv_ll, {nl, ok}} | split(L1, Cfg)];
-        {match, [<<"NL,error">>, L1]} -> [ {rcv_ll, {nl, error}} | split(L1, Cfg)];
-        {match, [<<"NL,failed,">>, L1]} -> [ {rcv_ll, {nl, failed}} | split(L1, Cfg)];
-        {match, [<<"NL,delivered,">>, L1]} -> [ {rcv_ll, {nl, delivered}} | split(L1, Cfg)];
-        nomatch -> [{nl, error}]
-      end
-  end.
-
-try_send(L, Cfg) ->
-  case re:run(L, "\n") of
-    {match, [{_, _}]} ->
-    case L of
-      <<"?\n">>  -> get_help();
-      _ ->
-        case re:run(L, 
-          "^(NL,send,|NL,set,protocol,|NL,set,routing,|NL,set,address,|NL,clear,stats,data|NL,reset,state|NL,delete,neighbour,|NL,set,neighbours,)(.*)",
-          [dotall, {capture, [1, 2], binary}]) of
-
-          {match, [<<"NL,send,">>, P]}  -> nl_send_extract(P, Cfg);
-          {match, [<<"NL,set,protocol,">>, P]}  -> nl_set_protocol(P, Cfg);
-          {match, [<<"NL,set,routing,">>, P]}  -> nl_set_routing(P, Cfg);
-          {match, [<<"NL,set,address,">>, P]}  -> nl_set_address(P, Cfg);
-          {match, [<<"NL,set,neighbours,">>, P]}  -> nl_set_neighbours(P, Cfg);
-          {match, [<<"NL,delete,neighbour,">>, P]}  -> nl_delete_neighbour(P, Cfg);
-          {match, [<<"NL,clear,stats,data">>, P]}  -> nl_clear(P, Cfg);
-          {match, [<<"NL,reset,state">>, _P]}  -> nl_reset_state();
-          nomatch ->
-            case re:run(L,"^(NL,get,)(.*?)[\n]+(.*)", [dotall, {capture, [1, 2, 3], binary}]) of
-              {match, [<<"NL,get,">>, P, L1]} -> [ param_extract(P) | split(L1, Cfg)];
-              nomatch -> [{nl, error}]
-            end
-        end
+  case re:split(L,"\r?\n",[{parts,2}]) of
+    [<<"NL,recv,", _/binary>>, _] -> %% binary
+      nl_recv_extract(L, Cfg);
+    [<<"NL,protocolinfo,", _/binary>>, _] -> %% multiline
+      nl_multiline_extract(L, Cfg);
+    [<<"NL,states,", _/binary>>, _] -> %% multiline
+      nl_multiline_extract(L, Cfg);
+    [<<"NL,statistics,", _/binary>>, _] -> %% multiline
+      nl_multiline_extract(L, Cfg);
+    [Answer, Rest] ->
+      case re:run(Answer,"^NL,([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]) of
+        {match, [Subject, Params]} ->
+          Reply = try nl_extract_subject(Subject, Params)
+                  catch error: _ -> {nl, error, {parseError, Answer}}
+                  end,
+          [Reply | split(Rest, Cfg)];
+        nomatch -> [{nl, error, {parseError, Answer}} | split(Rest, Cfg)]
       end;
-    nomatch ->
+    _ ->
       [{more, L}]
   end.
 
-nl_delete_neighbour(P, _Cfg) ->
+%% NL,recv,<Len>,<Src>,<Dst>,<Data>
+nl_recv_extract(L, Cfg) ->
   try
-    {match, [BAddr]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
-    [{rcv_ul, {delete, neighbour, binary_to_integer(BAddr)} }]
-  catch error: _Reason -> [{nl, error}]
-  end.
+    {match, [BLen, BSrc, BDst, Rest]} = re:run(L,"NL,recv,([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    [Len, Src, Dst] = [binary_to_integer(I) || I <- [BLen, BSrc, BDst]],
 
-nl_set_protocol(P, _Cfg) ->
-  try
-    {match, [ProtocolID]} = re:run(P,"([^,]*)\n", [dotall, {capture, [1], binary}]),
-    AProtocolID = binary_to_atom(ProtocolID, utf8),
-    case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
-      true ->
-        [{rcv_ul, {set, protocol, AProtocolID} }];
-      false -> [{nl, error}]
-    end
-  catch error: _Reason -> [{nl, error}]
-  end.
-
-nl_reset_state() ->
-  [{rcv_ul, {reset, state} }].
-
-nl_set_neighbours(P, _Cfg) ->
-  try
-    {match, [BNeighbours]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
-    LBNeighbours = binary:split(BNeighbours, [<<":">>],[global]),
-    [Flag, Neighours] =
-    case LBNeighbours of
-      _ when length(LBNeighbours) == 1 ->
-        LINeighbours = binary:split(BNeighbours, [<<",">>],[global]),
-        NL = [nl_mac_hf:bin_to_num(N) || N <- LINeighbours],
-        [normal, NL];
+    PLLen = byte_size(Rest),
+    case re:run(Rest, "^(.{" ++ integer_to_list(Len) ++ "})\r?\n(.*)",[dotall,{capture,[1,2],binary}]) of
+      {match, [Data, Tail]} ->
+        [{nl, recv, Src, Dst, Data} | split(Tail, Cfg)];
+      _ when Len + 1 =< PLLen ->
+        [{nl, error, {parseError, L}}];
       _ ->
-        LAddINeighbours = binary:split(BNeighbours, [<<",">>],[global]),
-        NL =
-        lists:map(fun(X) ->
-          [N1, I, R, T] = binary:split(X, [<<":">>],[global]),
-          {nl_mac_hf:bin_to_num(N1),
-          nl_mac_hf:bin_to_num(I),
-          nl_mac_hf:bin_to_num(R),
-          nl_mac_hf:bin_to_num(T)} end, LAddINeighbours),
-        [add, NL]
-      end,
-      [{rcv_ul, {set, neighbours, Flag, Neighours} }]
-  catch error: _Reason -> [{nl, error}]
-  end.
-
-nl_set_routing(P, _Cfg) ->
-  try
-    {match, [BRouting]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
-    LRouting = string:tokens(binary_to_list(BRouting), ","),
-    IRouting = lists:map(fun(X)-> S = string:tokens(X, "->"), [list_to_integer(X1) || X1 <- S] end, LRouting),
-    TRouting = [case X of [A1, A2] -> {A1, A2}; [A1] -> A1 end|| X <- IRouting],
-    [{rcv_ul, {set, routing, TRouting} }]
-  catch error: _Reason -> [{nl, error}]
-  end.
-
-nl_set_address(P, _Cfg) ->
-  try
-    {match, [BAddr]} = re:run(P,"(.*)\n", [dotall, {capture, [1], binary}]),
-    [{rcv_ul, {set, address, binary_to_integer(BAddr)} }]
-  catch error: _Reason -> [{nl, error}]
-  end.
-
-nl_send_extract(P, Cfg) ->
-  try
-    {match, [BTransmitLen, BDst, PayloadTail]} = re:run(P,"([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3], binary}]),
-    PLLen = byte_size(PayloadTail),
-    IDst = binary_to_integer(BDst),
-
-    TransmitLen =    
-    case BTransmitLen of
-      <<>> ->
-        PLLen - 1;
-      _ ->
-        binary_to_integer(BTransmitLen)
-    end,
-
-    %true = PLLen < 50,
-    {match, [Payload, Tail1]} = re:run(PayloadTail, "^(.{" ++ integer_to_list(TransmitLen) ++ "})\n(.*)", [dotall, {capture, [1, 2], binary}]),
-    Tuple = {nl, send, TransmitLen, IDst, Payload},
-    [{rcv_ul, Tuple} | split(Tail1,Cfg)]
-
-  catch error: _Reason -> [{nl, error}]
-  end.
-
-nl_recv_extract(P, _Cfg) ->
-  try
-    {match, [ProtocolID, BSrc, BDst, Payload]} = re:run(P,"([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
-    IDst = binary_to_integer(BDst),
-    ISrc = binary_to_integer(BSrc),
-    AProtocolID = binary_to_atom(ProtocolID, utf8),
-    case lists:member(AProtocolID, ?LIST_ALL_PROTOCOLS) of
-      true ->
-        Tuple = {nl, recv, ISrc, IDst, Payload},
-        {rcv_ll, AProtocolID, Tuple};
-      false -> {nl, error}
+        [{more, L}]
     end
-  catch error: _Reason -> {nl, error}
+  catch error: _Reason -> [{nl, error, {parseError, L}}]
   end.
 
-get_help() ->
-  [{rcv_ul, {get, help} }].
-
-nl_clear(_P, _) ->
- [{rcv_ul, {clear, stats, data} }].
-
-param_extract(P) ->
-  case binary_to_atom(P, utf8) of
-    protocols ->
-      {rcv_ul, {get, protocols}};
+nl_multiline_extract(L, Cfg) ->
+  case re:split(L,"\r?\n\r?\n",[{parts,2}]) of
+    [Answer, Rest] ->
+      case re:run(Answer,"^NL,([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]) of
+        {match, [Subject, Params]} ->
+          Reply = try nl_extract_subject(Subject, Params)
+                  catch error: _ -> {nl, error, {parseError, Answer}}
+                  end,
+          [Reply | split(Rest, Cfg)];
+        nomatch -> [{nl, error, {parseError, Answer}} | split(Rest, Cfg)]
+      end;
     _ ->
-    case re:run(P,"(routing|neighbours|states|state|address|protocol,|protocol|stats,)(.*)", [dotall, {capture, [1, 2], binary}]) of
-      {match, [<<"address">>, _Name]} -> {rcv_ul, {get, address}};
-      {match, [<<"routing">>, _Name]} -> {rcv_ul, {get, routing}};
-      {match, [<<"neighbours">>, _Name]} -> {rcv_ul, {get, neighbours}};
-      
-      {match, [<<"state">>, _Name]} -> {rcv_ul, {get, state}};
-      {match, [<<"states">>, _Name]} -> {rcv_ul, {get, states}};
-
-      {match, [<<"protocol,">>, Name]} -> protocol_extract(Name);
-      {match, [<<"protocol">>, _Name]} -> {rcv_ul, {get, protocol}};
-      
-      {match, [<<"stats,">>, Name]} -> stat_extract(Name);
-      nomatch -> {nl, error}
-    end
+        [{more, L}]
   end.
 
-protocol_extract(P) ->
-  try
-    {match, [Name]} = re:run(P,"([^,]*)", [dotall, {capture, [1], binary}]),
-    case lists:member(NPA = binary_to_atom(Name, utf8), ?LIST_ALL_PROTOCOLS) of
-      true  -> {rcv_ul, {get, {protocol, NPA}} };
-      false -> {nl, error}
-    end
-  catch error: _Reason -> {nl, error}
-  end.
+%% NL,send,Status
+%% Status: ok|busy|error
+nl_extract_subject(<<"send">>, Params) ->
+  {nl, send, binary_to_existing_atom(Params, utf8)};
+%% NL,address,Address
+%% Address: integer
+nl_extract_subject(<<"address">>, <<H:8,_/binary>> = Params) when H >= $0, H =< $9 ->
+  {nl, address, binary_to_integer(Params)};
+nl_extract_subject(<<"address">>, Params) ->
+  {nl, address, binary_to_existing_atom(Params, utf8)};
+%% NL,version,Major,Minor,Description
+nl_extract_subject(<<"version">>, Params) ->
+  [BMajor,BMinor,Description] = binary:split(Params,<<$,>>, [global]),
+  [Major,Minor] = [binary_to_integer(V) || V <- [BMajor,BMinor]],
+  {nl, version, Major, Minor, binary_to_list(Description)};
+%% NL,protocols,Protocol1,Protocol2,...,ProtocolN
+%% ProtocolI: atom
+nl_extract_subject(<<"protocols">>, Params) ->
+  {nl, protocols, [binary_to_existing_atom(P, utf8) || P <- binary:split(Params, <<$,>>, [global])]};
+%% NL,protocol,Protocol
+%% Protoco: atom
+nl_extract_subject(<<"protocol">>, Params) ->
+  {nl, protocol, binary_to_existing_atom(Params, utf8)};
+%% NL,routing,ok
+nl_extract_subject(<<"routing">>, <<"ok">>) ->
+  {nl, routing, ok};
+%% NL,routing,A1->A2,A3->A4,..,default->Default
+%% AI and Default: interger
+nl_extract_subject(<<"routing">>, Params) ->
+  Map =
+    lists:map(fun([<<"default">>,To]) ->
+                  {default, binary_to_integer(To)};
+                 ([From,To]) ->
+                  {binary_to_integer(From), binary_to_integer(To)}
+              end, [binary:split(V,<<"->">>) || V <- binary:split(Params,<<$,>>,[global])]),
+  {nl, routing, Map};
+%% NL,neighbours,ok
+nl_extract_subject(<<"neighbours">>, <<"ok">>) ->
+  {nl, neighbours, ok};
+%% NL,neighbours,empty
+nl_extract_subject(<<"neighbours">>, <<"empty">>) ->
+  {nl, neighbours, []};
+%% NL,neighbours,A1:R1:I1:T1,...,AN:RN:IN:TN
+%% NL,neighbours,A1,...,AN
+%% all parameters integers
+nl_extract_subject(<<"neighbours">>, Params) ->
+  Lst = [binary:split(V, <<$:>>, [global]) || V <- binary:split(Params, <<$,>>, [global])],
+  Neighbours =
+    case lists:usort([length(Item) || Item <- Lst]) of
+      [1] -> [binary_to_integer(Item) || [Item] <- Lst];
+      [4] -> [list_to_tuple([binary_to_integer(I) || I <- Item]) || Item <- Lst]
+    end,
+  {nl, neighbours, Neighbours};
+%% NL,neighbour,ok
+nl_extract_subject(<<"neighbour">>, <<"ok">>) ->
+  {nl, neighbour, ok};
+%% NL,state,State(Event)
+nl_extract_subject(<<"state">>, <<"ok">>) ->
+  {nl, state, ok};
+nl_extract_subject(<<"state">>, Params) ->
+  {match, BList} = re:run(Params,"(.*)\\((.*)\\)",[{capture, [1,2], binary}]),
+  {nl, state, list_to_tuple([binary_to_list(I) || I <- BList])};
+%% NL,discovery,ok
+nl_extract_subject(<<"discovery">>, <<"ok">>) ->
+  {nl, discovery, ok};
+%% NL,discovery,busy
+nl_extract_subject(<<"discovery">>, <<"busy">>) ->
+  {nl, discovery, busy};
+%% NL,discovery,Period,Time
+%% Period: integer
+%% Time: integer
+nl_extract_subject(<<"discovery">>, Params) ->
+  [Period, Time] = [binary_to_integer(V) || V <- binary:split(Params, <<$,>>)],
+  {nl, discovery, Period, Time};
+%% NL,polling,ok
+%% NL,polling,error
+nl_extract_subject(<<"polling">>, Params) when Params == <<"ok">>; Params == <<"error">> ->
+  {nl, polling, binary_to_existing_atom(Params, utf8)};
+nl_extract_subject(<<"polling">>, Params) ->
+  {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]};
+%% NL,polling,Addr1,..,AddrN
+nl_extract_subject(<<"buffer">>, <<"ok">>) ->
+  {nl, buffer, ok};
+%% NL,delivered,Src,Dst
+nl_extract_subject(<<"delivered">>, Params) ->
+  [Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params, <<$,>>)],
+  {nl, delivered, Src, Dst};
+%% NL,failed,Src,Dst
+nl_extract_subject(<<"failed">>, Params) ->
+  [Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params, <<$,>>)],
+  {nl, failed, Src, Dst};
+%% NL,protocolinfo,Protocol,<EOL>Property1 : Value1<EOL>...PropertyN : ValueN<EOL><EOL>
+%% one of the properties must be "name"
+%% parameters are strings
+nl_extract_subject(<<"protocolinfo">>, Params) ->
+  [Protocol, KVParams] = re:split(Params,",",[{parts,2}]),
+  PropList = [list_to_tuple(re:split(I," : ",[{return,list}])) || I <- tl(re:split(KVParams,"\r?\n"))],
+  %% {value, ["name",Protocol], PropList} = lists:keytake("name", 1, KVLst),
+  {nl,protocolinfo,binary_to_existing_atom(Protocol,utf8),PropList};
+%5 NL,states,<EOL><State1>(<Event1>)<EOL>...<StateN>(<EventN>)<EOL><EOL>
+nl_extract_subject(<<"states">>, Params) ->
+  {nl,states,
+   lists:map(fun(Param) ->
+                 {match, BList} = re:run(Param,"(.*)\\((.*)\\)",[{capture, [1,2], binary}]),
+                 list_to_tuple([binary_to_list(I) || I <- BList])
+             end, tl(re:split(Params,"\r?\n")))};
+%% NL,statistics,ok
+nl_extract_subject(<<"statistics">>, <<"ok">>) ->
+  {nl, statistics, ok};
+%% NL,statistics,neighbours,<EOL> <relay or source> neighbours:<neighbours> count:<count> total:<total><EOL>...<EOL><EOL>
+%% NL,statistics,neighbours,
+%%  source neighbour:3 count:8 total:10
+%%  source neighbour:2 count:4 total:10
+%% -> [{Role,Neighbours,Count,Total}]
+nl_extract_subject(<<"statistics">>, <<"neighbours,",Params/binary>>) ->
+  Lines = tl(re:split(Params,"\r?\n")),
+  {nl,statistics,neighbours,
+   lists:map(fun(Line) ->
+                 {match, [Role,Values]} = 
+                   re:run(Line, " ([^ ]*) neighbour:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4], binary}]),
+                 list_to_tuple([binary_to_existing_atom(Role, utf8) | [binary_to_integer(V) || V <- Values]])
+             end, Lines)};
+%% NL,statistics,paths,<EOL> <relay or source> path:<path> duration:<duration> count:<count> total:<total><EOL>...<EOL><EOL>
+%% NL,statistics,paths,
+%%  source path:1,2,3 duration:10 count:1 total:2
+%%  source path:1,2,4,3 duration:12 count:1 total:2
+%% -> [{Role,Path,Duration,Count,Total}]
+nl_extract_subject(<<"statistics">>, <<"paths,empty",_/binary>>) ->
+  {nl,statistics,paths,empty};
+nl_extract_subject(<<"statistics">>, <<"paths,error",_/binary>>) ->
+  {nl,statistics,paths,error};
+nl_extract_subject(<<"statistics">>, <<"paths,",Params/binary>>) ->
+  Lines = tl(re:split(Params,"\r?\n")),
+  {nl,statistics,paths,
+   lists:map(fun(Line) ->
+                 {match, [Role,Path,Values]} = 
+                   re:run(Line, " ([^ ]*) path:([^ ]*) duration:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4,5], binary}]),
+                 PathList = [binary_to_integer(I) || I <- binary:split(Path,<<$,>>)],
+                 list_to_tuple([binary_to_existing_atom(Role, utf8), PathList | [binary_to_integer(V) || V <- Values]])
+             end, Lines)};
+%% NL,statistics,data,<EOL> <relay or source> data:<hash> len:<length> duration:<duration> state:<state> total:<total> dst:<dst> hops:<hops><EOL>...<EOL><EOL>
+%% NL,statistics,data,
+%%  source data:0xabde len:4 duration:5.6 state:delivered total:1 dst:4 hops:1
+%%  source data:0x1bdf len:4 duration:11.4 state:delivered total:1 dst:4 hops:2
+%%  source data:0xabdf len:4 duration:9.9 state:delivered total:1 dst:4 hops:2
+%% -> [{Role,Hash,Len,Duration,State,Total,Dst,Hops}]
+nl_extract_subject(<<"statistics">>, <<"data,empty",_/binary>>) ->
+  {nl,statistics,data,empty};
+nl_extract_subject(<<"statistics">>, <<"data,error",_/binary>>) ->
+  {nl,statistics,data,error};
+nl_extract_subject(<<"statistics">>, <<"data,",Params/binary>>) ->
+  Lines = tl(re:split(Params,"\r?\n")),
+  Regexp = " ([^ ]*) data:0x([^ ]*) len:(\\d+) duration:([0-9.]*) state:([^ ]*) total:(\\d+) dst:(\\d+) hops:(\\d+)",
+  {nl,statistics,data,
+   lists:map(fun(Line) ->
+                 {match, [Role,Hash,Len,Duration,State,Values]} = 
+                   re:run(Line, Regexp, [{capture, [1,2,3,4,5,6,7,8], binary}]),
+                 list_to_tuple(
+                   [binary_to_existing_atom(Role, utf8),
+                    binary_to_integer(Hash, 16),
+                    binary_to_integer(Len),
+                    binary_to_float(Duration),
+                    binary_to_existing_atom(State,utf8) |
+                    [binary_to_integer(V) || V <- Values]])
+             end, Lines)}.
 
-stat_extract(P) ->
+
+%% NL,send[,<Type>],[<Datalen>],<Dst>,<Data>
+from_term({nl,send,Dst,Data}, Cfg) ->
+  BLen = integer_to_binary(byte_size(Data)),
+  [list_to_binary(["NL,send,",BLen,$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
+from_term({nl,send,Type,Dst,Data}, Cfg) ->
+  BLen = integer_to_binary(byte_size(Data)),
+  [list_to_binary(["NL,send,",atom_to_binary(Type,utf8),$,,BLen,$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
+%% NL,set,routing,[<A1>-><A2>],[<A3>-><A4>],..,<Default Addr>
+from_term({nl,set,routing,Routing}, Cfg) ->
+  RoutingLst =
+    lists:map(fun({default,To}) -> "default->" ++ integer_to_list(To);
+                 ({From,To}) -> integer_to_list(From) ++ "->" ++ integer_to_list(To)
+              end, Routing),
+  [list_to_binary(["NL,set,routing,",lists:join(",",RoutingLst),Cfg#config.eol]), Cfg];
+%% NL,set,neighbours,empty
+from_term({nl,set,neighbours,[]}, Cfg) ->
+  [list_to_binary(["NL,set,neighbours,empty",Cfg#config.eol]), Cfg];
+%% NL,set,neighbours,<A1>,<A2>,...,<AN>
+from_term({nl,set,neighbours,[H|_] = Neighbours}, Cfg) when is_integer(H) ->
+  NeighboursLst = [integer_to_list(A) || A <- Neighbours],
+  [list_to_binary(["NL,set,neighbours,",lists:join(",",NeighboursLst),Cfg#config.eol]), Cfg];
+%% NL,set,neighbours,<A1:R1:I1:T1>,<A2:R2:I2:T2>,...,< AN:RN:IN:TN>
+from_term({nl,set,neighbours,Neighbours}, Cfg) ->
+  NeighboursLst =
+    lists:map(fun(T) ->
+                  lists:flatten(io_lib:format("~B:~B:~B:~B",tuple_to_list(T)))
+              end, Neighbours),
+  [list_to_binary(["NL,set,neighbours,",lists:join(",",NeighboursLst),Cfg#config.eol]), Cfg];
+%% NL,set,polling,seq,[Addr1,...,AddrN]
+from_term({nl,set,polling,Seq}, Cfg) ->
+  SeqLst = [integer_to_list(A) || A <- Seq],
+  [list_to_binary(["NL,set,polling,",lists:join(",",SeqLst),Cfg#config.eol]), Cfg];
+%% NL command with atoms or integers
+from_term(Tuple, Cfg) ->
   try
-    {match, [Command]} = re:run(P,"([^,]*)", [dotall, {capture, [1], binary}]),
-    case CPA = binary_to_atom(Command, utf8) of
-      _ when CPA =:= paths; CPA =:= neighbours; CPA =:= data ->
-        {rcv_ul, {get, {statistics, CPA}} };
-      _ -> {nl, error}
-    end
-  catch error: _Reason -> {nl, error}
+    Lst =
+      lists:map(fun(nl) -> <<"NL">>;
+                   (I) when is_number(I) -> integer_to_binary(I);
+                   (A) when is_atom(A) -> atom_to_binary(A,utf8)
+                end, tuple_to_list(Tuple)),
+    [list_to_binary([lists:join(",", Lst),Cfg#config.eol]), Cfg]
+  catch error:_ -> {error, formError}
   end.
