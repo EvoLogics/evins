@@ -255,6 +255,10 @@ handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, fsm_pids = FSMs,
       end,
   [gen_server:cast(PIDx, {chan, MM, {Event}}) || {Event, PIDx} <- Events],
   {noreply, State#ifstate{cfg = NewCfg}};
+handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, cfg = Cfg} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {ctrl, Term}}}),
+  NewCfg = B:ctrl(Term, Cfg),
+  {noreply, State#ifstate{cfg = NewCfg}};
 
 handle_cast({_, {send, _}}, #ifstate{cfg = #{allow := nobody}} = State) ->
   {noreply, State};
