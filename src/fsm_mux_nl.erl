@@ -227,6 +227,7 @@ handle_event(MM, SM, Term) ->
         NTuple =
           case Data of
             <<"A", DataT/binary>> ->
+              stop_polling(SM, alarm),
               {nl, recv, Src, Dst, DataT};
             _ ->
               Term
@@ -394,6 +395,8 @@ get_neighbours(SM) ->
       fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
   end.
 
+send_alarm_msg(SM, alarm) ->
+    SM;
 send_alarm_msg(SM, Data) ->
     Discovery_protocol = share:get(SM, discovery_protocol),
     ProtocolMM = share:get(SM, Discovery_protocol),
