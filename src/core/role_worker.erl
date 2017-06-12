@@ -229,7 +229,7 @@ handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Po
 
 handle_cast({_, {fsm, Pid, ok}}, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {fsm, Pid, ok}}}),
-  {noreply, cast_connected(Pid, State#ifstate{fsm_pids = [Pid | State#ifstate.fsm_pids]})};
+  process_bin(<<>>, cast_connected(Pid, State#ifstate{fsm_pids = [Pid | State#ifstate.fsm_pids]}));
 
 handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, fsm_pids = FSMs, mm = MM, cfg = #{allow := Allow} = Cfg} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {ctrl, Term}}}),
@@ -253,8 +253,11 @@ handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, fsm_pids = FSMs,
         [{allowed, PID}, {denied, PID_prev}];
       _ -> []
       end,
-  io:format("Casting: ~p~n", [Events]),
   [gen_server:cast(PIDx, {chan, MM, {Event}}) || {Event, PIDx} <- Events],
+  {noreply, State#ifstate{cfg = NewCfg}};
+handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, cfg = Cfg} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {ctrl, Term}}}),
+  NewCfg = B:ctrl(Term, Cfg),
   {noreply, State#ifstate{cfg = NewCfg}};
 
 handle_cast({_, {send, _}}, #ifstate{cfg = #{allow := nobody}} = State) ->
@@ -417,6 +420,9 @@ set_sockopt(LSock, CliSocket) ->
       gen_tcp:close(CliSocket), Error
   end.
 
+process_bin(Bin, #ifstate{fsm_pids = [], tail = Tail, mm = MM} = State) ->
+  %% TODO: role_worker should be aware of the number of connected FSMs
+  {noreply, State#ifstate{tail = list_to_binary([Tail, Bin])}};
 process_bin(Bin, #ifstate{behaviour = B, fsm_pids = FSMs, cfg = Cfg, tail = Tail, mm = MM} = State) ->
   [TermList, ErrorList, Raw, More, NewCfg] = B:to_term(Tail, Bin, Cfg),
   Terms = if byte_size(Raw) > 0 -> TermList ++ ErrorList ++ [{raw, Raw}];
