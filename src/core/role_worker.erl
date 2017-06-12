@@ -420,7 +420,7 @@ set_sockopt(LSock, CliSocket) ->
       gen_tcp:close(CliSocket), Error
   end.
 
-process_bin(Bin, #ifstate{fsm_pids = [], tail = Tail, mm = MM} = State) ->
+process_bin(Bin, #ifstate{fsm_pids = [], tail = Tail} = State) ->
   %% TODO: role_worker should be aware of the number of connected FSMs
   {noreply, State#ifstate{tail = list_to_binary([Tail, Bin])}};
 process_bin(Bin, #ifstate{behaviour = B, fsm_pids = FSMs, cfg = Cfg, tail = Tail, mm = MM} = State) ->
