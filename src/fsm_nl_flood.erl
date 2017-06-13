@@ -183,7 +183,7 @@ handle_event(MM, SM, Term) ->
           end,
           nl_mac_hf:smooth_RTT(SM, reverse, {rtt, Local_address, Real_dst}),
           if (Real_src =:= Local_address) ->
-               fsm:cast(SM, nl_impl, {send, {nl, failed, Real_src, Real_dst}});
+               fsm:cast(SM, nl_impl, {send, {nl, failed, 0, Real_src, Real_dst}});
              true ->
                nothing
           end,
@@ -196,7 +196,7 @@ handle_event(MM, SM, Term) ->
               nothing
           end,
           if ((Real_src =:= Local_address) and Protocol#pr_conf.ack) ->
-               fsm:cast(SM, nl_impl, {send, {nl, failed, Real_src, Real_dst}});
+               fsm:cast(SM, nl_impl, {send, {nl, failed, 0, Real_src, Real_dst}});
              true -> nothing
           end,
           fsm:run_event(MM, SM#sm{event=timeout_path,  state = wpath}, {});
@@ -239,9 +239,9 @@ handle_event(MM, SM, Term) ->
       end;
 
     {async, {delivered, mac, BDst}} ->
-      fsm:cast(SM, nl_impl, {send, {nl, delivered, Local_address, BDst}});
+      fsm:cast(SM, nl_impl, {send, {nl, delivered, 0, Local_address, BDst}});
     {async, {failed, mac, BDst}} ->
-      fsm:cast(SM, nl_impl, {send, {nl, failed, Local_address, BDst}});
+      fsm:cast(SM, nl_impl, {send, {nl, failed, 0, Local_address, BDst}});
     {async, {pid, _}, Tuple} ->
       [SMN, NT] = parse_ll_msg(SM, {async, Tuple}),
 
@@ -438,7 +438,7 @@ handle_idle(_MM, SMP, Term) ->
             _ ->
               nothing
           end,
-          fsm:cast(SM, nl_impl, {send, {nl, failed, Real_dst, Real_src}});
+          fsm:cast(SM, nl_impl, {send, {nl, failed, 0, Real_dst, Real_src}});
         _ ->
           nothing
       end;
@@ -569,7 +569,7 @@ handle_wack(_MM, SM, Term) ->
       if {Packet_id, Real_src, Real_dst} == Ack_last_nl_sent  ->
         SM1 = nl_mac_hf:send_nl_command(SM, alh, {dst_reached, [Packet_id, Real_dst, PAdditional]}, {nl,send,Real_src,<<"">>}),
         SM2 = fsm:clear_timeout(SM1, {wack_timeout, {Packet_id, Real_src, Real_dst}}),
-        fsm:cast(SM2, nl_impl, {send, {nl, delivered, Real_src, Real_dst}}),
+        fsm:cast(SM2, nl_impl, {send, {nl, delivered, 0, Real_src, Real_dst}}),
         nl_mac_hf:smooth_RTT(SM, direct, {rtt, Local_address, Real_dst}),
         SM2#sm{event = dst_rcv_ack};
       true ->
@@ -728,7 +728,8 @@ process_sync(Msg) ->
   case Msg of
     {error,_} -> {nl,send,error};
     {busy, _} -> {nl,send,busy};
-    {ok}    -> {nl,send,ok};
+    {ok}    -> {nl,send,0};
+    %{ok}    -> {nl,send,ok};
     _     -> nothing
   end.
 
@@ -740,9 +741,9 @@ process_async(SM, Msg) ->
     {recvim,_,ISrc,IDst,_,_,IRssi,IIntegrity,_,PayloadTail} ->
       process_recv(SM, [ISrc, IDst, IRssi, IIntegrity, PayloadTail]);
     {deliveredim, BDst} ->
-      [SM, {nl, delivered, Local_address, BDst}];
+      [SM, {nl, delivered, 0, Local_address, BDst}];
     {failedim, BDst} ->
-      [SM, {nl, failed, Local_address, BDst}];
+      [SM, {nl, failed, 0, Local_address, BDst}];
     _ ->
       [SM, nothing]
   end.

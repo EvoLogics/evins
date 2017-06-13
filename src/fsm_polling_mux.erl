@@ -194,7 +194,8 @@ handle_event(MM, SM, Term) ->
       if TransmitLen < 50 ->
           [
            add_to_CDT_queue(__, Term),
-           fsm:cast(__, nl_impl, {send, {nl, send, ok}})
+           fsm:cast(__, nl_impl, {send, {nl, send, 0}})
+           %fsm:cast(__, nl_impl, {send, {nl, send, ok}})
           ] (SM);
          true ->
           fsm:cast(SM, nl_impl, {send, {nl, send, error}})
@@ -202,7 +203,8 @@ handle_event(MM, SM, Term) ->
     {nl, send, _MsgType, _IDst, _Payload} ->
       [
        add_to_CDT_queue(__, Term),
-       fsm:cast(__, nl_impl, {send, {nl, send, ok}})
+       fsm:cast(__, nl_impl, {send, {nl, send, 0}})
+       %fsm:cast(__, nl_impl, {send, {nl, send, ok}})
       ] (SM);
     {nl, send, _IDst, _Payload} ->
       %% Is it neceessary to add the msg type???
@@ -503,30 +505,33 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
     true ->
       fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_pbm, Event_params} );
     false ->
-      {recv, {Pid, _Len, Src, Dst, _Flag, DataCDT}} = Event_params,
-      [Poll_data_len, Poll_data, Position, PollingFlagBurst, Process] = extract_CDT_msg(SM, DataCDT),
+      try
+        {recv, {Pid, _Len, Src, Dst, _Flag, DataCDT}} = Event_params,
+        [Poll_data_len, Poll_data, Position, PollingFlagBurst, Process] = extract_CDT_msg(SM, DataCDT),
 
-      case Process of
-        ignore ->
-          SM#sm{event = ignore_recv_poll_seq};
-        answer_pbm ->
-          if Poll_data_len > 0 ->
-            fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, Poll_data}});
-          true -> nothing
-          end,
-          fsm:cast(SM, nmea, {send, Position}),
+        case Process of
+          ignore ->
+            SM#sm{event = ignore_recv_poll_seq};
+          answer_pbm ->
+            if Poll_data_len > 0 ->
+              fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, Poll_data}});
+            true -> nothing
+            end,
+            fsm:cast(SM, nmea, {send, Position}),
 
-          BroadcastExist = get_share_var(Src, broadcast),
-          BroadcastExistMsg = share:get(SM, BroadcastExist),
+            BroadcastExist = get_share_var(Src, broadcast),
+            BroadcastExistMsg = share:get(SM, BroadcastExist),
 
-          Data = create_VDT_pbm_msg(SM, Src, PollingFlagBurst, BroadcastExistMsg),
-          SPMTuple = {at, {pid, Pid}, "*SENDPBM", Src, Data},
-          
-          SM1 = fsm:send_at_command(SM, SPMTuple),
-          case PollingFlagBurst of
-            nb -> SM1#sm{event = ignore_recv_poll_seq};
-            b -> SM1#sm{event = send_poll_pbm, event_params = Event_params}
-          end
+            Data = create_VDT_pbm_msg(SM, Src, PollingFlagBurst, BroadcastExistMsg),
+            SPMTuple = {at, {pid, Pid}, "*SENDPBM", Src, Data},
+
+            SM1 = fsm:send_at_command(SM, SPMTuple),
+            case PollingFlagBurst of
+              nb -> SM1#sm{event = ignore_recv_poll_seq};
+              b -> SM1#sm{event = send_poll_pbm, event_params = Event_params}
+            end
+        end
+      catch error:_ -> SM#sm{event = eps}
       end
   end;
 handle_poll_response_pbm(_MM, SM, _Term) ->
