@@ -174,9 +174,9 @@ handle_event(MM, SM, Term) ->
     {nl, set, protocol, Protocol} when State =/= discovery ->
       %% clear everything and set current protocol
       set_protocol(SM, MM#mm.role, Protocol);
-    {nl, delivered, _, _} ->
+    {nl, delivered, _, _, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
-    {nl, failed, _, _} ->
+    {nl, failed, _, _, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, routing, _} when MM#mm.role == nl_impl ->
       fsm:cast(SM, nl_impl, {send, Term});
@@ -396,6 +396,7 @@ get_neighbours(SM) ->
   end.
 
 send_alarm_msg(SM, alarm) ->
+    share:clean(SM, alarm_data),
     SM;
 send_alarm_msg(SM, Data) ->
     Discovery_protocol = share:get(SM, discovery_protocol),

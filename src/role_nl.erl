@@ -109,7 +109,10 @@ nl_multiline_extract(L, Cfg) ->
 %% NL,send,Status
 %% Status: ok|busy|error
 nl_extract_subject(<<"send">>, Params) ->
-  {nl, send, binary_to_existing_atom(Params, utf8)};
+  SendRes = try binary_to_integer(Params)
+          catch error: _ -> binary_to_existing_atom(Params, utf8)
+          end,
+  {nl, send, SendRes};
 %% NL,address,Address
 %% Address: integer
 nl_extract_subject(<<"address">>, <<H:8,_/binary>> = Params) when H >= $0, H =< $9 ->
@@ -189,14 +192,14 @@ nl_extract_subject(<<"polling">>, Params) ->
 %% NL,polling,Addr1,..,AddrN
 nl_extract_subject(<<"buffer">>, <<"ok">>) ->
   {nl, buffer, ok};
-%% NL,delivered,Src,Dst
+%% NL,delivered,PC,Src,Dst
 nl_extract_subject(<<"delivered">>, Params) ->
-  [Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params, <<$,>>)],
-  {nl, delivered, Src, Dst};
-%% NL,failed,Src,Dst
+  [PC, Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
+  {nl, delivered, PC, Src, Dst};
+%% NL,failed,PC, Src,Dst
 nl_extract_subject(<<"failed">>, Params) ->
-  [Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params, <<$,>>)],
-  {nl, failed, Src, Dst};
+  [PC, Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
+  {nl, failed, PC, Src, Dst};
 %% NL,protocolinfo,Protocol,<EOL>Property1 : Value1<EOL>...PropertyN : ValueN<EOL><EOL>
 %% one of the properties must be "name"
 %% parameters are strings
