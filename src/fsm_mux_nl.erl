@@ -180,12 +180,12 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, routing, _} when MM#mm.role == nl_impl ->
       fsm:cast(SM, nl_impl, {send, Term});
-    {nl, neighbours, NL} when is_list(NL), MM#mm.role == nl;
-                              is_list(NL), State == discovery ->
+    {nl, neighbours, NL} when is_list(NL), MM#mm.role == nl ->
       %% set protocol static
       %% set routing
       set_routing(SM, NL),
-      fsm:run_event(MM, SM#sm{event = set_routing}, {});
+      SM;
+      %fsm:run_event(MM, SM#sm{event = set_routing}, {});
     {nl, neighbours, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, version, Major, Minor, Description} ->
@@ -215,8 +215,9 @@ handle_event(MM, SM, Term) ->
                            Alarm_data =/= nothing ->
       send_alarm_msg(SM, Alarm_data),
       fsm:clear_timeouts(SM#sm{state = ready_nl});
-    {nl, polling, PL} when is_list(PL) ->
-      set_protocol(SM, MM#mm.role, polling);
+    {nl, polling, PL} when is_list(PL), State == discovery ->
+      set_protocol(SM, MM#mm.role, polling),
+      fsm:run_event(MM, SM#sm{event = set_routing}, {});
     {nl, send, alarm, _Src, Data} ->
       %TODO: we do not need a Src in alarm messages, it will be broadcasted
       stop_polling(SM, Data);
