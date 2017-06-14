@@ -195,7 +195,6 @@ handle_event(MM, SM, Term) ->
           [
            add_to_CDT_queue(__, Term),
            fsm:cast(__, nl_impl, {send, {nl, send, 0}})
-           %fsm:cast(__, nl_impl, {send, {nl, send, ok}})
           ] (SM);
          true ->
           fsm:cast(SM, nl_impl, {send, {nl, send, error}})
@@ -204,7 +203,6 @@ handle_event(MM, SM, Term) ->
       [
        add_to_CDT_queue(__, Term),
        fsm:cast(__, nl_impl, {send, {nl, send, 0}})
-       %fsm:cast(__, nl_impl, {send, {nl, send, ok}})
       ] (SM);
     {nl, send, _IDst, _Payload} ->
       %% Is it neceessary to add the msg type???
