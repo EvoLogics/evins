@@ -348,9 +348,12 @@ handle_event(MM, SM, Term) ->
       SM1 =
       case InitiatListen of
         [true] ->
-          poll_next_addr(SM),
           SM2 = fsm:clear_timeout(SM, check_state),
-          fsm:run_event(MM, SM2#sm{state = polling, event = poll_next_addr}, {});
+          if SeqPollAddrs =/= [] ->
+            poll_next_addr(SM),
+            fsm:run_event(MM, SM2#sm{state = polling, event = poll_next_addr}, {});
+          true -> SM
+          end;
         _ when Check_state == false ->
           fsm:set_timeout(SM, ?ANSWER_TIMEOUT, check_state);
         _ -> SM
@@ -380,6 +383,11 @@ handle_event(MM, SM, Term) ->
       [
        share:clean(__, broadcast),
        fsm:clear_timeout(__, answer_timeout)
+      ] (SM);
+    {sync,"*SEND",{busy, _}} when Check_state == false ->
+      [
+       fsm:clear_timeout(__, answer_timeout),
+       fsm:set_timeout(__, ?ANSWER_TIMEOUT, check_state)
       ] (SM);
     {sync, "*SEND", "OK"} when Send_next_poll_data == true ->
       [
