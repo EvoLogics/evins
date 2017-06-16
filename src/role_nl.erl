@@ -60,6 +60,8 @@ split(L, Cfg) ->
       nl_multiline_extract(L, Cfg);
     [<<"NL,statistics,", _/binary>>, _] -> %% multiline
       nl_multiline_extract(L, Cfg);
+    [<<"NL,buffer,", _/binary>>, _] -> %% multiline
+      nl_multiline_extract(L, Cfg);
     [Answer, Rest] ->
       case re:run(Answer,"^NL,([^,]*),(.*)", [dotall, {capture, [1, 2], binary}]) of
         {match, [Subject, Params]} ->
@@ -189,9 +191,6 @@ nl_extract_subject(<<"polling">>, Params) when Params == <<"ok">>; Params == <<"
   {nl, polling, binary_to_existing_atom(Params, utf8)};
 nl_extract_subject(<<"polling">>, Params) ->
   {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]};
-%% NL,polling,Addr1,..,AddrN
-nl_extract_subject(<<"buffer">>, <<"ok">>) ->
-  {nl, buffer, ok};
 %% NL,delivered,PC,Src,Dst
 nl_extract_subject(<<"delivered">>, Params) ->
   [PC, Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
@@ -227,7 +226,7 @@ nl_extract_subject(<<"statistics">>, <<"neighbours,",Params/binary>>) ->
   Lines = tl(re:split(Params,"\r?\n")),
   {nl,statistics,neighbours,
    lists:map(fun(Line) ->
-                 {match, [Role,Values]} = 
+                 {match, [Role,Values]} =
                    re:run(Line, " ([^ ]*) neighbour:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4], binary}]),
                  list_to_tuple([binary_to_existing_atom(Role, utf8) | [binary_to_integer(V) || V <- Values]])
              end, Lines)};
@@ -244,7 +243,7 @@ nl_extract_subject(<<"statistics">>, <<"paths,",Params/binary>>) ->
   Lines = tl(re:split(Params,"\r?\n")),
   {nl,statistics,paths,
    lists:map(fun(Line) ->
-                 {match, [Role,Path,Values]} = 
+                 {match, [Role,Path,Values]} =
                    re:run(Line, " ([^ ]*) path:([^ ]*) duration:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4,5], binary}]),
                  PathList = [binary_to_integer(I) || I <- binary:split(Path,<<$,>>)],
                  list_to_tuple([binary_to_existing_atom(Role, utf8), PathList | [binary_to_integer(V) || V <- Values]])
@@ -264,7 +263,7 @@ nl_extract_subject(<<"statistics">>, <<"data,",Params/binary>>) ->
   Regexp = " ([^ ]*) data:0x([^ ]*) len:(\\d+) duration:([0-9.]*) state:([^ ]*) total:(\\d+) dst:(\\d+) hops:(\\d+)",
   {nl,statistics,data,
    lists:map(fun(Line) ->
-                 {match, [Role,Hash,Len,Duration,State,Values]} = 
+                 {match, [Role,Hash,Len,Duration,State,Values]} =
                    re:run(Line, Regexp, [{capture, [1,2,3,4,5,6,7,8], binary}]),
                  list_to_tuple(
                    [binary_to_existing_atom(Role, utf8),
@@ -273,8 +272,28 @@ nl_extract_subject(<<"statistics">>, <<"data,",Params/binary>>) ->
                     binary_to_float(Duration),
                     binary_to_existing_atom(State,utf8) |
                     [binary_to_integer(V) || V <- Values]])
-             end, Lines)}.
+             end, Lines)};
 
+%% NL,polling,Addr1,..,AddrN
+nl_extract_subject(<<"buffer">>, <<"ok">>) ->
+  {nl, buffer, ok};
+%% NL,buffer,empty
+nl_extract_subject(<<"buffer">>, <<"empty">>) ->
+  {nl, buffer, empty};
+% NL,statistics,data,<EOL> data:<hash> state:<state> dst:<dst> type:<type><EOL>...<EOL><EOL>
+nl_extract_subject(<<"buffer">>, Params) ->
+  Lines = tl(re:split(Params,"\r?\n")),
+  Regexp = "data:([^ ]*) state:([^ ]*) dst:(\\d+) type:([^ ]*)",
+  {nl, buffer,
+   lists:map(fun(Line) ->
+                 {match, [Data, State, Dst, Type]} =
+                   re:run(Line, Regexp, [{capture, [1,2,3,4], binary}]),
+                 list_to_tuple(
+                   [Data,
+                    State,
+                    binary_to_integer(Dst),
+                    Type])
+             end, Lines)}.
 
 %% NL,send[,<Type>],[<Datalen>],<Dst>,<Data>
 from_term({nl,send,Dst,Data}, Cfg) ->
