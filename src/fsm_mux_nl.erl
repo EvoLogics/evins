@@ -123,6 +123,18 @@ handle_event(MM, SM, Term) ->
     {disconnected, _} ->
       %% TODO: handle: remove from configure protocols and change state to init_roles?
       SM;
+      %share:put(SM, configured_protocols, []),
+      %fsm:clear_timeouts(SM#sm{state = init_roles});
+    {nl, get, buffer} ->
+      Discovery_protocol = share:get(SM, current_protocol),
+      ProtocolMM = share:get(SM, Discovery_protocol),
+      fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
+    {nl, reset, state} ->
+      fsm:cast(SM, nl_impl, {send, {nl, state, ok}}),
+      Discovery_protocol = share:get(SM, current_protocol),
+      ProtocolMM = share:get(SM, Discovery_protocol),
+      fsm:cast(SM, ProtocolMM, [], {send, {nl, reset, state}}, ?TO_MM),
+      fsm:clear_timeouts(SM#sm{state = ready_nl});
     {nl, stop, discovery} ->
       fsm:cast(SM, nl_impl, {send, {nl, discovery, ok}}),
       fsm:clear_timeouts(SM#sm{state = ready_nl});
@@ -143,7 +155,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, Tuple});
     {nl, get, protocolinfo, Some_protocol} ->
       Burst_protocol = share:get(SM, burst_protocol),
-      ProtocolMM = 
+      ProtocolMM =
         case Some_protocol of
           Burst_protocol -> share:get(SM, Some_protocol);
           _ -> share:get(SM, share:get(SM, discovery_protocol))
@@ -295,7 +307,7 @@ set_protocol(SM, Role, Protocol) ->
       share:put(SM, current_protocol, Protocol),
       fsm:clear_timeouts(SM);
     _ ->
-      fsm:cast(SM, nl_impl, {send, {nl, protocol, ok}}),
+      fsm:cast(SM, nl_impl, {send, {nl, protocol, Protocol}}),
       share:put(SM, current_protocol, Protocol),
       fsm:clear_timeouts(SM)
   end.

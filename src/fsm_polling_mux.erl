@@ -35,7 +35,7 @@
 -export([init/1, handle_event/3, stop/1]).
 
 -export([handle_polling/3, handle_wait_poll_pbm/3, handle_wait_poll_data/3]).
--export([handle_poll_response_pbm/3, handle_poll_response_data/3]).
+-export([handle_poll_response_pbm/3, handle_poll_response_data/3, handle_send_data/3]).
 -export([handle_idle/3, handle_alarm/3, handle_final/3]).
 
 -define(TRANS, [
@@ -44,52 +44,63 @@
                  {poll_start, polling},
                  {poll_stop, idle},
                  {recv_poll_seq, poll_response_pbm},
-
                  {recv_poll_data, idle},
                  {recv_poll_pbm, idle},
                  {process_poll_pbm, idle},
-
-                 {send_poll_data, idle}
+                 {send_poll_data, idle},
+                 {request_delivered, idle},
+                 {poll_next_addr, polling},
+                 {retransmit_im, idle}
                  ]},
 
                 {polling,
                  [{poll_next_addr, polling},
                  {send_poll_data, wait_poll_pbm},
+                 {send_burst_data, send_data},
                  {poll_start, polling},
                  {poll_stop, idle},
                  {retransmit_im, polling},
-
                  {recv_poll_data, polling},
                  {recv_poll_pbm, polling},
-
+                 {process_poll_pbm, polling},
+                 {request_delivered, polling},
                  {error, idle}
                  ]},
+
+                {send_data,
+                [{no_data_to_send, polling},
+                {process_poll_pbm, send_data},
+                {request_delivered, send_data},
+                {send_next_poll_data, send_data},
+                {send_data_end, polling},
+                {recv_poll_data, send_data},
+                {poll_next_addr, polling},
+                {retransmit_im, send_data}
+                ]},
 
                 {wait_poll_pbm,
                  [{poll_start, polling},
                  {poll_stop, idle},
-
                  {process_poll_pbm, wait_poll_pbm},
-
                  {recv_poll_pbm, wait_poll_data},
                  {recv_poll_data, wait_poll_pbm},
                  {recv_poll_seq, wait_poll_pbm},
-
-                 {poll_next_addr, polling}
+                 {poll_next_addr, polling},
+                 {request_delivered, wait_poll_pbm},
+                 {retransmit_im, wait_poll_pbm}
                  ]},
 
                 {wait_poll_data,
                  [
                  {poll_start, polling},
                  {poll_stop, idle},
-
                  {recv_poll_pbm, wait_poll_data},
                  {recv_poll_data, wait_poll_data},
-
                  {process_poll_pbm, wait_poll_data},
-
                  {poll_next_addr, polling},
-                 {send_poll_data, wait_poll_data}
+                 {send_poll_data, wait_poll_data},
+                 {request_delivered, wait_poll_data},
+                 {retransmit_im, wait_poll_data}
                  ]},
 
                 {poll_response_data,
@@ -100,23 +111,21 @@
                  {recv_poll_seq, poll_response_data},
                  {send_poll_pbm, poll_response_data},
                  {wait_pc, poll_response_data},
-                 {send_poll_data, idle}
+                 {send_poll_data, idle},
+                 {request_delivered, poll_response_data}
                 ]},
 
                 {poll_response_pbm,
                  [{recv_poll_seq, poll_response_pbm},
-
                  {recv_poll_pbm, poll_response_pbm},
                  {recv_poll_data, poll_response_pbm},
-
                  {send_poll_pbm, poll_response_data},
                  {no_poll_data, idle},
-
                  {poll_start, polling},
                  {poll_stop, idle},
-
                  {ignore_recv_poll_seq, idle},
-                 {send_poll_data, poll_response_pbm}
+                 {send_poll_data, poll_response_pbm},
+                 {request_delivered, poll_response_pbm}
                  ]},
 
                 {alarm,
@@ -140,23 +149,43 @@ handle_event(MM, SM, Term) ->
   SeqPollAddrs = share:get(SM, polling_seq),
   Local_address = share:get(SM, local_address),
 
+  State = SM#sm.state,
   Wait_pc = fsm:check_timeout(SM, wait_pc),
   Send_next_poll_data = fsm:check_timeout(SM, send_next_poll_data_tmo),
   Event_params = SM#sm.event_params,
+
+  BroadcastData = share:get(SM, broadcast),
+
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
+  Check_state = fsm:check_timeout(SM, check_state),
+
+  case Local_address of
+  1 ->
+      io:format(">>>1 ~p ~p ~p     ~p ~p~n", [SM#sm.state, SM#sm.event, Term, Check_state, Answer_timeout]);
+  %2 ->
+  %  io:format("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< 2 ~p ~p ~p ~n", [SM#sm.state, SM#sm.event, Term]);
+  _ ->
+    nothing
+  end,
 
   case Term of
     {timeout, answer_timeout} ->
       %% TODO: why?
       TupleResponse = {nl, error, <<"ANSWER TIMEOUT">>},
       fsm:cast(SM, nl_impl, {send, TupleResponse});
-    {timeout, wait_recv_pbm} ->
-      poll_next_addr(SM),
-      fsm:run_event(MM, SM#sm{event = poll_next_addr}, {});
+    {timeout, wait_rest_poll_data} when Check_state == false,
+                                        Answer_timeout == false ->
+      fsm:send_at_command(SM, {at, "?S", ""});
     {timeout, wait_rest_poll_data} ->
-      poll_next_addr(SM),
-      fsm:run_event(MM, SM#sm{event = poll_next_addr}, {});
+      SM;
+    {timeout, check_state} when Answer_timeout == false ->
+      fsm:send_at_command(SM, {at, "?S", ""});
+    {timeout, check_state} ->
+      fsm:set_timeout(SM, ?ANSWER_TIMEOUT, check_state);
     {timeout, send_next_poll_data_tmo} ->
       SM;
+    {timeout, {request_delivered, Term}} ->
+      fsm:run_event(MM, SM#sm{event = request_delivered}, Term);
     {timeout, {send_burst, SBurstTuple}} ->
       fsm:run_event(MM, SM#sm{event = send_poll_pbm, event_params = SBurstTuple}, {});
     {timeout, {retransmit_im, STuple}} ->
@@ -173,7 +202,12 @@ handle_event(MM, SM, Term) ->
       SM;
     {allowed} ->
       ?INFO(?ID, "allowed ~n", []),
-      fsm:send_at_command(SM, {at, "?PC", ""});
+      SM;
+    {nl, get, buffer} ->
+      Buffer = get_buffer(SM),
+      fsm:cast(SM, nl_impl, {send, {nl, buffer, Buffer}});
+    {nl, reset, state} ->
+      fsm:clear_timeouts(SM#sm{state = idle});
     {nl, get, protocol} ->
       ProtocolName = share:get(SM, nl_protocol),
       fsm:cast(SM, nl_impl, {send, {nl, protocol, ProtocolName}});
@@ -188,6 +222,9 @@ handle_event(MM, SM, Term) ->
        fsm:cast(__, nl_impl, {send, {nl, buffer, ok}})
       ] (SM);
     {nl, send, _MsgType, Local_address, _Payload} ->
+      fsm:cast(SM, nl_impl, {send, {nl, send, error}});
+    {nl, send, MsgType, 255, _Payload} when MsgType == tolerant;
+                                            MsgType == sensitive ->
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, send, broadcast, _IDst, Payload} ->
       TransmitLen = byte_size(Payload),
@@ -234,9 +271,12 @@ handle_event(MM, SM, Term) ->
       Answer = {nl, routing, nl_mac_hf:routing_to_list(SM)},
       fsm:cast(SM, nl_impl, {send, Answer});
     {async, {pid, _Pid}, RTuple = {recv, _Len, Src, Local_address , _,  _,  _,  _,  _, Data}} ->
-      Poll_data = extract_poll_data(SM, Data),
+      [Type, Poll_data] = extract_poll_data(SM, Data),
       case Poll_data of
-        ignore -> SM;
+        ignore ->
+          SM;
+        _ when Type == <<"CDB">> ->
+          fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Local_address, Poll_data}});
         _ ->
           fsm:cast(SM, nl_impl, {send, {nl, recv, Local_address, Src, Poll_data}}),
           io:format("<<<<  Poll_data ~p ~p~n", [Src, Poll_data]),
@@ -244,42 +284,81 @@ handle_event(MM, SM, Term) ->
       end;
     {async, {pid, _Pid}, RTuple = {recvpbm, _Len, _Src, Local_address, _, _, _, _, _Data}} ->
       fsm:run_event(MM, SM#sm{event = process_poll_pbm}, {recv_poll_pbm, RTuple});
+    {async, {pid, _Pid}, {recvpbm, _Len, Src, _Dst, _, _, _, _, Data}} ->
+      try
+        [P1, _, P3] = extract_VDT_pbm_msg(SM, Data),
+        case P1 of
+          <<"B">>  when P3 =/= nothing ->
+            fsm:cast(SM, nl_impl, {send, {nl, recv, Src, 255, P3}});
+          _ -> SM
+        end
+      catch error:_ -> SM
+      end;
     {async, {pid, Pid}, {recvim, Len, Src, Local_address, Flag, _, _, _,_, Data}} ->
       RecvTuple = {recv, {Pid, Len, Src, Local_address, Flag, Data}},
       fsm:run_event(MM, SM#sm{event = recv_poll_seq, event_params = RecvTuple}, {});
-    {async, {pid, _Pid}, {recvim, _Len, _Src, _Dst, _Flag, _, _, _, _, _Data}} ->
-      % TODO: ooverhearing
-      SM;
+    {async, {pid, _Pid}, {recvim, _Len, Src, _Dst, _Flag, _, _, _, _, Data}} ->
+      % Overhearing broadcast messages
+      try
+        [MsgType, _BurstExist, Poll_data_len, Poll_data, _, _, _] = extract_CDT_msg(SM, Data),
+        case MsgType of
+          <<"B">>  when Poll_data_len > 0, Poll_data =/= nothing ->
+            fsm:cast(SM, nl_impl, {send, {nl, recv, Src, 255, Poll_data}});
+          _ -> SM
+        end
+      catch error:_ -> SM
+      end;
     {async, PosTerm = {usbllong, _FCurrT, _FMeasT, _Src, _X, _Y, _Z,
                        _E, _N, _U, _Roll, _Pitch, _Yaw, _P, _Rssi, _I, _Acc}} ->
       %% TODO: create NMEA string here
       fsm:cast(SM, nmea, {send, PosTerm});
-    {async, {deliveredim, Src}} ->
-      BroadcastExist = get_share_var(Src, broadcast),
-      BroadcastExistMsg = share:get(SM, BroadcastExist),
-      case BroadcastExistMsg of
-        nothing -> SM;
-        _ -> share:clean(SM, BroadcastExist)
-      end;
+    {async, {failed, PC, Src}} when State == polling ->
+      io:format(">> FAILED ~p ~p ~n", [PC, Src]),
+      poll_next_addr(SM),
+      fsm:run_event(MM, SM#sm{event = poll_next_addr}, {});
+    {async, {failed, PC, Src}} ->
+      io:format(">> FAILED ~p ~p ~n", [PC, Src]),
+      SM;
     {async, {delivered, PC, Src}} ->
+      io:format(">> DELIVERED ~p ~p ~n", [PC, Src]),
       delete_delivered_item(SM, tolerant, PC, Src),
       delete_delivered_item(SM, sensitive, PC, Src),
-      SM;
-    {async, Tuple = {failedim, _}} ->
-      io:format(">>>>>>>>>>>>> Failed ~p ~p ~p~n", [?ID, SM#sm.state, Tuple]),
-      SM;
-    % TODO: ack, pbm was delivered?
-    {async, {sendstart, Src, _, _, _}} ->
-      BroadcastExist = get_share_var(Src, broadcast),
-      BroadcastExistMsg = share:get(SM, BroadcastExist),
-      case BroadcastExistMsg of
-        {_, broadcast, sent, _, _} ->
-          share:clean(SM, BroadcastExist),
-          SM;
-        _ -> SM
+      if State == polling ->
+        fsm:run_event(MM, SM#sm{event = poll_next_addr}, {});
+      true ->
+        SM
       end;
+    {async, {deliveredim, Src}} when State == send_data, Wait_pc == false ->
+      fsm:run_event(MM, SM#sm{event = request_delivered}, {deliveredim, Src});
+    {async, {deliveredim, Src}} ->
+      case Event_params of
+        {data_to_recv, {Src, 0}} ->
+          io:format(">>>> deliveredim: data_to_recv 0~n", []),
+          poll_next_addr(SM),
+          fsm:run_event(MM, SM#sm{event = poll_next_addr}, {});
+        _ ->
+          SM
+      end;
+    {async, {failedim, _}} ->
+      fsm:send_at_command(SM, {at, "?S", ""});
     {async, _Tuple} ->
       SM;
+    {sync,"?S", Status} ->
+      InitiatListen = extract_status(Status),
+      SM1 =
+      case InitiatListen of
+        [true] ->
+          SM2 = fsm:clear_timeout(SM, check_state),
+          if SeqPollAddrs =/= [] ->
+            poll_next_addr(SM),
+            fsm:run_event(MM, SM2#sm{state = polling, event = poll_next_addr}, {});
+          true -> SM
+          end;
+        _ when Check_state == false ->
+          fsm:set_timeout(SM, ?ANSWER_TIMEOUT, check_state);
+        _ -> SM
+      end,
+      fsm:clear_timeout(SM1, answer_timeout);
     {sync,"?PC", PC} when Wait_pc == true ->
       {_, ITuple, _} = Event_params,
       [
@@ -295,6 +374,21 @@ handle_event(MM, SM, Term) ->
        fsm:clear_timeout(__, answer_timeout),
        init_packet_counter(__, PC)
       ] (SM);
+    {sync, "*SENDIM", "OK"} when BroadcastData =/= nothing->
+      [
+       share:clean(__, broadcast),
+       fsm:clear_timeout(__, answer_timeout)
+      ] (SM);
+    {sync, "*SENDPBM", "OK"} when BroadcastData  =/= nothing ->
+      [
+       share:clean(__, broadcast),
+       fsm:clear_timeout(__, answer_timeout)
+      ] (SM);
+    {sync,"*SEND",{busy, _}} when Check_state == false ->
+      [
+       fsm:clear_timeout(__, answer_timeout),
+       fsm:set_timeout(__, ?ANSWER_TIMEOUT, check_state)
+      ] (SM);
     {sync, "*SEND", "OK"} when Send_next_poll_data == true ->
       [
        fsm:clear_timeout(__, send_next_poll_data_tmo),
@@ -307,7 +401,6 @@ handle_event(MM, SM, Term) ->
       [
        fsm:clear_timeout(__, answer_timeout),
        nl_mac_hf:clear_spec_timeout(__, send_burst),
-       fsm:set_event(__, send_poll_data),
        fsm:run_event(MM, __, {})
       ] (SM);
     {sync, _Req, _Answer} ->
@@ -341,25 +434,33 @@ handle_polling(_MM, #sm{event = poll_next_addr} = SM, Term) ->
 
   Current_poll_addr = get_current_poll_addr(SM),
   Poll_flag_burst = share:get(SM, poll_flag_burst),
+  BroadcastExistMsg = share:get(SM, broadcast),
 
-  BroadcastExist = get_share_var(Current_poll_addr, broadcast),
-  BroadcastExistMsg = share:get(SM, BroadcastExist),
+  [SendType, STuple] = create_CDT_msg(SM, Poll_flag_burst, BroadcastExistMsg),
 
-  STuple = create_CDT_msg(SM, Poll_flag_burst, BroadcastExistMsg),
-
-  io:format("handle_polling ======================================> ~p ~p ~p~n", [Poll_flag_burst, Current_poll_addr, BroadcastExistMsg]),
-  
   case Answer_timeout of
     true ->
       fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_im, STuple});
-    false ->
-      Time_wait_recv = share:get(SM, time_wait_recv),
+    false when SendType == burst_exist ->
+      io:format("handle_polling ======================================> ~p ~p ~p~n", [Poll_flag_burst, Current_poll_addr, BroadcastExistMsg]),
       [
        fsm:send_at_command(__, STuple),
-       fsm:set_timeout(__, {s, Time_wait_recv}, wait_recv_pbm),
-       fsm:set_event(__, send_poll_data)
+       fsm:set_event(__, send_burst_data)
+      ] (SM);
+    false ->
+      io:format("handle_polling ======================================> ~p ~p ~p~n", [Poll_flag_burst, Current_poll_addr, BroadcastExistMsg]),
+      [
+       nl_mac_hf:clear_spec_timeout(__, retransmit_im),
+       fsm:send_at_command(__, STuple),
+       fsm:set_event(__#sm{event_params = {data_to_recv, {Current_poll_addr, 0}}}, send_poll_data)
       ] (SM)
   end;
+handle_polling(_MM, #sm{event = no_data_to_send} = SM, Term) ->
+  ?TRACE(?ID, "handle_polling ~120p~n", [Term]),
+  SM#sm{event = poll_next_addr};
+handle_polling(_MM, #sm{event = send_data_end} = SM, Term) ->
+  ?TRACE(?ID, "handle_polling ~120p~n", [Term]),
+  SM#sm{event = eps};
 handle_polling(_MM, #sm{event = retransmit_im} = SM, Term) ->
   ?TRACE(?ID, "handle_polling ~120p~n", [Term]),
   SM#sm{event = poll_next_addr};
@@ -376,28 +477,30 @@ handle_wait_poll_pbm(_MM, SM, Term = {recv_poll_pbm, Pbm}) ->
   % if pbm contains burst data flag, wait till recv_poll_data
   % if not, directly to poll next address
   % or timeout, nothing was received
-
   Current_poll_addr = get_current_poll_addr(SM),
-  {recvpbm, _, Src, Dst, _, _, _, _, _} = Pbm,
-
+  {recvpbm, _, Src, Dst, _, _, _, _, Payload} = Pbm,
   case Src of
-    Current_poll_addr ->
-      [ExtrLen, BroadcastData] = extract_VDT_pbm_msg(SM, Pbm),
-
+    Current_poll_addr  ->
+      [MsgType, ExtrLen, BroadcastData] = extract_VDT_pbm_msg(SM, Payload),
       io:format("<<<<  Extr ~p ~120p~n", [Src, ExtrLen]),
-
-      if BroadcastData =/= <<>> ->
-        fsm:cast(SM, nl_impl, {send, {nl, recv, Dst, Src, BroadcastData}});
-      true -> nothing
+      case BroadcastData of
+        <<>> ->
+          nothing;
+        _ when MsgType == <<"B">> ->
+          fsm:cast(SM, nl_impl, {send, {nl, recv, Dst, 255, BroadcastData}});
+        _ ->
+          fsm:cast(SM, nl_impl, {send, {nl, recv, Dst, Src, BroadcastData}})
       end,
 
       case ExtrLen of
         0 ->
-          poll_next_addr(SM),
-          SM#sm{event = poll_next_addr};
+          SM#sm{event = eps, event_params = {data_to_recv, {Src, ExtrLen}}};
+          %poll_next_addr(SM),
+          %SM#sm{event = poll_next_addr};
         _ ->
+          Time_wait_recv = share:get(SM, time_wait_recv),
           [
-           fsm:set_timeout(__, {s, 20}, wait_rest_poll_data),
+           fsm:set_timeout(__, {s, Time_wait_recv}, wait_rest_poll_data),
            fsm:set_event(__#sm{event_params = {poll_data_len, ExtrLen}}, recv_poll_pbm)
           ] (SM)
       end;
@@ -422,22 +525,70 @@ handle_wait_poll_data(_MM, SMW, Term = {recv_poll_data, RTuple}) ->
     _ -> 0
   end,
 
-  Poll_data = extract_poll_data(SM, Payload),
+  [_, Poll_data] = extract_poll_data(SM, Payload),
   Poll_data_len = byte_size(Poll_data),
   WaitingRestData = Poll_data_len_whole - Poll_data_len,
+  Time_wait_recv = share:get(SM, time_wait_recv),
 
   case Src of
     Current_poll_addr when WaitingRestData =< 0->
-      poll_next_addr(SM),
-      SM#sm{event = poll_next_addr};
+      Check_state = fsm:check_timeout(SM, check_state),
+      if Check_state == false ->
+        fsm:set_timeout(SM, ?ANSWER_TIMEOUT, check_state);
+      true ->
+        SM#sm{event = eps} end;
     _ ->
-      Time_wait_recv = share:get(SM, time_wait_recv),
       [
        fsm:set_timeout(__, {s, Time_wait_recv}, wait_rest_poll_data),
        fsm:set_event(__#sm{event_params = {poll_data_len, WaitingRestData}}, eps)
       ] (SM)
   end;
 handle_wait_poll_data(_MM, SM, Term) ->
+  ?TRACE(?ID, "~120p~n", [Term]),
+  SM#sm{event = eps}.
+
+handle_send_data(_MM, #sm{event = send_next_poll_data} = SM, Term) ->
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
+  case Answer_timeout of
+    true ->
+      fsm:set_timeout(SM#sm{event_params = Term}, ?ANSWER_TIMEOUT, {retransmit, send_next_poll_data} );
+    false ->
+      {Event_params, {_MsgType, _LocalPC, SBurstTuple}, Tail} = Term,
+      {send, {_, Dst}} = Event_params,
+      SM1 = fsm:send_at_command(SM, SBurstTuple),
+      [NTail, NType, LocalPC, NPayload] = create_next_poll_data_response(SM, Tail, <<"CDB">>),
+      case NPayload of
+        nothing ->
+          share:put(SM, send_im_no_burst, true),
+          SM1#sm{event = send_data_end};
+        _ ->
+          NSBurstTuple = {at, {pid, 0}, "*SEND", Dst, NPayload},
+          NT = {Event_params, {NType, LocalPC, NSBurstTuple}, NTail},
+          fsm:set_timeout(SM1#sm{event_params = NT}, ?ANSWER_TIMEOUT, send_next_poll_data_tmo)
+      end
+  end;
+handle_send_data(_MM, #sm{event = request_delivered} = SM, {deliveredim, Dst} = Term) ->
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
+  Local_address = share:get(SM, local_address),
+  Event_params = {send, {Local_address, Dst}},
+  [Tail, MsgType, LocalPC, Data] = create_poll_data_response(SM, Dst, <<"CDB">>),
+  case Data of
+    nothing ->
+      SM#sm{event = no_data_to_send};
+    _ ->
+      case Answer_timeout of
+        true ->
+          fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {request_delivered, Term});
+        false ->
+          SBurstTuple = {at, {pid, 0}, "*SEND", Dst, Data},
+          Tuple = {Event_params, {MsgType, LocalPC, SBurstTuple}, Tail},
+          [
+           fsm:send_at_command(__, {at, "?PC", ""}),
+           fsm:set_timeout(__#sm{event_params = Tuple}, ?ANSWER_TIMEOUT, wait_pc)
+          ] (SM)
+      end
+  end;
+handle_send_data(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   SM#sm{event = eps}.
 
@@ -452,8 +603,7 @@ handle_poll_response_data(_MM, #sm{event = send_next_poll_data} = SM, Term) ->
       {Event_params, {_MsgType, _LocalPC, SBurstTuple}, Tail} = Term,
       {recv, {Pid, _Len, Src, _Dst, _Flag, _}} = Event_params,
       SM1 = fsm:send_at_command(SM, SBurstTuple),
-      [NTail, NType, LocalPC, NPayload] = create_next_poll_data_response(SM, Tail),
-
+      [NTail, NType, LocalPC, NPayload] = create_next_poll_data_response(SM, Tail, <<"V">>),
       case NPayload of
         nothing ->
           SM1#sm{event = poll_data_completed};
@@ -471,7 +621,7 @@ handle_poll_response_data(_MM, #sm{event = send_poll_pbm} = SM, _Term) ->
 
   {recv, {Pid, _Len, Src, Dst, _Flag, _}} = Event_params,
 
-  [Tail, MsgType, LocalPC, Data] = create_poll_data_response(SM, Src),
+  [Tail, MsgType, LocalPC, Data] = create_poll_data_response(SM, Src, <<"V">>),
   case Data of
     nothing ->
       SM#sm{event = poll_data_completed};
@@ -505,21 +655,23 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
     false ->
       try
         {recv, {Pid, _Len, Src, Dst, _Flag, DataCDT}} = Event_params,
-        [Poll_data_len, Poll_data, Position, PollingFlagBurst, Process] = extract_CDT_msg(SM, DataCDT),
-
+        [MsgType, BurstExist, Poll_data_len, Poll_data, Position, PollingFlagBurst, Process] = extract_CDT_msg(SM, DataCDT),
         case Process of
           ignore ->
             SM#sm{event = ignore_recv_poll_seq};
+          answer_pbm when BurstExist == <<"B">> ->
+            SM#sm{event = ignore_recv_poll_seq};
           answer_pbm ->
-            if Poll_data_len > 0 ->
-              fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, Poll_data}});
-            true -> nothing
+            case Poll_data_len of
+              0 -> nothing;
+              _ when MsgType == <<"B">> ->
+                fsm:cast(SM, nl_impl, {send, {nl, recv, Src, 255, Poll_data}});
+              _ ->
+                fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, Poll_data}})
             end,
             fsm:cast(SM, nmea, {send, Position}),
 
-            BroadcastExist = get_share_var(Src, broadcast),
-            BroadcastExistMsg = share:get(SM, BroadcastExist),
-
+            BroadcastExistMsg = share:get(SM, broadcast),
             Data = create_VDT_pbm_msg(SM, Src, PollingFlagBurst, BroadcastExistMsg),
             SPMTuple = {at, {pid, Pid}, "*SENDPBM", Src, Data},
 
@@ -577,10 +729,40 @@ poll_next_addr(SM) ->
   share:put(SM, current_polling_i, Ind),
   get_current_poll_addr(SM).
 
+extract_status(Status) ->
+  StatusL = [string:rstr(X, "INITIATION LISTEN") || X <- string:tokens (Status, "\r\n")],
+  io:format("~p~n", [Status]),
+  lists:filtermap(fun(X) ->
+                    if X == 0 -> false;
+                      true -> {true, true}
+                  end end, StatusL).
+
 get_current_poll_addr(SM) ->
   LSeq = share:get(SM, polling_seq),
   Ind = share:get(SM, current_polling_i),
   lists:nth(Ind, LSeq).
+
+get_buffer(SM) ->
+  LSeq = share:get(SM, polling_seq_msgs),
+  F = fun(X) ->
+    QSens = get_share_var(X, sensitive),
+    QTol = get_share_var(X, tolerant),
+    Sens = get_list(share:get(SM, QSens), X),
+    Tol = get_list(share:get(SM, QTol), X),
+    lists:append([Sens, Tol])
+  end,
+  lists:flatten([ F(X) || X <- LSeq]).
+
+get_list(nothing, _) ->
+ [];
+get_list(Q, Dst) ->
+ L = queue:to_list(Q),
+ F = fun(X) ->
+    {_, _, XStatus, _, XMsgType, _, Payload} = X,
+    %<<Hash:16, _/binary>> = crypto:hash(md5,Payload),
+    {Payload, XStatus, Dst, XMsgType}
+  end,
+  [ F(X) || X <- L].
 
 clear_buffer(SM) ->
   LSeq = share:get(SM, polling_seq_msgs),
@@ -589,8 +771,7 @@ clear_buffer(SM) ->
     share:put(SM, QSens, queue:new()),
     QTol = get_share_var(X, tolerant),
     share:put(SM, QTol, queue:new()),
-    BroadcastExist = get_share_var(X, broadcast),
-    share:clean(SM, BroadcastExist)
+    share:clean(SM, broadcast)
   end,
   [ F(X) || X <- LSeq],
   SM.
@@ -601,21 +782,18 @@ get_share_var(Dst, Name) ->
 
 extract_poll_data(_SM, Payload) ->
   try
-    <<"V", DataVDT/binary>> = Payload,
-    DataVDT
+    {match, [Type, Data]} = re:run(Payload,"^(CDB|V)(.*)", [dotall, {capture, [1, 2], binary}]),
+    [Type, Data]
   catch error: _Reason -> ignore
   end.
 
-extract_VDT_pbm_msg(SM, Pbm) ->
+extract_VDT_pbm_msg(SM, Payload) ->
   try
-    Local_address = share:get(SM, local_address),
-    {recvpbm, _Len, _Dst, Local_address, _, _Rssi, _Int, _, Payload} = Pbm,
-
     Max_burst_len = share:get(SM, max_burst_len),
     CMaxBurstLenBits = nl_mac_hf:count_flag_bits(Max_burst_len),
 
+    <<"VPbm", MsgType:8/bitstring, BLenBurst:CMaxBurstLenBits, Rest/bitstring>> = Payload,
 
-    <<"VPbm", BLenBurst:CMaxBurstLenBits, Rest/bitstring>> = Payload,
     Data_bin = (bit_size(Payload) rem 8) =/= 0,
     BroadCastData =
     if Data_bin =:= false ->
@@ -625,9 +803,8 @@ extract_VDT_pbm_msg(SM, Pbm) ->
     true ->
       Rest
     end,
-    [BLenBurst, BroadCastData]
-
-  catch error: _Reason -> [0, <<>>]
+    [MsgType, BLenBurst, BroadCastData]
+  catch error: _Reason -> [0, 0, <<>>]
   end.
 
 create_VDT_pbm_msg(SM, Dst, FlagBurst, nothing) ->
@@ -641,23 +818,21 @@ create_VDT_pbm_msg(SM, Dst, FlagBurst, nothing) ->
 
   BLenBurst = <<Len:CMaxBurstLenBits>>,
 
-  TmpData = <<"VPbm", BLenBurst/bitstring>>,
+  TmpData = <<"VPbm", "N", BLenBurst/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<"VPbm", BLenBurst/bitstring, 0:Add>>;
+    <<"VPbm", "N", BLenBurst/bitstring, 0:Add>>;
   true ->
     TmpData
   end;
 create_VDT_pbm_msg(SM, Dst, FlagBurst, BroadcastExistMsg) ->
-  BroadcastExist = get_share_var(Dst, broadcast),
-
   Max_burst_len = share:get(SM, max_burst_len),
   CMaxBurstLenBits = nl_mac_hf:count_flag_bits(Max_burst_len),
 
   {Time, broadcast, _Status, TransmitLen, BroadcastPayload} = BroadcastExistMsg,
   NTuple = {Time, broadcast, sent, TransmitLen, BroadcastPayload},
-  share:put(SM, BroadcastExist, NTuple),
+  share:put(SM, broadcast, NTuple),
 
   Len =
   case FlagBurst of
@@ -667,16 +842,16 @@ create_VDT_pbm_msg(SM, Dst, FlagBurst, BroadcastExistMsg) ->
 
   BLenBurst = <<Len:CMaxBurstLenBits>>,
 
-  TmpData = <<"VPbm", BLenBurst/bitstring, BroadcastPayload/binary>>,
+  TmpData = <<"VPbm", "B", BLenBurst/bitstring, BroadcastPayload/binary>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<"VPbm", BLenBurst/bitstring, 0:Add, BroadcastPayload/binary>>;
+    <<"VPbm", "B", BLenBurst/bitstring, 0:Add, BroadcastPayload/binary>>;
   true ->
     TmpData
   end.
 
-create_next_poll_data_response(_SM, LTransmission) ->
+create_next_poll_data_response(_SM, LTransmission, Header) ->
   case LTransmission of
     nothing ->
       [nothing, nothing, nothing, nothing];
@@ -684,10 +859,10 @@ create_next_poll_data_response(_SM, LTransmission) ->
       [nothing, nothing, nothing, nothing];
     _ ->
       [{Type, LocalPC, _, DataVDT} | Tail] = LTransmission,
-      [Tail, Type, LocalPC, <<"V", DataVDT/binary>>]
+      [Tail, Type, LocalPC, <<Header/binary, DataVDT/binary>>]
   end.
 
-create_poll_data_response(SM, Dst) ->
+create_poll_data_response(SM, Dst, Header) ->
   Res = create_data_queue(SM, Dst),
   Len = get_length_all_msgs(SM, Dst),
   case Len of
@@ -695,7 +870,7 @@ create_poll_data_response(SM, Dst) ->
       [nothing, nothing, nothing, nothing];
     _ ->
     [{Type, LocalPC, _, DataVDT} | Tail] = Res,
-    [Tail, Type, LocalPC, <<"V", DataVDT/binary>>]
+    [Tail, Type, LocalPC, <<Header/binary, DataVDT/binary>>]
   end.
 
 get_length_all_msgs(SM, Dst) ->
@@ -749,7 +924,8 @@ extract_CDT_msg(SM, Msg) ->
   CBitsPosLen = nl_mac_hf:count_flag_bits(63),
   CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
 
-  <<"C", PollingFlagBurst:CPollingFlagBurst, PC:CPollingCounterLen, PLen:CBitsPosLen, RPayload/bitstring>> = Msg,
+  <<"C", MsgType:8/bitstring, BurstExist:8/bitstring, PollingFlagBurst:CPollingFlagBurst, PC:CPollingCounterLen, PLen:CBitsPosLen, RPayload/bitstring>> = Msg,
+
   <<Pos:PLen/binary, Rest/bitstring>> = RPayload,
   Data_bin = (bit_size(Msg) rem 8) =/= 0,
   CDTData =
@@ -766,11 +942,11 @@ extract_CDT_msg(SM, Msg) ->
 
   case ResAdd of
     nothing  ->
-      [nothing, nothing, nothing, nothing, ignore];
+      [nothing, nothing, nothing, nothing, nothing, nothing, ignore];
     _ when  PollingFlagBurst == 1 ->
-      [byte_size(CDTData), CDTData, Pos, nb, answer_pbm];
+      [MsgType, BurstExist, byte_size(CDTData), CDTData, Pos, nb, answer_pbm];
     _ when  PollingFlagBurst == 0 ->
-      [byte_size(CDTData), CDTData, Pos, b, answer_pbm]
+      [MsgType, BurstExist, byte_size(CDTData), CDTData, Pos, b, answer_pbm]
   end.
 
 create_CDT_msg(SM, nb, nothing) ->
@@ -789,22 +965,23 @@ create_CDT_msg(SM, nb, nothing) ->
   BPollingCounter = <<PollingCounter:CPollingCounterLen>>,
   BLenPos = <<LenDataPos:CBitsPosLen>>,
 
-  TmpData = <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary>>,
+  TmpData = <<"C", "N", "N", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   Data =
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add>>;
+    <<"C", "N", "N", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add>>;
   true ->
     TmpData
   end,
   increase_local_pc(SM, polling_pc),
-  {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data};
+  [no_burst, {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data}];
 create_CDT_msg(SM, b, nothing) ->
   % TODO: DATA? Fused Position + CDT ?
   % Burst fomt CDT? or dummy with POS?
   % Set max pos len
 
+  Send_im_no_burst = share:get(SM, send_im_no_burst),
   Current_polling_addr = get_current_poll_addr(SM),
 
   DS = queue_to_data(SM, Current_polling_addr, sensitive),
@@ -825,25 +1002,30 @@ create_CDT_msg(SM, b, nothing) ->
   BPollingCounter = <<PollingCounter:CPollingCounterLen>>,
   BLenPos = <<LenDataPos:CBitsPosLen>>,
 
-  TmpData = <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, DataCDT/binary>>,
+  LenData = byte_size(DataCDT),
+
+  [FlagBurst, HeaderBurst] =
+  case LenData of
+    0 -> [no_burst, <<"N">>];
+    _ when Send_im_no_burst == true ->
+      share:clean(SM, send_im_no_burst),
+      [no_burst, <<"N">>];
+    _ -> [burst_exist, <<"B">>]
+  end,
+
+  TmpData = <<"C", "N", HeaderBurst:8/bitstring, BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary>>,
 
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   Data =
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add, DataCDT/binary>>;
+    <<"C", "N", HeaderBurst:8/bitstring, BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add>>;
   true ->
     TmpData
   end,
-
-  LenData = byte_size(Data),
   increase_local_pc(SM, polling_pc),
+  [FlagBurst, {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data}];
 
-  if LenData < 64 ->
-    {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data};
-  true ->
-    {at, {pid, 0},"*SEND", Current_polling_addr, Data}
-  end;
 create_CDT_msg(SM, FlagBurst, BroadcastExistMsg) ->
   Current_polling_addr = get_current_poll_addr(SM),
   DataPos = <<"POS....">>,
@@ -866,18 +1048,18 @@ create_CDT_msg(SM, FlagBurst, BroadcastExistMsg) ->
   BLenPos = <<LenDataPos:CBitsPosLen>>,
   BPollingCounter = <<PollingCounter:CPollingCounterLen>>,
 
-  TmpData = <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, BroadcastPayload/binary>>,
+  TmpData = <<"C", "B", "N", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, BroadcastPayload/binary>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   Data =
   if Data_bin =:= false ->
     Add = (8 - bit_size(TmpData) rem 8) rem 8,
-    <<"C", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add, BroadcastPayload/binary>>;
+    <<"C", "B", "N", BPollFlagBurst/bitstring, BPollingCounter/bitstring, BLenPos/bitstring, DataPos/binary, 0:Add, BroadcastPayload/binary>>;
   true ->
     TmpData
   end,
 
   increase_local_pc(SM, polling_pc),
-  {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data}.
+  [no_burst, {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data}].
 
 queue_to_data(SM, Dst, Name) ->
   Qname = get_share_var(Dst, Name),
@@ -912,9 +1094,8 @@ add_to_CDT_queue(SM, {nl, send, broadcast, IDst, Payload}) ->
   Time = erlang:monotonic_time(micro_seconds),
   TransmitLen = byte_size(Payload),
   MsgTuple = {Time, broadcast, not_sent, TransmitLen, Payload},
-  MsgName = get_share_var(IDst, broadcast),
-  share:put(SM, MsgName, MsgTuple),
-  ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, MsgName)]),
+  share:put(SM, broadcast, MsgTuple),
+  ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, broadcast)]),
   SM;
 add_to_CDT_queue(SM, {nl, send, MsgType, IDst, Payload}) ->
   LocalPC = share:get(SM, local_pc),
@@ -950,6 +1131,7 @@ add_to_CDT_queue(SM, {nl, send, MsgType, IDst, Payload}) ->
 delete_delivered_item(SM, Name, PC, Dst) ->
   Qname = get_share_var(Dst, Name),
   QueueItems = share:get(SM, Qname),
+
   case QueueItems of
     nothing -> nothing;
     _ ->
@@ -975,23 +1157,24 @@ change_status_item(SM, PC, {MsgType, LocalPC, ATSendTuple}) ->
   QueueItems = share:get(SM, Qname),
   QueueItemsList = queue:to_list(QueueItems),
 
-  Payload = extract_poll_data(SM, Data),
+  [_, Payload] = extract_poll_data(SM, Data),
+
   NQ =
   lists:foldr(
   fun(X, Q) ->
-    case X of
-      {_, LocalPC, Status, Time, MsgType, TransmitLen, Payload} when MsgType == tolerant ->
-        Item = {PC, LocalPC, Status, Time, MsgType, TransmitLen, Payload},
+    {_, XPC, XStatus, XTime, XMsgType, XTransmitLen, XPayload} = X,
+    case MsgType of
+      tolerant when XMsgType == MsgType, XPC == LocalPC, Payload == XPayload ->
+        Item = {PC, XPC, XStatus, XTime, XMsgType, XTransmitLen, Payload},
         queue:in(Item, Q);
-      {_, LocalPC, Status, Time, MsgType, TransmitLen, Payload} when MsgType == sensitive ->
-        Item = {PC, LocalPC, Status, Time, MsgType, TransmitLen, Payload},
+      sensitive when XMsgType == MsgType, XPC == LocalPC, Payload == XPayload ->
+        Item = {PC, XPC, XStatus, XTime, XMsgType, XTransmitLen, Payload},
         nl_mac_hf:queue_limited_push(Q, Item, Max_sensitive_queue);
-      Rest when MsgType == tolerant ->
-        queue:in(Rest, Q);
-      Rest when MsgType == sensitive ->
-        nl_mac_hf:queue_limited_push(Q, Rest, Max_sensitive_queue)
+      tolerant ->
+        queue:in(X, Q);
+      sensitive ->
+        nl_mac_hf:queue_limited_push(Q, X, Max_sensitive_queue)
     end
   end, queue:new(), QueueItemsList),
-
   share:put(SM, Qname, NQ),
   SM.
