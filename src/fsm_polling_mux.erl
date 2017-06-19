@@ -75,7 +75,8 @@
                 {send_data_end, polling},
                 {recv_poll_data, send_data},
                 {poll_next_addr, polling},
-                {retransmit_im, send_data}
+                {retransmit_im, send_data},
+                {poll_stop, idle}
                 ]},
 
                 {wait_poll_pbm,
@@ -278,7 +279,7 @@ handle_event(MM, SM, Term) ->
         _ when Type == <<"CDB">> ->
           fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Local_address, Poll_data}});
         _ ->
-          fsm:cast(SM, nl_impl, {send, {nl, recv, Local_address, Src, Poll_data}}),
+          fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Local_address, Poll_data}}),
           io:format("<<<<  Poll_data ~p ~p~n", [Src, Poll_data]),
           fsm:run_event(MM, SM#sm{event = recv_poll_data}, {recv_poll_data, RTuple})
       end;
@@ -487,9 +488,9 @@ handle_wait_poll_pbm(_MM, SM, Term = {recv_poll_pbm, Pbm}) ->
         <<>> ->
           nothing;
         _ when MsgType == <<"B">> ->
-          fsm:cast(SM, nl_impl, {send, {nl, recv, Dst, 255, BroadcastData}});
+          fsm:cast(SM, nl_impl, {send, {nl, recv, Src, 255, BroadcastData}});
         _ ->
-          fsm:cast(SM, nl_impl, {send, {nl, recv, Dst, Src, BroadcastData}})
+          fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, BroadcastData}})
       end,
 
       case ExtrLen of
