@@ -291,6 +291,8 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, error}}),
       SM;
     {nl, reset, state} ->
+      fsm:cast(SM, alh, {send, {at, "Z1", ""}}),
+      %fsm:send_at_command(SM, {at, "Z1", ""}),
       fsm:cast(SM, nl_impl, {send, {nl, state, ok}}),
       SM#sm{state = idle};
     {nl, clear, statistics, data} ->
