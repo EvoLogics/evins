@@ -165,6 +165,9 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
+    {rcv_ul, {command,<<"Z1,">>}} ->
+      fsm:send_at_command(SM, {at, "Z1", ""}),
+      fsm:clear_timeouts(SM#sm{state = idle});
     {rcv_ul, {at, _, _, _, _}} ->
       fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } });
     {rcv_ul, Msg = {at, _PID, _, _, _, _}} when State =:= idle; State =:= transmit_data ->

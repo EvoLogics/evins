@@ -113,10 +113,11 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       case MM#mm.role of
         nl ->
+          SM1 = SM#sm{state = init_roles},
           [
            fsm:set_timeout(__, {s, 1}, {get_protocol, MM}),
            fsm:cast(__, MM, [], {send, {nl, get, protocol}}, ?TO_MM)
-          ] (SM);
+          ] (SM1);
         _ ->
           SM
       end;
@@ -130,7 +131,6 @@ handle_event(MM, SM, Term) ->
       ProtocolMM = share:get(SM, Discovery_protocol),
       fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
     {nl, reset, state} ->
-      fsm:cast(SM, nl_impl, {send, {nl, state, ok}}),
       Discovery_protocol = share:get(SM, current_protocol),
       ProtocolMM = share:get(SM, Discovery_protocol),
       fsm:cast(SM, ProtocolMM, [], {send, {nl, reset, state}}, ?TO_MM),
@@ -195,9 +195,7 @@ handle_event(MM, SM, Term) ->
     {nl, neighbours, NL} when is_list(NL), MM#mm.role == nl ->
       %% set protocol static
       %% set routing
-      set_routing(SM, NL),
-      SM;
-      %fsm:run_event(MM, SM#sm{event = set_routing}, {});
+      set_routing(SM, NL);
     {nl, neighbours, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, version, Major, Minor, Description} ->
@@ -213,12 +211,18 @@ handle_event(MM, SM, Term) ->
       NLRoles = [Role || {nl,_,_,_,_} = Role <- SM#sm.roles],
       Configured_protocols = share:get(SM, configured_protocols),
       Event = case length(NLRoles) of
-                NLCount when NLCount == (length(Configured_protocols) + 1) -> ready;
+                NLCount when NLCount == (length(Configured_protocols) + 1);
+                             NLCount == length(Configured_protocols) -> ready;
                 _ -> eps
               end,
+      NL =
+      case lists:member(NPA, Configured_protocols) of
+        true -> Configured_protocols;
+        false -> [NPA|Configured_protocols]
+      end,
       [
        share:put(__, NPA, MM),
-       share:update_with(__, configured_protocols, fun(Lst) -> [NPA|Lst] end),
+       share:put(__, configured_protocols, NL),
        fsm:clear_timeout(__, {get_protocol, MM}),
        fsm:set_event(__, Event),
        fsm:run_event(MM, __, {})
@@ -356,6 +360,16 @@ get_routing(SM) ->
       fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
   end.
 
+set_routing(SM, []) ->
+  Burst_protocol = share:get(SM, burst_protocol),
+  ProtocolMM = share:get(SM, Burst_protocol),
+  case ProtocolMM of
+    nothing ->
+      ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+      SM;
+    _ ->
+      fsm:cast(SM, nl_impl, {send, {nl, routing, []}})
+  end;
 set_routing(SM, empty) ->
   Burst_protocol = share:get(SM, burst_protocol),
   ProtocolMM = share:get(SM, Burst_protocol),
@@ -364,7 +378,7 @@ set_routing(SM, empty) ->
       ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
       SM;
     _ ->
-      fsm:cast(SM, ProtocolMM, [], {send, {nl, get, routing}}, ?TO_MM)
+      fsm:cast(SM, nl_impl, {send, {nl, routing, []}})
   end;
 set_routing(SM, [H|_] = NL) when is_number(H) ->
   Burst_protocol = share:get(SM, burst_protocol),

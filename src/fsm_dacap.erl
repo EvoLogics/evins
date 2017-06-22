@@ -188,6 +188,9 @@ handle_event(MM, SM, Term) ->
       SM;
     {rcv_ul, {other, Msg}} ->
       fsm:send_at_command(SM, {at, binary_to_list(Msg), ""});
+    {rcv_ul, {command,<<"Z1,">>}} ->
+      fsm:send_at_command(SM, {at, "Z1", ""}),
+      fsm:clear_timeouts(SM#sm{state = idle});
     {rcv_ul, {command, C}} ->
       fsm:send_at_command(SM, {at, binary_to_list(C), ""});
     {rcv_ul, {at, _, _, _, _}} ->
