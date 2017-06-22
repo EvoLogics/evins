@@ -113,18 +113,19 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       case MM#mm.role of
         nl ->
+          SM1 = SM#sm{state = init_roles},
           [
            fsm:set_timeout(__, {s, 1}, {get_protocol, MM}),
            fsm:cast(__, MM, [], {send, {nl, get, protocol}}, ?TO_MM)
-          ] (SM);
+          ] (SM1);
         _ ->
           SM
       end;
     {disconnected, _} ->
       %% TODO: handle: remove from configure protocols and change state to init_roles?
-      %SM;
-      share:put(SM, configured_protocols, []),
-      fsm:clear_timeouts(SM#sm{state = init_roles});
+      SM;
+      %share:put(SM, configured_protocols, []),
+      %fsm:clear_timeouts(SM#sm{state = init_roles});
     {nl, get, buffer} ->
       Discovery_protocol = share:get(SM, current_protocol),
       ProtocolMM = share:get(SM, Discovery_protocol),
@@ -210,12 +211,18 @@ handle_event(MM, SM, Term) ->
       NLRoles = [Role || {nl,_,_,_,_} = Role <- SM#sm.roles],
       Configured_protocols = share:get(SM, configured_protocols),
       Event = case length(NLRoles) of
-                NLCount when NLCount == (length(Configured_protocols) + 1) -> ready;
+                NLCount when NLCount == (length(Configured_protocols) + 1);
+                             NLCount == length(Configured_protocols) -> ready;
                 _ -> eps
               end,
+      NL =
+      case lists:member(NPA, Configured_protocols) of
+        true -> Configured_protocols;
+        false -> [NPA|Configured_protocols]
+      end,
       [
        share:put(__, NPA, MM),
-       share:update_with(__, configured_protocols, fun(Lst) -> [NPA|Lst] end),
+       share:put(__, configured_protocols, NL),
        fsm:clear_timeout(__, {get_protocol, MM}),
        fsm:set_event(__, Event),
        fsm:run_event(MM, __, {})

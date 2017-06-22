@@ -161,15 +161,6 @@ handle_event(MM, SM, Term) ->
   Check_state = fsm:check_timeout(SM, check_state),
   Current_poll_addr = get_current_poll_addr(SM),
 
-  % case Local_address of
-  % 1 ->
-  %     io:format(">>>1 ~p ~p ~p     ~p ~n", [SM#sm.state, SM#sm.event, Term, SM#sm.event_params]);
-  % 2 ->
-  %     io:format("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< 2 ~p ~p ~p ~p~n", [SM#sm.state, SM#sm.event, Term, SM#sm.event_params]);
-  % _ ->
-  %   nothing
-  % end,
-
   case Term of
     {timeout, answer_timeout} ->
       %% TODO: why?
@@ -190,12 +181,12 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event = request_delivered}, Term);
     {timeout, {send_burst, SBurstTuple}} ->
       NEvent_params = add_to_event_params(SM, SBurstTuple),
-      fsm:run_event(MM, SM#sm{event = send_poll_pbm, event_params = NEvent_params}, {});
+      SM1 = fsm:clear_timeout(SM, retransmit_pbm),
+      fsm:run_event(MM, SM1#sm{event = send_poll_pbm, event_params = NEvent_params}, {});
     {timeout, {retransmit_im, STuple}} ->
       fsm:run_event(MM, SM#sm{event = retransmit_im}, {retransmit_im, STuple});
-    {timeout, {retransmit_pbm, STuple}} ->
-     NEvent_params = add_to_event_params(SM, STuple),
-     fsm:run_event(MM, SM#sm{event = recv_poll_seq, event_params = NEvent_params}, {});
+    {timeout, retransmit_pbm} ->
+     fsm:run_event(MM, SM#sm{event = recv_poll_seq}, {});
     {timeout, {retransmit, send_next_poll_data}} ->
       Send_params = find_event_params(SM, send_params),
       fsm:run_event(MM, SM#sm{event = send_next_poll_data}, Send_params);
@@ -276,8 +267,7 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, poll_stop),
        fsm:run_event(MM, __, {})
       ] (SM);
-    {async, {dropcnt, Val}} ->
-      io:format("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DROPCNT ~p ~p~n", [?ID, Val]),
+    {async, {dropcnt, _Val}} ->
       SM;
     {nl, get, routing} ->
       Answer = {nl, routing, nl_mac_hf:routing_to_list(SM)},
@@ -291,11 +281,10 @@ handle_event(MM, SM, Term) ->
           fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Local_address, Poll_data}});
         _  ->
           fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Local_address, Poll_data}}),
-          io:format("<<<<  Poll_data ~p ~p~n", [Src, Poll_data]),
+          ?TRACE(?ID, "<<<<  Poll_data ~p ~p~n", [Src, Poll_data]),
           fsm:run_event(MM, SM#sm{event = recv_poll_data}, {recv_poll_data, RTuple})
       end;
     {async, {pid, _Pid}, RTuple = {recvpbm, _Len, Current_poll_addr, Local_address, _, _, _, _, _Data}} ->
-      io:format("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< recvpbm ~p ~p~n", [?ID, RTuple]),
       fsm:run_event(MM, SM#sm{event = process_poll_pbm}, {recv_poll_pbm, RTuple});
     {async, {pid, _Pid}, {recvpbm, _Len, Src, _Dst, _, _, _, _, Data}} ->
       try
@@ -326,15 +315,12 @@ handle_event(MM, SM, Term) ->
                        _E, _N, _U, _Roll, _Pitch, _Yaw, _P, _Rssi, _I, _Acc}} ->
       %% TODO: create NMEA string here
       fsm:cast(SM, nmea, {send, PosTerm});
-    {async, {failed, PC, Src}} when State == polling ->
-      io:format(">> FAILED ~p ~p ~n", [PC, Src]),
+    {async, {failed, _PC, _Src}} when State == polling ->
       poll_next_addr(SM),
       fsm:run_event(MM, SM#sm{event = poll_next_addr}, {});
-    {async, {failed, PC, Src}} ->
-      io:format(">> FAILED ~p ~p ~n", [PC, Src]),
+    {async, {failed, _PC, _Src}} ->
       SM;
     {async, {delivered, PC, Src}} ->
-      io:format(">> DELIVERED ~p ~p ~n", [PC, Src]),
       delete_delivered_item(SM, tolerant, PC, Src),
       delete_delivered_item(SM, sensitive, PC, Src),
       if State == polling ->
@@ -351,10 +337,11 @@ handle_event(MM, SM, Term) ->
       Data_to_recv = find_event_params(SM, Data_to_recv_name),
       case Data_to_recv of
         {Data_to_recv_name, {Current_poll_addr, 0}} when Polling_started == true ->
-          io:format(">>>> deliveredim: ~p 0~n", [Data_to_recv_name]),
-          fsm:set_timeout(SM, ?ANSWER_TIMEOUT, check_state);
-          %poll_next_addr(SM),
-          %fsm:run_event(MM, SM#sm{event = poll_next_addr}, {});
+          Check_state = fsm:check_timeout(SM, check_state),
+          if Check_state == false ->
+            fsm:set_timeout(SM, ?ANSWER_TIMEOUT, check_state);
+          true -> SM
+          end;
         _ ->
           SM
       end;
@@ -363,7 +350,7 @@ handle_event(MM, SM, Term) ->
     {async, _Tuple} ->
       SM;
     {sync,"?S", Status} ->
-      InitiatListen = extract_status(Status),
+      InitiatListen = extract_status(SM, Status),
       SM1 =
       case InitiatListen of
         [true] ->
@@ -462,13 +449,13 @@ handle_polling(_MM, #sm{event = poll_next_addr} = SM, Term) ->
     true ->
       fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_im, STuple});
     false when SendType == burst_exist ->
-      io:format("handle_polling ======================================> ~p ~p ~p~n", [Poll_flag_burst, Current_poll_addr, BroadcastExistMsg]),
+      ?TRACE(?ID, "handle_polling ~p ~p ~p~n", [Poll_flag_burst, Current_poll_addr, BroadcastExistMsg]),
       [
        fsm:send_at_command(__, STuple),
        fsm:set_event(__, send_burst_data)
       ] (SM);
     false ->
-      io:format("handle_polling ======================================> ~p ~p ~p~n", [Poll_flag_burst, Current_poll_addr, BroadcastExistMsg]),
+     ?TRACE(?ID, "handle_polling ~p ~p ~p~n", [Poll_flag_burst, Current_poll_addr, BroadcastExistMsg]),
       Data_to_recv_name = get_share_var(Current_poll_addr, data_to_recv),
       Data_to_recv = {Data_to_recv_name, {Current_poll_addr, 0}},
       NEvent_params = add_to_event_params(SM, Data_to_recv),
@@ -505,7 +492,7 @@ handle_wait_poll_pbm(_MM, SM, Term = {recv_poll_pbm, Pbm}) ->
   case Src of
     Current_poll_addr  ->
       [MsgType, ExtrLen, BroadcastData] = extract_VDT_pbm_msg(SM, Payload),
-      io:format("<<<<  Extr ~p ~120p~n", [Src, ExtrLen]),
+      ?TRACE(?ID, "<<<<  Extr ~p ~120p~n", [Src, ExtrLen]),
       case BroadcastData of
         <<>> ->
           nothing;
@@ -515,7 +502,7 @@ handle_wait_poll_pbm(_MM, SM, Term = {recv_poll_pbm, Pbm}) ->
           fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, BroadcastData}})
       end,
 
-      Data_to_recv_name = get_share_var(Src, data_to_recv),      
+      Data_to_recv_name = get_share_var(Src, data_to_recv),
       case ExtrLen of
         0 ->
           Data_to_recv =  {Data_to_recv_name, {Src, ExtrLen}},
@@ -628,8 +615,6 @@ handle_send_data(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
   SM#sm{event = eps}.
 
-%handle_poll_response_data(_MM, #sm{event = send_next_poll_data} = SM, {}) ->
-%  SM#sm{event = eps};
 handle_poll_response_data(_MM, #sm{event = send_next_poll_data} = SM, Term) ->
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Answer_timeout of
@@ -670,7 +655,6 @@ handle_poll_response_data(_MM, #sm{event = send_poll_pbm} = SM, _Term) ->
           SBurstTuple = {at, {pid, Pid}, "*SEND", Src, Data},
           Tuple = {send_params, {RecvParams, {MsgType, LocalPC, SBurstTuple}, Tail}},
           NEvent_params = add_to_event_params(SM, Tuple),
-          io:format("+++++++++++++++++++++++++++++++++++++++++++++++++++++ handle_poll_response_data ~p ~p~n", [?ID, NEvent_params]),
           [
            fsm:send_at_command(__, {at, "?PC", ""}),
            fsm:set_timeout(__#sm{event_params = NEvent_params}, ?ANSWER_TIMEOUT, wait_pc)
@@ -690,7 +674,7 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
 
   case Answer_timeout of
     true ->
-      fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_pbm, RecvParams} );
+      fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, retransmit_pbm);
     false ->
       try
         {recv, {Pid, _Len, Src, Dst, _Flag, DataCDT}} = RecvParams,
@@ -712,9 +696,12 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
             Data = create_VDT_pbm_msg(SM, Src, PollingFlagBurst, BroadcastExistMsg),
             SPMTuple = {at, {pid, Pid}, "*SENDPBM", Src, Data},
 
-            io:format("+++++++++++++++++++++++++++++++++++++++++++++++++++++ send ~p ~p~n", [?ID, SPMTuple]),
+            SM1 =
+            [
+            fsm:send_at_command(__, SPMTuple),
+            fsm:clear_timeout(__, retransmit_pbm)
+            ](SM),
 
-            SM1 = fsm:send_at_command(SM, SPMTuple),
             NEvent_params = add_to_event_params(SM, RecvParams),
             case PollingFlagBurst of
               nb -> SM1#sm{event = ignore_recv_poll_seq};
@@ -808,9 +795,9 @@ poll_next_addr(SM) ->
   share:put(SM, current_polling_i, Ind),
   get_current_poll_addr(SM).
 
-extract_status(Status) ->
+extract_status(SM, Status) ->
   StatusL = [string:rstr(X, "INITIATION LISTEN") || X <- string:tokens (Status, "\r\n")],
-  io:format("~p~n", [Status]),
+  ?TRACE(?ID, "~p~n", [Status]),
   lists:filtermap(fun(X) ->
                     if X == 0 -> false;
                       true -> {true, true}
@@ -818,7 +805,7 @@ extract_status(Status) ->
 
 get_current_poll_addr(SM) ->
   LSeq = share:get(SM, polling_seq),
-  
+
   case LSeq of
    _  when LSeq == nothing; LSeq == []->
        nothing;
@@ -899,9 +886,6 @@ create_VDT_pbm_msg(SM, Dst, FlagBurst, nothing) ->
     nb -> 0;
     b -> get_length_all_msgs(SM, Dst)
   end,
-
-  io:format("+++++++++++++++++++++++++++++++++++++++++++++++++++++ send ~p ~p ~p~n", [?ID, FlagBurst, Len]),
-
   BLenBurst = <<Len:CMaxBurstLenBits>>,
 
   TmpData = <<"VPbm", "N", BLenBurst/bitstring>>,
@@ -1208,7 +1192,7 @@ add_to_CDT_queue(SM, {nl, send, MsgType, IDst, Payload}) ->
       nl_mac_hf:queue_limited_push(Q, Item, Max_sensitive_queue)
   end,
   share:put(SM, Qname, NQ),
-  ?TRACE(?ID, "add_to_CDT_queue ~p~n", [share:get(SM, Qname)]),
+  ?TRACE(?ID, "add_to_CDT_queue ~p~n", [Item]),
   SM.
 
 delete_delivered_item(SM, Name, PC, Dst) ->
