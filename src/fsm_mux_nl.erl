@@ -368,7 +368,8 @@ set_routing(SM, []) ->
       ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
       SM;
     _ ->
-      fsm:cast(SM, nl_impl, {send, {nl, routing, []}})
+      fsm:cast(SM, nl_impl, {send, {nl, routing, []}}),
+      fsm:clear_timeouts(SM#sm{state = ready_nl})
   end;
 set_routing(SM, empty) ->
   Burst_protocol = share:get(SM, burst_protocol),
@@ -378,7 +379,8 @@ set_routing(SM, empty) ->
       ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
       SM;
     _ ->
-      fsm:cast(SM, nl_impl, {send, {nl, routing, []}})
+      fsm:cast(SM, nl_impl, {send, {nl, routing, []}}),
+      ffsm:clear_timeouts(SM#sm{state = ready_nl})
   end;
 set_routing(SM, [H|_] = NL) when is_number(H) ->
   Burst_protocol = share:get(SM, burst_protocol),
