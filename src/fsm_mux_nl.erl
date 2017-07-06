@@ -179,6 +179,7 @@ handle_event(MM, SM, Term) ->
                      {discovery_period, Discovery_period}]),
       fsm:cast(SM, nl_impl, {send, {nl, discovery, ok}}),
       [
+       stop_polling(__, empty),
        start_discovery(__),
        fsm:set_event(__, discovery_start),
        fsm:run_event(MM, __, {})
@@ -240,19 +241,13 @@ handle_event(MM, SM, Term) ->
     {nl, send, alarm, _Src, Data} ->
       %TODO: we do not need a Src in alarm messages, it will be broadcasted
       stop_polling(SM, Data);
-    {nl, recv, _Src, Dst, Data} when Dst == 255,
-                                     Data == <<"D">> ->
+    {nl, recv, _Src, 255, <<"D">>} ->
       get_neighbours(SM);
-    {nl, recv, Src, Dst, Data} ->
-        NTuple =
-          case Data of
-            <<"A", DataT/binary>> ->
-              stop_polling(SM, alarm),
-              {nl, recv, Src, Dst, DataT};
-            _ ->
-              Term
-          end,
-        fsm:cast(SM, nl_impl, {send, NTuple});
+    {nl, recv, Src, Dst, <<"A", DataT/binary>>} ->
+      stop_polling(SM, alarm),
+      fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, DataT}});
+    {nl, recv, _Src, _Dst, _Data} ->
+      fsm:cast(SM, nl_impl, {send, Term});
     {nl, error, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, error}});
     _ when MM#mm.role == nl_impl, State =/= discovery ->
@@ -336,6 +331,9 @@ stop_polling(SM, Data) ->
       nothing ->
         ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
         SM;
+      _ when Data == empty ->
+        Tuple = {nl, stop, polling},
+        fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM);
       _ ->
         Tuple = {nl, stop, polling},
         fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM),
