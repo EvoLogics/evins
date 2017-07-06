@@ -171,6 +171,9 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, Tuple});
     {nl, start, discovery, _, _} when Discovery_period_tmo =:= true->
       fsm:cast(SM, nl_impl, {send, {nl, discovery, busy}});
+    {nl, start, discovery, Discovery_period, Time_discovery} when Discovery_period =< 0;
+                                                                  Time_discovery =< 0 ->
+      fsm:cast(SM, nl_impl, {send, {nl, discovery, error}});
     {nl, start, discovery, Discovery_period, Time_discovery} when State =:= ready_nl ->
       share:put(SM, [{time_discovery,  Time_discovery},
                      {discovery_period, Discovery_period}]),
