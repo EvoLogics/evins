@@ -171,11 +171,16 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, Tuple});
     {nl, start, discovery, _, _} when Discovery_period_tmo =:= true->
       fsm:cast(SM, nl_impl, {send, {nl, discovery, busy}});
+    {nl, start, discovery, Discovery_period, Time_discovery} when Discovery_period =< 0;
+                                                                  Time_discovery =< 0 ->
+      fsm:cast(SM, nl_impl, {send, {nl, discovery, error}});
     {nl, start, discovery, Discovery_period, Time_discovery} when State =:= ready_nl ->
       share:put(SM, [{time_discovery,  Time_discovery},
                      {discovery_period, Discovery_period}]),
+      share:put(SM, neighbours, empty),
       fsm:cast(SM, nl_impl, {send, {nl, discovery, ok}}),
       [
+       stop_polling(__, empty),
        start_discovery(__),
        fsm:set_event(__, discovery_start),
        fsm:run_event(MM, __, {})
@@ -237,19 +242,13 @@ handle_event(MM, SM, Term) ->
     {nl, send, alarm, _Src, Data} ->
       %TODO: we do not need a Src in alarm messages, it will be broadcasted
       stop_polling(SM, Data);
-    {nl, recv, _Src, Dst, Data} when Dst == 255,
-                                     Data == <<"D">> ->
+    {nl, recv, _Src, 255, <<"D">>} ->
       get_neighbours(SM);
-    {nl, recv, Src, Dst, Data} ->
-        NTuple =
-          case Data of
-            <<"A", DataT/binary>> ->
-              stop_polling(SM, alarm),
-              {nl, recv, Src, Dst, DataT};
-            _ ->
-              Term
-          end,
-        fsm:cast(SM, nl_impl, {send, NTuple});
+    {nl, recv, Src, Dst, <<"A", DataT/binary>>} ->
+      stop_polling(SM, alarm),
+      fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, DataT}});
+    {nl, recv, _Src, _Dst, _Data} ->
+      fsm:cast(SM, nl_impl, {send, Term});
     {nl, error, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, error}});
     _ when MM#mm.role == nl_impl, State =/= discovery ->
@@ -333,6 +332,9 @@ stop_polling(SM, Data) ->
       nothing ->
         ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
         SM;
+      _ when Data == empty ->
+        Tuple = {nl, stop, polling},
+        fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM);
       _ ->
         Tuple = {nl, stop, polling},
         fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM),
@@ -368,7 +370,8 @@ set_routing(SM, []) ->
       ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
       SM;
     _ ->
-      fsm:cast(SM, nl_impl, {send, {nl, routing, []}})
+      fsm:cast(SM, nl_impl, {send, {nl, routing, []}}),
+      fsm:clear_timeouts(SM#sm{state = ready_nl})
   end;
 set_routing(SM, empty) ->
   Burst_protocol = share:get(SM, burst_protocol),
@@ -378,7 +381,8 @@ set_routing(SM, empty) ->
       ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
       SM;
     _ ->
-      fsm:cast(SM, nl_impl, {send, {nl, routing, []}})
+      fsm:cast(SM, nl_impl, {send, {nl, routing, []}}),
+      ffsm:clear_timeouts(SM#sm{state = ready_nl})
   end;
 set_routing(SM, [H|_] = NL) when is_number(H) ->
   Burst_protocol = share:get(SM, burst_protocol),
