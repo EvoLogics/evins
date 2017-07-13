@@ -177,6 +177,7 @@ handle_event(MM, SM, Term) ->
     {nl, start, discovery, Discovery_period, Time_discovery} when State =:= ready_nl ->
       share:put(SM, [{time_discovery,  Time_discovery},
                      {discovery_period, Discovery_period}]),
+      share:put(SM, neighbours, empty),
       fsm:cast(SM, nl_impl, {send, {nl, discovery, ok}}),
       [
        stop_polling(__, empty),

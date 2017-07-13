@@ -121,6 +121,7 @@
                  {recv_poll_pbm, poll_response_pbm},
                  {recv_poll_data, poll_response_pbm},
                  {send_poll_pbm, poll_response_data},
+                 {send_next_poll_data, poll_response_pbm},
                  {no_poll_data, idle},
                  {poll_start, polling},
                  {poll_stop, idle},
@@ -311,10 +312,11 @@ handle_event(MM, SM, Term) ->
         end
       catch error:_ -> SM
       end;
-    {async, PosTerm = {usbllong, _FCurrT, _FMeasT, _Src, _X, _Y, _Z,
+    {async, _PosTerm = {usbllong, _FCurrT, _FMeasT, _Src, _X, _Y, _Z,
                        _E, _N, _U, _Roll, _Pitch, _Yaw, _P, _Rssi, _I, _Acc}} ->
       %% TODO: create NMEA string here
-      fsm:cast(SM, nmea, {send, PosTerm});
+      %% fsm:cast(SM, nmea, {send, PosTerm});
+      SM;
     {async, {failed, _PC, _Src}} when State == polling ->
       poll_next_addr(SM),
       fsm:run_event(MM, SM#sm{event = poll_next_addr}, {});
@@ -680,6 +682,8 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
         {recv, {Pid, _Len, Src, Dst, _Flag, DataCDT}} = RecvParams,
         [MsgType, BurstExist, Poll_data_len, Poll_data, Position, PollingFlagBurst, Process] = extract_CDT_msg(SM, DataCDT),
         case Process of
+          ignore ->
+            SM#sm{event = ignore_recv_poll_seq};
           answer_pbm when BurstExist == <<"B">> ->
             SM#sm{event = ignore_recv_poll_seq};
           answer_pbm ->
@@ -711,6 +715,9 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
       catch error:_ -> SM#sm{event = eps}
       end
   end;
+handle_poll_response_pbm(_MM, #sm{event = send_next_poll_data} = SM, _Term) ->
+  ?ERROR(?ID, "REPRODUCED~n",[]),
+  SM#sm{event = eps};
 handle_poll_response_pbm(_MM, SM, _Term) ->
   SM#sm{event = eps}.
 
@@ -991,12 +998,12 @@ get_part_of_list(Max, Q) ->
       Q1
   end.
 
-extract_CDT_msg(_SM, Msg) ->
+extract_CDT_msg(SM, Msg) ->
   CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
   CBitsPosLen = nl_mac_hf:count_flag_bits(63),
   CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
 
-  <<"C", MsgType:8/bitstring, BurstExist:8/bitstring, PollingFlagBurst:CPollingFlagBurst, _PC:CPollingCounterLen, PLen:CBitsPosLen, RPayload/bitstring>> = Msg,
+  <<"C", MsgType:8/bitstring, BurstExist:8/bitstring, PollingFlagBurst:CPollingFlagBurst, PC:CPollingCounterLen, PLen:CBitsPosLen, RPayload/bitstring>> = Msg,
 
   <<Pos:PLen/binary, Rest/bitstring>> = RPayload,
   Data_bin = (bit_size(Msg) rem 8) =/= 0,
@@ -1009,9 +1016,13 @@ extract_CDT_msg(_SM, Msg) ->
     Rest
   end,
 
-  %Recv_packages = share:get(SM, recv_packages),
-  %ResAdd = add_to_limited_list(SM, Recv_packages, PC, recv_packages, 10),
+  Recv_packages = share:get(SM, recv_packages),
+  PC_exist = lists:member(PC, Recv_packages),
+  add_to_limited_list(SM, Recv_packages, PC, recv_packages, 6),
+
   case PollingFlagBurst of
+    _ when PC_exist == true ->
+      [MsgType, BurstExist, byte_size(CDTData), CDTData, Pos, b, ignore];
     1 -> [MsgType, BurstExist, byte_size(CDTData), CDTData, Pos, nb, answer_pbm];
     0 -> [MsgType, BurstExist, byte_size(CDTData), CDTData, Pos, b, answer_pbm]
   end.
