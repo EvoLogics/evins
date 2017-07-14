@@ -161,6 +161,7 @@ handle_event(MM, SM, Term) ->
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   Check_state = fsm:check_timeout(SM, check_state),
   Current_poll_addr = get_current_poll_addr(SM),
+  Check_state_pbm = fsm:check_timeout(SM, check_state_pbm),
 
   case Term of
     {timeout, answer_timeout} ->
@@ -171,6 +172,8 @@ handle_event(MM, SM, Term) ->
                                         Answer_timeout == false ->
       fsm:send_at_command(SM, {at, "?S", ""});
     {timeout, wait_rest_poll_data} ->
+      SM;
+    {timeout, check_state_pbm} ->
       SM;
     {timeout, check_state} when Answer_timeout == false ->
       fsm:send_at_command(SM, {at, "?S", ""});
@@ -235,11 +238,16 @@ handle_event(MM, SM, Term) ->
          true ->
           fsm:cast(SM, nl_impl, {send, {nl, send, error}})
       end;
-    {nl, send, _MsgType, _IDst, _Payload} ->
-      [
-       add_to_CDT_queue(__, Term),
-       fsm:cast(__, nl_impl, {send, {nl, send, 0}})
-      ] (SM);
+    {nl, send, MsgType, _IDst, _Payload} ->
+      case lists:member(MsgType, [sensitive, tolerant, alarm, broadcast]) of
+        true ->
+          [
+           add_to_CDT_queue(__, Term),
+           fsm:cast(__, nl_impl, {send, {nl, send, 0}})
+          ] (SM);
+        false ->
+          fsm:cast(SM, nl_impl, {send, {nl, send, error}})
+      end;
     {nl, send, _IDst, _Payload} ->
       %% Is it neceessary to add the msg type???
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
@@ -300,7 +308,14 @@ handle_event(MM, SM, Term) ->
     {async, {pid, Pid}, {recvim, Len, Src, Local_address, Flag, _, _, _,_, Data}} ->
       RecvTuple = {recv, {Pid, Len, Src, Local_address, Flag, Data}},
       NEvent_params = add_to_event_params(SM, RecvTuple),
-      fsm:run_event(MM, SM#sm{event = recv_poll_seq, event_params = NEvent_params}, {});
+      SM1 = SM#sm{event_params = NEvent_params},
+      [
+       fsm:send_at_command(__, {at, "?S", ""}),
+       fsm:set_timeout(__, ?ANSWER_TIMEOUT, check_state_pbm),
+       fsm:run_event(MM, __, {})
+      ] (SM1);
+
+      %fsm:run_event(MM, SM#sm{event = recv_poll_seq, event_params = NEvent_params}, {});
     {async, {pid, _Pid}, {recvim, _Len, Src, _Dst, _Flag, _, _, _, _, Data}} ->
       % Overhearing broadcast messages
       try
@@ -351,6 +366,13 @@ handle_event(MM, SM, Term) ->
       fsm:send_at_command(SM, {at, "?S", ""});
     {async, _Tuple} ->
       SM;
+    {sync,"?S", Status} when Check_state_pbm == true ->
+      InitiatListen = extract_status(SM, Status),
+      SM1 = fsm:clear_timeout(SM, check_state_pbm),
+      case InitiatListen of
+        [true] -> fsm:run_event(MM, SM1#sm{event = recv_poll_seq}, {});
+        _ -> SM
+      end;
     {sync,"?S", Status} ->
       InitiatListen = extract_status(SM, Status),
       SM1 =
