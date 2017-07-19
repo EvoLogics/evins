@@ -248,7 +248,10 @@ handle_event(MM, SM, Term) ->
        init_poll_index(__),
        share:put(__, polling_seq, LSeq),
        fsm:cast(__, nl_impl, {send, {nl, polling, LSeq}})
-       ] (SM);
+      ] (SM);
+    {nl, get, polling} ->
+      LSeq = share:get(SM, nothing, polling_seq, empty),
+      fsm:cast(SM, nl_impl, {send, {nl, polling, LSeq}});      
     {nl, start, polling, Flag} when (SeqPollAddrs =/= []) ->
       [
        share:put(__, polling_started, true),

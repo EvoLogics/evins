@@ -38,7 +38,7 @@
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-  _ = {ok, busy, error, failed, delivered, send, recv}, %% atom vocabular
+  _ = {ok, busy, error, failed, delivered, send, recv, empty}, %% atom vocabular
   _ = {staticr, staticrack, sncfloodr, sncfloodrack, dpfloodr, dpfloodrack, icrpr, sncfloodpfr, sncfloodpfrack, evoicrppfr, evoicrppfrack, dblfloodpfr, dblfloodpfrack, laorp},
   _ = {time, period},
   _ = {source, relay},
@@ -185,12 +185,13 @@ nl_extract_subject(<<"discovery">>, <<"busy">>) ->
 nl_extract_subject(<<"discovery">>, Params) ->
   [Period, Time] = [binary_to_integer(V) || V <- binary:split(Params, <<$,>>)],
   {nl, discovery, Period, Time};
-%% NL,polling,ok
-%% NL,polling,error
-nl_extract_subject(<<"polling">>, Params) when Params == <<"ok">>; Params == <<"error">> ->
-  {nl, polling, binary_to_existing_atom(Params, utf8)};
+%% NL,polling,[ok|error|empty|Seq]
 nl_extract_subject(<<"polling">>, Params) ->
-  {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]};
+  try
+    {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]}
+  catch error:_ ->
+      {nl, polling, binary_to_existing_atom(Params, utf8)}
+  end;
 %% NL,delivered,PC,Src,Dst
 nl_extract_subject(<<"delivered">>, Params) ->
   [PC, Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
