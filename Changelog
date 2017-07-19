@@ -9,3 +9,4 @@
  
 ### Added
  - NL,get,polling command to polling protocol
+ - NL,set,polling,empty resets polling sequence

@@ -324,7 +324,10 @@ from_term({nl,set,neighbours,Neighbours}, Cfg) ->
                   lists:flatten(io_lib:format("~B:~B:~B:~B",tuple_to_list(T)))
               end, Neighbours),
   [list_to_binary(["NL,set,neighbours,",lists:join(",",NeighboursLst),Cfg#config.eol]), Cfg];
-%% NL,set,polling,seq,[Addr1,...,AddrN]
+%% NL,set,polling,[Addr1,...,AddrN]
+%% NL,set,polling,empty
+from_term({nl,set,polling,[]}, Cfg) ->
+  [list_to_binary(["NL,set,polling,empty",Cfg#config.eol]), Cfg];
 from_term({nl,set,polling,Seq}, Cfg) ->
   SeqLst = [integer_to_list(A) || A <- Seq],
   [list_to_binary(["NL,set,polling,",lists:join(",",SeqLst),Cfg#config.eol]), Cfg];

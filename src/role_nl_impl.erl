@@ -119,7 +119,10 @@ nl_extract_subject(<<"set">>, <<"neighbours,", Params/binary>>) ->
       [4] -> [list_to_tuple([binary_to_integer(I) || I <- Item]) || Item <- Lst]
     end,
   {nl, set, neighbours, Neighbours};
-%% NL,set,polling,seq,[Addr1,...,AddrN]
+%% NL,set,polling,[Addr1,...,AddrN]
+%% NL,set,polling,empty
+nl_extract_subject(<<"set">>, <<"polling,empty">>) ->
+  {nl, set, polling, []};
 nl_extract_subject(<<"set">>, <<"polling,", Params/binary>>) ->
   Seq = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>,[global])],
   {nl, set, polling, Seq};
