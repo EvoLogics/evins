@@ -251,7 +251,14 @@ handle_event(MM, SM, Term) ->
       ] (SM);
     {nl, get, polling} ->
       LSeq = share:get(SM, nothing, polling_seq, empty),
-      fsm:cast(SM, nl_impl, {send, {nl, polling, LSeq}});      
+      fsm:cast(SM, nl_impl, {send, {nl, polling, LSeq}});
+    {nl, get, polling, status} ->
+      Status = 
+        case share:get(SM, polling_started) of
+          true -> share:get(SM, poll_flag_burst);
+          _ -> idle
+        end,
+      fsm:cast(SM, nl_impl, {send, {nl, polling, status, Status}});
     {nl, start, polling, Flag} when (SeqPollAddrs =/= []) ->
       [
        share:put(__, polling_started, true),

@@ -187,9 +187,13 @@ nl_extract_subject(<<"discovery">>, Params) ->
   {nl, discovery, Period, Time};
 %% NL,polling,[ok|error|empty|Seq]
 nl_extract_subject(<<"polling">>, Params) ->
-  try
-    {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]}
-  catch error:_ ->
+  [H|T] = re:split(Params,",",[{parts,2}]),
+  case H of
+    <<I:8,_/binary>> when I >= $0, I =< $9 ->
+      {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]};
+    <<"status">> ->
+      {nl, polling, status, binary_to_existing_atom(hd(T), utf8)};
+    _ ->
       {nl, polling, binary_to_existing_atom(Params, utf8)}
   end;
 %% NL,delivered,PC,Src,Dst
