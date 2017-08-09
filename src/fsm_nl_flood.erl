@@ -242,9 +242,8 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, delivered, 0, Local_address, BDst}});
     {async, {failed, mac, BDst}} ->
       fsm:cast(SM, nl_impl, {send, {nl, failed, 0, Local_address, BDst}});
-    {async, {pid, _}, Tuple} ->
+    {async, Tuple} ->
       [SMN, NT] = parse_ll_msg(SM, {async, Tuple}),
-
       case NT of
         nothing ->
           SMN;
@@ -285,8 +284,20 @@ handle_event(MM, SM, Term) ->
         _ ->
           SMN
         end;
-    {async, _Tuple} ->
-      SM;
+    {async, {pid, _}, Tuple} ->
+      %% if pid is defined - overheard message
+      ?INFO(?ID, "Overheard message: ~p~n", [Tuple]),
+      {Src, Rssi, Integrity} =
+        case Tuple of
+          {recvpbm,_,ISrc,_,_,  IRssi,IIntegrity,_,_} ->
+            {ISrc, IRssi, IIntegrity};
+          {Recv   ,_,ISrc,_,_,_,IRssi,IIntegrity,_,_} when Recv == recvim; Recv == recvims; Recv == recv ->
+            {ISrc, IRssi, IIntegrity}
+        end,
+      case nl_mac_hf:add_neighbours(SM, overheard, Src, {nothing, nothing}, {Rssi, Integrity}) of
+        neighbours_other_format -> SM;
+        SMN -> SMN
+      end;
     {nl,error,_} ->
       fsm:cast(SM, nl_impl, {send, {nl, error}}),
       SM;

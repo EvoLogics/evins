@@ -128,6 +128,7 @@ handle_event(MM, SM, Term) ->
   State = SM#sm.state,
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   ?TRACE(?ID, "State = ~p, Term = ~p~n", [State, Term]),
+  Pid = share:get(SM, pid),
 
   case Term of
     {timeout, answer_timeout} ->
@@ -165,6 +166,11 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
+    {allowed} ->
+      Conf_pid = share:get(SM, {pid, MM}),
+      share:put(SM, pid, Conf_pid);
+    {denied} ->
+      share:put(SM, pid, nothing);
     {rcv_ul, {command,<<"Z1,">>}} ->
       fsm:send_at_command(SM, {at, "Z1", ""}),
       fsm:clear_timeouts(SM#sm{state = idle});
@@ -180,23 +186,21 @@ handle_event(MM, SM, Term) ->
       SM1 = nl_mac_hf:clear_spec_timeout(SM, retransmit),
       [SM2, _P] = nl_mac_hf:process_retransmit(SM1, Msg, eps),
       fsm:cast(SM2, alh,  {send, {sync, "OK"} });
-    {async, _, {recvims, _, _, _, _, _, _, _, _, _}} ->
-      fsm:run_event(MM, SM, {});
-    T =
-    {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
+    {async, {pid, Pid}, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
       ?TRACE(?ID, "MAC_AT_RECV ~p~n", [Tuple]),
-      [H |_] = tuple_to_list(Tuple),
-      BPid = <<"p", (integer_to_binary(NPid))/binary>>,
-      [SMN, ParsedRecv] = parse_ll_msg(SM, T),
+      [SMN, ParsedRecv] = parse_ll_msg(SM, Term),
       case ParsedRecv of
         {_BPid, Flag, STuple} ->
-          SMsg = list_to_tuple([H | [BPid | tuple_to_list(STuple) ]]),
-          fsm:cast(SMN, alh, {send, {async, SMsg} }),
-          SMN1 = process_rcv_flag(SMN, Flag),
-          fsm:run_event(MM, SMN1, {});
+          %% remove PID: to differentiate overheard from dedicated packet
+          SMsg = list_to_tuple([recvim | tuple_to_list(STuple)]),
+          fsm:cast(SMN, alh, {send, {async, SMsg}}),
+          process_rcv_flag(SMN, Flag);
         _ ->
-          SMN
+          ?ERROR(?ID, "Error: payload cannot be parsed in: ~p~n", [Term]),
+          fsm:cast(SM, alh, {send, Term})
       end;
+    {async, _, _} ->
+      fsm:cast(SM, alh, {send, Term});
     {async, Tuple} ->
       fsm:cast(SM, alh, {send, {async, Tuple} }),
       SMN = process_ct(SM, Tuple),

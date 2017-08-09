@@ -69,6 +69,10 @@ from_term_helper(Tuple, _, _) when  is_tuple(Tuple) ->
       {"SYNC", singleline, [list_to_binary(Answer), ?EOL_RECV]};
     {async, Msg}    when is_tuple(Msg) ->
       {"ASYNC", singleline, [nl_mac_hf:convert_to_binary(tuple_to_list(Msg)), ?EOL_RECV]};
+    {async, {pid, PID}, Msg}    when is_tuple(Msg) ->
+      [H|T] = tuple_to_list(Msg),
+      SPID = [$p|integer_to_list(PID)],
+      {"ASYNC", singleline, [nl_mac_hf:convert_to_binary([H,SPID|T]), ?EOL_RECV]};
     {error, Params} when is_list(Params) ->
       {"ERROR", singleline, ["ERROR ",string:to_upper(Params), ?EOL_RECV]};
     _ ->
@@ -82,10 +86,12 @@ patter_matcher(L, Pattern, Count_el) ->
 split(L, Cfg) ->
   case re:run(L, "\r\n") of
     {match, [{_, _}]} ->
-    case patter_matcher(L, "^(RECV,p|RECV,|RECVIM,p|RECVIM,|RECVIMS,p|RECVIMS,)(.*)", 2) of
+    case patter_matcher(L, "^(RECV,p|RECV,|RECVIM,p|RECVIM,|RECVIMS,p|RECVIMS,|RECVPBM,p|RECVPBM,)(.*)", 2) of
       {match, [<<"RECV,p">>, P]}    -> recv_extract(L, P, pid, Cfg);
       {match, [<<"RECV,">>, P]}     -> recv_extract(L, P, nopid, Cfg);
       {match, [<<"RECVIM,p">>, P]}  -> recvim_extract(L, P, pid, Cfg);
+      {match, [<<"RECVPBM,">>, P]}  -> recvpbm_extract(L, P, nopid, Cfg);
+      {match, [<<"RECVPBM,p">>, P]} -> recvpbm_extract(L, P, pid, Cfg);
       {match, [<<"RECVIM,">>, P]}   -> recvim_extract(L, P, nopid, Cfg);
       {match, [<<"RECVIMS,p">>, P]} -> recvims_extract(L, P, pid, Cfg);
       {match, [<<"RECVIMS,">>, P]}  -> recvims_extract(L, P, nopid, Cfg);
@@ -95,12 +101,12 @@ split(L, Cfg) ->
         {match, [<<"FAILED,">>, P, L1]}       -> [failed_extract(P) | split(L1, Cfg)];        
         {match, [<<"DELIVERED,mac,">>, P, L1]}-> [delivered_mac_extract(P)  | split(L1, Cfg)];
         {match, [<<"FAILED,mac,">>, P, L1]}   -> [failed_mac_extract(P) | split(L1, Cfg)];
-        {match, [<<"DELIVEREDIM,">>, P, L1]}  -> [deliveredim_extract(P)	| split(L1, Cfg)];
-        {match, [<<"FAILEDIM,">>, P, L1]}     -> [failedim_extract(P)	| split(L1, Cfg)];
-        {match, [<<"OK">>, P, L1]}            -> [ok_extract(P)		| split(L1, Cfg)];
-        {match, [<<"BUSY">>, P, L1]}          -> [busy_extract(P)		| split(L1, Cfg)];
-        {match, [<<"ERROR">>, P, L1]}         -> [error_extract(P)		| split(L1, Cfg)];
-        nomatch	-> try_send(L, Cfg)
+        {match, [<<"DELIVEREDIM,">>, P, L1]}  -> [deliveredim_extract(P)  | split(L1, Cfg)];
+        {match, [<<"FAILEDIM,">>, P, L1]}     -> [failedim_extract(P) | split(L1, Cfg)];
+        {match, [<<"OK">>, P, L1]}            -> [ok_extract(P)   | split(L1, Cfg)];
+        {match, [<<"BUSY">>, P, L1]}          -> [busy_extract(P)   | split(L1, Cfg)];
+        {match, [<<"ERROR">>, P, L1]}         -> [error_extract(P)    | split(L1, Cfg)];
+        nomatch -> try_send(L, Cfg)
       end
     end;
   nomatch ->
@@ -314,6 +320,40 @@ recvim_extract(L, P, IfPid, Cfg) ->
     true -> [{more, L}]
     end
   catch error: _Reason -> [{sync, "*RECVIM", {error, ?ERROR_WRONG}}]
+  end.
+
+recvpbm_extract(L, P, IfPid, Cfg) ->
+  try
+    [BPid, Params] =
+    if IfPid =:= nopid ->
+      RecvimStr = "([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
+      {match, T} = patter_matcher(P, RecvimStr, 8),
+      [nopid, T];
+    true ->
+      RecvimStrPid = "([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)",
+      {match, [H | T]} = patter_matcher(P, RecvimStrPid, 9),
+      [H, T]
+    end,
+    [BLen, BSrc, BDst, BDuration, BRssi, BIntegrity, BVelocity, PayloadTail] = Params,
+    Len = binary_to_integer(BLen),
+    PLLen = byte_size(PayloadTail),
+    if
+      Len + 2 =< PLLen ->
+      {match, [Payload, Tail1]} =
+      patter_matcher(PayloadTail, "^(.{" ++ integer_to_list(Len) ++ "})\r\n(.*)", 2),
+      if IfPid =:= nopid ->
+        [{async, {recvpbm, Len, bin_to_num(BSrc), bin_to_num(BDst),
+        bin_to_num(BDuration), bin_to_num(BRssi), bin_to_num(BIntegrity),
+        bin_to_num(BVelocity), Payload}}];
+      true ->
+        [{async, {pid, binary_to_integer(BPid)},
+        {recvpbm, Len, bin_to_num(BSrc), bin_to_num(BDst),
+        bin_to_num(BDuration), bin_to_num(BRssi), bin_to_num(BIntegrity),
+        bin_to_num(BVelocity), Payload}} | split(Tail1, Cfg)]
+      end;
+    true -> [{more, L}]
+    end
+  catch error: _Reason -> [{sync, "*RECVPBM", {error, ?ERROR_WRONG}}]
   end.
 
 recvims_extract(L, P, IfPid, Cfg) ->
