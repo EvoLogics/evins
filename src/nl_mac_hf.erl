@@ -173,7 +173,7 @@ send_mac(SM, _Interface, Flag, MACP) ->
 
 send_ack(SM,  {send_ack, {_, [Packet_id, _, _PAdditional]}, {nl, recv, Real_dst, Real_src, _}}, Count_hops) ->
   BCount_hops = create_ack(Count_hops),
-  send_nl_command(SM, alh, {ack, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BCount_hops}).
+  send_nl_command(SM, at_impl, {ack, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BCount_hops}).
 
 send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {nl, recv, Real_dst, Real_src, Payload}}) ->
   MAC_addr  = convert_la(SM, integer, mac),
@@ -206,7 +206,7 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {nl, recv, Real_
           analyse(SMNTmp, paths, RCheckDblPath, {Real_src, Real_dst}),
           [SM1, fill_msg(neighbours_path, {BCN, RCheckDblPath})]
       end,
-      send_nl_command(SMN, alh, {path, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BMsg})
+      send_nl_command(SMN, at_impl, {path, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BMsg})
   end.
 
 send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL) ->
@@ -263,17 +263,17 @@ mac2at(SM, Flag, Tuple) when is_tuple(Tuple)->
 
 nl2at (SM, Tuple) when is_tuple(Tuple)->
   %Queue_ids = share:get(SM, queue_ids),
-  ETSPID =  list_to_binary(["p", integer_to_binary(share:get(SM, pid))]),
+  PID = share:get(SM, pid),
   NLPPid = ?PROTOCOL_NL_PID(share:get(SM, nlp)),
   ?WARNING(?ID, ">>>>>>>> NLPPid: ~p~n", [NLPPid]),
   case Tuple of
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}}  when byte_size(Data) < ?MAX_IM_LEN ->
       %% TTL generated on NL layer is always 0, MAC layer inreases it, due to retransmissions
       NewData = create_payload_nl_flag(SM, NLPPid, Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
-      {at,"*SENDIM", ETSPID, byte_size(NewData), IDst, noack, NewData};
+      {at, {pid,PID}, "*SENDIM", IDst, noack, NewData};
     {Flag, BPacket_id, MAC_real_src, MAC_real_dst, {nl, send, IDst, Data}} ->
       NewData = create_payload_nl_flag(SM, NLPPid, Flag, BPacket_id, 0, MAC_real_src, MAC_real_dst, Data),
-      {at,"*SEND", ETSPID, byte_size(NewData), IDst, NewData};
+      {at, {pid,PID}, "*SEND", IDst, NewData};
     _ ->
       error
   end.

@@ -53,7 +53,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     _          -> io:format("!!! ERROR, no MAC protocol with the name ~p~n", [P]),
                   error
   end,
-  Roles = fsm_worker:role_info(Role_IDs, [at, alh]),
+  Roles = fsm_worker:role_info(Role_IDs, [at, at_impl]),
   if Module =:= error->
       ?ERROR(Mod_ID, "No MAC protocol ID!~n", []);
     true ->

@@ -207,27 +207,34 @@ handle_event(MM, SM, Term) ->
         _ ->
           fsm:run_event(MM, SM#sm{event=Event}, {})
       end;
+    {connected} when MM#mm.role == at ->
+      fsm:cast(SM, at, {ctrl, {allow, self()}}),
+      fsm:cast(SM, at, {ctrl, {filter, net}}),
+      fsm:cast(SM, at, {ctrl, {waitsync, no}}),
+      fsm:cast(SM, at, {ctrl, {ext_networking, yes}});
+    %% pid ? 
+    {disconnected, _} when MM#mm.role == at ->
+      fsm:cast(SM, at, {ctrl, {waitsync, no}});
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
-    {disconnected} ->
+    {disconnected, _} ->
       ?INFO(?ID, "disconnected ~n", []),
       SM;
-    T={sync, _} ->
-      %case NLMsg = share:get(SM, last_nl_sent) of
+    {sync, _, _} ->
+      %% case NLMsg = share:get(SM, last_nl_sent) of
       case share:get(SM, last_nl_sent) of
         %% rcv sync message for NL
         {send, {Flag, [_, Real_src, _]}, _} ->
           Print_to_NL = if_print_to_nl(SM, Real_src, Flag),
           share:put(SM, path_exists, false),
           SMC =
-          case parse_ll_msg(SM, T) of
-            nothing -> SM;
+          case parse_ll_msg(SM, Term) of
             [SMN, NT = {nl, send, busy}] ->
               % !!!!!!!!!!!!!! TODO: if busy, how much should be transmitted?
               %fsm:set_timeout(SMN#sm{event = eps}, {s, 2}, {relay_wv, NLMsg});
               fsm:cast(SMN, nl_impl, {send, NT});
-            [SMN, NT] when Print_to_NL == true ->
+            [SMN, NT] when Print_to_NL == true, NT =/= nothing ->
               fsm:cast(SMN, nl_impl, {send, NT});
             _ ->
               SM
@@ -302,7 +309,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, error}}),
       SM;
     {nl, reset, state} ->
-      fsm:cast(SM, alh, {send, {at, "Z1", ""}}),
+      fsm:cast(SM, at, {send, {at, "Z1", ""}}),
       %fsm:send_at_command(SM, {at, "Z1", ""}),
       fsm:cast(SM, nl_impl, {send, {nl, state, ok}}),
       SM#sm{state = idle};
@@ -466,7 +473,7 @@ handle_swv(_MM, SMP, Term) ->
   ?TRACE(?ID, "handle_swv ~120p~n", [Term]),
   case Param_Term of
     {send, Params = {Flag, [_, ISrc, _]}, Tuple = {nl, send, Idst, _}} ->
-      SM1 = nl_mac_hf:send_nl_command(SM, alh, Params, Tuple),
+      SM1 = nl_mac_hf:send_nl_command(SM, at, Params, Tuple),
       if SM1 =:= error ->
         print_nl_error(SM, ISrc, Flag),
         SM#sm{event=error, event_params = {error, {ISrc, Idst}}};
@@ -580,7 +587,7 @@ handle_wack(_MM, SM, Term) ->
       end,
       Ack_last_nl_sent = share:get(SM, ack_last_nl_sent),
       if {Packet_id, Real_src, Real_dst} == Ack_last_nl_sent  ->
-        SM1 = nl_mac_hf:send_nl_command(SM, alh, {dst_reached, [Packet_id, Real_dst, PAdditional]}, {nl,send,Real_src,<<"">>}),
+        SM1 = nl_mac_hf:send_nl_command(SM, at, {dst_reached, [Packet_id, Real_dst, PAdditional]}, {nl,send,Real_src,<<"">>}),
         SM2 = fsm:clear_timeout(SM1, {wack_timeout, {Packet_id, Real_src, Real_dst}}),
         fsm:cast(SM2, nl_impl, {send, {nl, delivered, 0, Real_src, Real_dst}}),
         nl_mac_hf:smooth_RTT(SM, direct, {rtt, Local_address, Real_dst}),
@@ -729,7 +736,7 @@ process_sendim(SM, Tuple) ->
 
 parse_ll_msg(SM, Tuple) ->
   case Tuple of
-    {sync,  Msg} ->
+    {sync, _, Msg} ->
       [SM, process_sync(Msg)];
     {async, Msg} ->
       process_async(SM, Msg);
@@ -741,7 +748,7 @@ process_sync(Msg) ->
   case Msg of
     {error,_} -> {nl,send,error};
     {busy, _} -> {nl,send,busy};
-    {ok}    -> {nl,send,0};
+    "OK"      -> {nl,send,0};
     %{ok}    -> {nl,send,ok};
     _     -> nothing
   end.
@@ -884,6 +891,7 @@ process_rcv_wv(SMT, RcvParams, DataParams) ->
 
 form_rcv_tuple(SMN, RTuple) ->
   Local_address = share:get(SMN, local_address),
+  io:format("Local_address = ~p, RTuple = ~p~n", [Local_address, RTuple]),
   if RTuple =:= nothing -> [SMN, nothing];
      true ->
        [Type, NLDst, RcvTuple, RDstTuple] = RTuple,

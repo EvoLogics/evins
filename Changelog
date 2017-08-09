@@ -7,8 +7,10 @@
 
 ### Changed
  - starting to maintain Changelog
+ - WIP: factoring to exclude role_alh
  
 ### Added
+ - added role_at_impl to mirror implementation side AT interface (supports only NET mode)
  - WIP: neigbourhoud update by overhearing acoustic signal at networking layer
  - NL,get,polling command to polling protocol
  - NL,set,polling,empty resets polling sequence

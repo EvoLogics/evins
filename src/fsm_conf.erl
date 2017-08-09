@@ -55,7 +55,7 @@
                  [{internal, idle},
                   {rcv, request_local_address},
                   {error, request_mode},
-                  {answer_timeout, alarm}
+                  {answer_timeout, idle}
                  ]},
 
                 {alarm, 
@@ -153,6 +153,11 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       fsm:cast(SM, at, {ctrl, {allow, self()}}),
       fsm:run_event(MM, SM#sm{event=internal}, {});
+    {raw,<<"NET\r\n">>} ->
+      %% special case for at/at_impl docking
+      share:put(SM, raw_buffer, <<"">>),
+      SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
+      fsm:run_event(MM, SM1#sm{event=error}, {});
     {raw,Bin} when SM#sm.state == idle ->
       Raw_buffer = share:get(SM,raw_buffer),
       Buffer = <<Raw_buffer/binary,Bin/binary>>,
@@ -202,6 +207,9 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
       fsm:set_event(
         fsm:set_timeout(
           fsm:cast(fsm:clear_timeouts(SM), at, {send, AT}), ?WAKEUP_TIMEOUT, answer_timeout), eps);
+    answer_timeout ->
+      fsm:cast(SM, at, {ctrl, {waitsync, no}}),
+      fsm:send_at_command(SM, {at, "?MODE", ""});
     wrong_receive -> fsm:set_event(SM, eps);
     _             -> fsm:set_event(SM#sm{state = alarm}, internal)
   end.
