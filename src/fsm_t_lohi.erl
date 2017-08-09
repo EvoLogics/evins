@@ -128,7 +128,6 @@ handle_event(MM, SM, Term) ->
   State = SM#sm.state,
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   ?TRACE(?ID, "State = ~p, Term = ~p~n", [State, Term]),
-  Pid = share:get(SM, pid),
 
   case Term of
     {timeout, answer_timeout} ->
