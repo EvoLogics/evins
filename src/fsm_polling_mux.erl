@@ -151,7 +151,7 @@ handle_event(MM, SM, Term) ->
   SeqPollAddrs = share:get(SM, polling_seq),
   Local_address = share:get(SM, local_address),
   Polling_started = share:get(SM, polling_started),
-
+  Pid = share:get(SM, pid),
   State = SM#sm.state,
   Wait_pc = fsm:check_timeout(SM, wait_pc),
   Send_next_poll_data = fsm:check_timeout(SM, send_next_poll_data_tmo),
@@ -195,10 +195,12 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       SM;
-    {disconnected, _} ->
-      SM;
     {allowed} ->
-      ?INFO(?ID, "allowed ~n", []),
+      Conf_pid = share:get(SM, {pid, MM}),
+      share:put(SM, pid, Conf_pid);
+    {denied} ->
+      share:put(SM, pid, nothing);
+    {disconnected, _} ->
       SM;
     {nl, get, buffer} ->
       Buffer = get_buffer(SM),
@@ -283,7 +285,7 @@ handle_event(MM, SM, Term) ->
     {nl, get, routing} ->
       Answer = {nl, routing, nl_mac_hf:routing_to_list(SM)},
       fsm:cast(SM, nl_impl, {send, Answer});
-    {async, {pid, _Pid}, RTuple = {recv, _Len, Src, Local_address , _,  _,  _,  _,  _, Data}} ->
+    {async, {pid, Pid}, RTuple = {recv, _Len, Src, Local_address , _,  _,  _,  _,  _, Data}} ->
       [Type, Poll_data] = extract_poll_data(SM, Data),
       case Poll_data of
         ignore ->
@@ -295,9 +297,9 @@ handle_event(MM, SM, Term) ->
           ?TRACE(?ID, "<<<<  Poll_data ~p ~p~n", [Src, Poll_data]),
           fsm:run_event(MM, SM#sm{event = recv_poll_data}, {recv_poll_data, RTuple})
       end;
-    {async, {pid, _Pid}, RTuple = {recvpbm, _Len, Current_poll_addr, Local_address, _, _, _, _, _Data}} ->
+    {async, {pid, Pid}, RTuple = {recvpbm, _Len, Current_poll_addr, Local_address, _, _, _, _, _Data}} ->
       fsm:run_event(MM, SM#sm{event = process_poll_pbm}, {recv_poll_pbm, RTuple});
-    {async, {pid, _Pid}, {recvpbm, _Len, Src, _Dst, _, _, _, _, Data}} ->
+    {async, {pid, Pid}, {recvpbm, _Len, Src, _Dst, _, _, _, _, Data}} ->
       try
         [P1, _, P3] = extract_VDT_pbm_msg(SM, Data),
         case P1 of
@@ -311,7 +313,7 @@ handle_event(MM, SM, Term) ->
       RecvTuple = {recv, {Pid, Len, Src, Local_address, Flag, Data}},
       NEvent_params = add_to_event_params(SM, RecvTuple),
       fsm:run_event(MM, SM#sm{event = recv_poll_seq, event_params = NEvent_params}, {});
-    {async, {pid, _Pid}, {recvim, _Len, Src, _Dst, _Flag, _, _, _, _, Data}} ->
+    {async, {pid, Pid}, {recvim, _Len, Src, _Dst, _Flag, _, _, _, _, Data}} ->
       % Overhearing broadcast messages
       try
         [MsgType, _BurstExist, Poll_data_len, Poll_data, _, _, _] = extract_CDT_msg(SM, Data),
@@ -595,7 +597,8 @@ handle_send_data(_MM, #sm{event = send_next_poll_data} = SM, Term) ->
           share:put(SM, send_im_no_burst, true),
           SM1#sm{event = send_data_end};
         _ ->
-          NSBurstTuple = {at, {pid, 0}, "*SEND", Dst, NPayload},
+          Pid = share:get(SM, pid),
+          NSBurstTuple = {at, {pid, Pid}, "*SEND", Dst, NPayload},
           NT = {send_params,{STupleLen, {NType, LocalPC, NSBurstTuple}, NTail}},
           NEvent_params = add_to_event_params(SM, NT),
           fsm:set_timeout(SM1#sm{event_params = NEvent_params}, ?ANSWER_TIMEOUT, send_next_poll_data_tmo)
@@ -614,7 +617,8 @@ handle_send_data(_MM, #sm{event = request_delivered} = SM, {deliveredim, Dst} = 
         true ->
           fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {request_delivered, Term});
         false ->
-          SBurstTuple = {at, {pid, 0}, "*SEND", Dst, Data},
+          Pid = share:get(SM, pid),
+          SBurstTuple = {at, {pid, Pid}, "*SEND", Dst, Data},
           Tuple = {send_params, {STupleLen, {MsgType, LocalPC, SBurstTuple}, Tail}},
           NEvent_params = add_to_event_params(SM, Tuple),
           [
@@ -1063,7 +1067,9 @@ create_CDT_msg(SM, nb, nothing) ->
     TmpData
   end,
   increase_local_pc(SM, polling_pc),
-  [no_burst, {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data}];
+  Pid = share:get(SM, pid),
+  ?WARNING(?ID, "CDT: Pid = ~p~n", [Pid]),
+  [no_burst, {at, {pid, Pid},"*SENDIM", Current_polling_addr, ack, Data}];
 create_CDT_msg(SM, b, nothing) ->
   % TODO: DATA? Fused Position + CDT ?
   % Burst fomt CDT? or dummy with POS?
@@ -1112,7 +1118,9 @@ create_CDT_msg(SM, b, nothing) ->
     TmpData
   end,
   increase_local_pc(SM, polling_pc),
-  [FlagBurst, {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data}];
+  Pid = share:get(SM, pid),
+  ?WARNING(?ID, "CDT: Pid = ~p~n", [Pid]),
+  [FlagBurst, {at, {pid, Pid},"*SENDIM", Current_polling_addr, ack, Data}];
 
 create_CDT_msg(SM, FlagBurst, BroadcastExistMsg) ->
   Current_polling_addr = get_current_poll_addr(SM),
@@ -1147,7 +1155,9 @@ create_CDT_msg(SM, FlagBurst, BroadcastExistMsg) ->
   end,
 
   increase_local_pc(SM, polling_pc),
-  [no_burst, {at, {pid, 0},"*SENDIM", Current_polling_addr, ack, Data}].
+  Pid = share:get(SM, pid),
+  ?WARNING(?ID, "CDT: Pid = ~p~n", [Pid]),
+  [no_burst, {at, {pid, Pid},"*SENDIM", Current_polling_addr, ack, Data}].
 
 queue_to_data(SM, Dst, Name) ->
   Qname = get_share_var(Dst, Name),

@@ -9,6 +9,7 @@
  - starting to maintain Changelog
  
 ### Added
+ - WIP: neigbourhoud update by overhearing acoustic signal at networking layer
  - NL,get,polling command to polling protocol
  - NL,set,polling,empty resets polling sequence
  - NL,get,polling/NL,polling,status,Status command and report to polling protocol

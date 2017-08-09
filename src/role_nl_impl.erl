@@ -163,6 +163,8 @@ from_term({nl, routing, Routing}, Cfg) when is_list(Routing) ->
               end, Routing),
   [list_to_binary(["NL,routing,",lists:join(",",RoutingLst),Cfg#config.eol]), Cfg];
 %% NL,neighbours,A1,...<AN>
+from_term({nl, neighbours, []}, Cfg) ->
+  [list_to_binary(["NL,neighbours,empty", Cfg#config.eol]), Cfg];
 from_term({nl, neighbours, [H|_] = Neighbours}, Cfg) when is_number(H) ->
   NeighboursLst = [integer_to_list(A) || A <- Neighbours],
   [list_to_binary(["NL,neighbours,",lists:join(",",NeighboursLst),Cfg#config.eol]), Cfg];
