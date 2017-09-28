@@ -189,8 +189,10 @@ connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = server, o
       {ok, Ref} = prim_inet:async_accept(LSock, -1),
       {ok, State#ifstate{listener = LSock, acceptor = Ref}};
     {error, Reason} ->
-      error_logger:error_report([{file,?MODULE,?LINE},{id, ID}, {IP,Port,Reason}]),
-      {stop, Reason}
+      gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
+      error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Reason]),
+      {ok, _} = timer:send_after(1000, timeout),
+      {ok, State}
   end.
 
 broadcast(FSMs, Term) ->
@@ -340,7 +342,7 @@ handle_info({bridge,Term}, #ifstate{fsm_pids = FSMs, mm = MM, cfg = Cfg} = State
   conditional_cast(FSMs, Cfg, {chan, MM, Term}),
   {noreply, State};
 
-handle_info(timeout, #ifstate{id = ID, type = client} = State) ->
+handle_info(timeout, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, timeout}}),
   case connect(State) of
     {ok, NewState} -> {noreply, NewState};
