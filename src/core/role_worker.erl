@@ -50,8 +50,9 @@
           id,                   % Role_ID
           module_id,            % FSM handling module name
           fsm_pids = [],        % FSM controller module PID
-          type = client,        % TCP client or server
-          opt = [],             % TCP Socket options
+          type = client,        % TCP/UDP client or server
+          opt = [],             % TCP/UDP Socket options
+          proto = nothing,      % tcp | udp -- protocol
           mm,                   % #mm - more info about this interface:
                                 % {role,role_id,ip,port,type,status,params}).
           tail = <<>>,          % Not yet processed data tail
@@ -121,7 +122,37 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts
           end,
   Self = self(),
   gen_server:cast(Mod_ID, {Self, ID, ok}),
-  connect(State#ifstate{type = Type, opt = SOpts}).
+  connect(State#ifstate{type = Type, opt = SOpts, proto = tcp});
+
+init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {udp,IP,Port,Opts}}} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {socket,IP,Port,Opts}}}}),
+  Type = case Opts of
+           L when is_list(L) ->
+             Tserver = [server || server <- L],
+             Tclient = [client || client <- L],
+             case {Tserver, Tclient} of
+               {[server],[]} -> server;
+               {[],[client]} -> client;
+               _ ->
+                 ?ERROR(ID, "Undefined connection type: ~p, set to client per default~n", [L]),
+                 client
+             end;
+           A -> A
+         end,
+  IsMulticast = try {HdIP, _, _, _} = IP, (HdIP >= 224) andalso (HdIP =< 239)
+                catch error:_ -> false end,
+  SOpts = case Type of
+            client -> [binary, {active, true}, {broadcast, true}];
+            server ->
+                  Mcast = case IsMulticast of
+                              true -> [{multicast_if, IP}, {add_membership, {IP, {0, 0, 0, 0}}}];
+                              _ -> []
+                          end,
+                  [binary, {ip, IP}, {active, true}, {reuseaddr, true}] ++ Mcast
+          end,
+  Self = self(),
+  gen_server:cast(Mod_ID, {Self, ID, ok}),
+  connect(State#ifstate{type = Type, opt = SOpts, proto = udp}).
 
 cast_connected(#ifstate{fsm_pids = FSMs} = State) ->
   lists:map(fun(FSM) -> cast_connected(FSM, State) end, FSMs),
@@ -166,7 +197,7 @@ connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) -
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
   {ok, cast_connected(State#ifstate{port = PortID})};
 
-connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, opt = SOpts} = State) ->
+connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, proto = tcp, opt = SOpts} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
   case gen_tcp:connect(IP, Port, SOpts, 1000) of
     {ok, Socket} ->
@@ -182,12 +213,36 @@ connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, o
       {ok, State}
   end;
 
-connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = server, opt = SOpts} = State) ->
+connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = server, proto = tcp, opt = SOpts} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {listening, IP, Port}}}),
   case gen_tcp:listen(Port, SOpts) of
     {ok, LSock} ->
       {ok, Ref} = prim_inet:async_accept(LSock, -1),
       {ok, State#ifstate{listener = LSock, acceptor = Ref}};
+    {error, Reason} ->
+      gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
+      error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Reason]),
+      {ok, _} = timer:send_after(1000, timeout),
+      {ok, State}
+  end;
+
+connect(#ifstate{id = ID, mm = #mm{iface = {udp,_IP,_Port,_}}, type = client, proto = udp, opt = SOpts} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
+  case gen_udp:open(0, SOpts) of
+    {ok, Socket} ->
+      {ok, cast_connected(State#ifstate{socket = Socket})};
+    Error ->
+      gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
+      error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Error]),
+      {ok, _} = timer:send_after(1000, timeout),
+      {ok, State}
+  end;
+
+connect(#ifstate{id = ID, mm = #mm{iface = {udp,IP,Port,_}}, type = server, proto = udp, opt = SOpts} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {listening, IP, Port}}}),
+  case gen_udp:open(Port, SOpts) of
+    {ok, Socket} ->
+      {ok, cast_connected(State#ifstate{socket = Socket})};
     {error, Reason} ->
       gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
       error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Reason]),
@@ -231,6 +286,8 @@ handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Po
           broadcast(FSMs, {chan_error, MM, disconnected});
         {socket,_,_,_} ->
           gen_tcp:send(Socket, Bin);
+        {udp,IP,P,_} ->
+          gen_udp:send(Socket, IP, P, Bin);
         {port,_,_} when Port == nothing -> 
           broadcast(FSMs, {chan_error, MM, disconnected});
         {port,_,_} ->
@@ -326,7 +383,14 @@ handle_info({inet_async, LSock, Ref, Error}, #ifstate{id = ID, listener=LSock, a
 handle_info({tcp, Socket, Bin}, #ifstate{socket = Socket} = State) ->
   process_bin(Bin, State);
 
+handle_info({udp, Socket, _IP, _Port, Bin}, #ifstate{socket = Socket} = State) ->
+  process_bin(Bin, State);
+
 handle_info({tcp, Socket1, Bin}, #ifstate{socket = Socket2} = State) ->
+  error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
+  {noreply, State};
+
+handle_info({udp, Socket1, _IP, _Port, Bin}, #ifstate{socket = Socket2} = State) ->
   error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
   {noreply, State};
 

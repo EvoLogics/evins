@@ -94,6 +94,12 @@ check_list_term({role,Role,iface,{socket,Address,Port,TCPRole}})
 check_list_term({role,Role,params,Params,iface,{socket,Address,Port,TCPRole}})
   when is_atom(Role), is_list(Params), is_list(Address), is_integer(Port), is_atom(TCPRole) ->
   ok;
+check_list_term({role,Role,iface,{udp,Address,Port,TCPRole}})
+  when is_atom(Role), is_list(Address), is_integer(Port), is_atom(TCPRole) ->
+  ok;
+check_list_term({role,Role,params,Params,iface,{udp,Address,Port,TCPRole}})
+  when is_atom(Role), is_list(Params), is_list(Address), is_integer(Port), is_atom(TCPRole) ->
+  ok;
 check_list_term({role,Role,iface,{port,PortName,PortSettings}})
   when is_atom(Role), is_list(PortSettings) ->
   check_port_name(PortName);
