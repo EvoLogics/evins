@@ -1,4 +1,5 @@
 ebin/*.beam
+*.o
 *~
 src/*~
 src/core/*~

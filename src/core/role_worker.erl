@@ -35,6 +35,11 @@
 
 -export([start/4, start/5, to_term/4, bridge/2]).
 
+-define(SER_OPEN, 0).
+-define(SER_SEND, 1).
+-define(SER_RECV, 2).
+-define(SER_ERROR, 3).
+
 -callback start(ref(), ref(), #mm{}) -> {ok,pid()} | ignore | {error,any()}.
 -callback stop(any()) -> ok.
 -callback to_term(Tail :: binary(), Bin :: binary() | list(), Cfg :: any()) -> [list() | [list() | [list() | [binary() | list(any())]]]].
@@ -92,6 +97,13 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {port,Port,PortSetti
   Self = self(),
   gen_server:cast(Mod_ID, {Self, ID, ok}),
   connect(State);
+
+init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {serial,Port,BaudRate,StartBits,Parity,StopBits,FlowControl}}} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {serial,Port,BaudRate,StartBits,Parity,StopBits,FlowControl}}}}),
+  process_flag(trap_exit, true),
+  Self = self(),
+  gen_server:cast(Mod_ID, {Self, ID, ok}),
+  connect(State#ifstate{proto = serial});
 
 init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts}}} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {socket,IP,Port,Opts}}}}),
@@ -197,6 +209,26 @@ connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) -
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
   {ok, cast_connected(State#ifstate{port = PortID})};
 
+connect(#ifstate{id = ID, mm = #mm{iface = {serial,Port,BaudRate,DataBits,Parity,StopBits,FlowControl}}} = State) ->
+  process_flag(trap_exit, true),
+  PortID = open_port({spawn, code:priv_dir(evins) ++ "/evo_serial"}, [binary, {packet, 1}, overlapped_io]),
+  Par = case Parity of
+            none -> 0;
+            odd -> 1;
+            even -> 2
+        end,
+  FC = case FlowControl of
+           none -> 0;
+           ctsrts -> 1
+       end,
+  DB = DataBits - 1,
+  SB = StopBits - 1,
+  Zero = 0,
+  BPort = list_to_binary(Port),
+  PortID ! {self(), {command, <<?SER_OPEN:8, BaudRate:24/integer-native, DB:3/integer, Par:2/integer, SB:1/integer, FC:1/integer, Zero:1/integer, BPort/binary>>}},
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
+  {ok, cast_connected(State#ifstate{port = PortID})};
+
 connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, proto = tcp, opt = SOpts} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
   case gen_tcp:connect(IP, Port, SOpts, 1000) of
@@ -292,6 +324,8 @@ handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Po
           broadcast(FSMs, {chan_error, MM, disconnected});
         {port,_,_} ->
           Port ! {self(), {command, Bin}};
+        {serial,_,_,_,_,_,_} ->
+          serial_send(Port, Bin);
         {erlang,_,_,_} -> todo
       end,
       {noreply, State#ifstate{cfg = NewCfg}};
@@ -393,6 +427,12 @@ handle_info({tcp, Socket1, Bin}, #ifstate{socket = Socket2} = State) ->
 handle_info({udp, Socket1, _IP, _Port, Bin}, #ifstate{socket = Socket2} = State) ->
   error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
   {noreply, State};
+
+handle_info({PortID,{data,<<Type:8/integer, Bin/binary>>}}, #ifstate{port = PortID, proto = serial} = State) ->
+  case Type of
+    ?SER_RECV -> process_bin(Bin, State);
+    _ -> {noreply, State}
+  end;
 
 handle_info({PortID,{data,Bin}}, #ifstate{port = PortID} = State) ->
   process_bin(Bin, State);
@@ -510,3 +550,9 @@ process_bin(Bin, #ifstate{behaviour = B, fsm_pids = FSMs, cfg = Cfg, tail = Tail
           end,
   lists:foreach(fun(Term) -> conditional_cast(FSMs, Cfg, {chan, MM, Term}) end, Terms),
   {noreply, State#ifstate{cfg = NewCfg, tail = More}}.
+
+serial_send(Port, <<Chunk:253/binary, Rest/binary>>) ->
+    Port ! {self(), {command, <<?SER_SEND:8, Chunk/binary>>}},
+    serial_send(Port, Rest);
+serial_send(Port, Chunk) ->
+    Port ! {self(), {command, <<?SER_SEND:8, Chunk/binary>>}}.
