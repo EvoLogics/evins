@@ -175,7 +175,11 @@ cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
   case MM#mm.iface of
     {socket,_,_,_} when Socket /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
+    {udp,_,_,_} when Socket /= nothing ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
     {port,_,_} when Port /= nothing ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
+    {serial,_,_,_,_,_,_} when Port /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
     _ ->
       nothing
