@@ -31,7 +31,7 @@ void cbuf_norm(cbuf_t *cbuf);
 int main(void) {
     erl_chunk_t erl_inp = { 0xFF, 0, CHDR, {0} };
     cbuf_t erl_outp, rs_outp;
-    uint8_t rs_inp[256];
+    uint8_t rs_inp[254];
     context_t *ctx[3];
     portconf_t portconf = {
         .path = "",
