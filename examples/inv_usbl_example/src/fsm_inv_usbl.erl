@@ -136,8 +136,17 @@ find_spec_timeouts(SM, Spec) ->
   lists:map(fun({V, _}) -> V end, R).
 
 
-smod(X, M) -> X - round(X/M)*M.
-%wrap_pi(A) -> smod(A, 2*math:pi()).
+floor(X) when X < 0 ->
+    T = trunc(X),
+    case X - T == 0 of
+        true -> T;
+        false -> T - 1
+    end;
+floor(X) ->
+    trunc(X).
+
+smod(X, M)  -> X - floor(X / M + 0.5) * M.
+%wrap_pi(A) -> smod(A, -2*math:pi()).
 wrap_2pi(A) -> smod(A - math:pi(), 2*math:pi()) + math:pi().
 
 rad2deg(Angle) -> wrap_2pi(Angle) * 180 / math:pi().
