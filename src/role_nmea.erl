@@ -107,6 +107,7 @@ split(L, Cfg) ->
                 <<"XDR">>    -> [extract_xdr(Params)    | split(Rest, Cfg)];
                 <<"VTG">>    -> [extract_vtg(Params)    | split(Rest, Cfg)];
                 <<"TNTHPR">> -> [extract_tnthpr(Params) | split(Rest, Cfg)];
+                <<"SMCS">>   -> [extract_smcs(Params)   | split(Rest, Cfg)];
                 <<"DBS">>    -> [extract_dbs(Params)    | split(Rest, Cfg)];
                 <<"DBT">>    -> [extract_dbt(Params)    | split(Rest, Cfg)];
                 <<"EVO">>    -> [extract_evo(Params)    | split(Rest, Cfg)];
@@ -764,6 +765,15 @@ extract_tnthpr(Params) ->
     error:_ -> {error, {parseError, tnthpr, Params}}
   end.      
 
+extract_smcs(Params) ->
+  try
+    [BPitch,BRoll,BHeave] = re:split(Params, ","),
+    [Roll, Pitch, Heave] = [ safe_binary_to_float(X) || X <- [BRoll,BPitch,BHeave]],
+    {nmea, {smcs, Roll, Pitch, Heave}}
+  catch
+    error:_ -> {error, {parseError, tnthpr, Params}}
+  end.
+
 %% $--DBS,<Df>,f,<DM>,M,<DF>,F
 %% Depth below surface (pressure sensor)
 %% Df x.x Depth in feets  
@@ -1111,6 +1121,11 @@ build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus) ->
            safe_fmt(["~.1.0f","~s","~.1.0f","~s","~.1.0f","~s"],
                     [Heading,HStatus,Pitch,PStatus,Roll,RStatus], ",")]).
 
+build_smcs(Roll,Pitch,Heave) ->
+  flatten(["PSMCS",
+           safe_fmt(["~.1.0f","~.1.0f","~.1.0f"],
+                    [Roll,Pitch,Heave], ",")]).
+
 build_dbs(Depth) ->
   Fmts = ["~.2.0f","~.2.0f","~.2.0f"],
   Fields = safe_fmt(Fmts, case Depth of
@@ -1179,6 +1194,8 @@ from_term_helper(Sentense) ->
       build_vtg(TMGT,TMGM,Knots);
     {tnthpr, Heading, HStatus, Pitch, PStatus, Roll, RStatus} ->
       build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus);
+    {smcs, Roll, Pitch, Heave} ->
+      build_smcs(Roll, Pitch, Heave);
     {dbs,Depth} ->
       build_dbs(Depth);
     {dbt,Depth} ->
