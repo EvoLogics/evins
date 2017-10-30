@@ -12,3 +12,5 @@
  - NL,get,polling command to polling protocol
  - NL,set,polling,empty resets polling sequence
  - NL,get,polling/NL,polling,status,Status command and report to polling protocol
+ - log_output parameter in sys config
+ - install target to Makefile, install to $EVINS_DIR
