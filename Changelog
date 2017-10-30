@@ -3,6 +3,7 @@
 ## [Unrelased]
 
 ### Fixed
+ - removed init:stop() from fsm_t_lohi
 
 ### Changed
  - starting to maintain Changelog

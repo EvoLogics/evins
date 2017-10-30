@@ -266,7 +266,6 @@ handle_transmit_data(_MM, SM, Term) ->
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
-  init:stop(),
   exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
