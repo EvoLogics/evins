@@ -262,7 +262,7 @@ handle_event(MM, SM, Term) ->
            %% Waiting_sync == false ->
       fsm:cast(SM, nl_impl, {send, Term});
     UUg ->
-      ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
+      ?ERROR(?ID, "~s: unhandled event:~p from ~p~n", [?MODULE, UUg, MM#mm.role]),
       SM
   end.
 

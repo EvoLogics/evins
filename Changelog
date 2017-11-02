@@ -10,7 +10,7 @@
 
 ### Changed
  - starting to maintain Changelog
- - WIP: factoring to exclude role_alh
+ - WIP: refactoring to exclude role_alh
  
 ### Added
  - added role_at_impl to mirror implementation side AT interface (supports only NET mode)

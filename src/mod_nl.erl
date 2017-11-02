@@ -107,7 +107,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
     Roles = fsm_worker:role_info(Role_IDs, [at, nl, nl_impl]),
     {ok, Ref} = dets:open_file(DetsName,[]),
-    [#sm{roles = Roles, dets_share = Ref, module = SMN}]
+    [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
 %%-------------------------------------- Parse config file ---------------------------------
 parse_conf(Mod_ID, ArgS, Share) ->
@@ -153,8 +153,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
 
   ShareID = #sm{share = Share},
-  share:put(ShareID, [{pid, 0}, % TODO: maybe we should use this PID (outgo intreface)
-                      {nl_protocol, NL_Protocol},
+  share:put(ShareID, [{nl_protocol, NL_Protocol},
                       {routing_table, Routing_table},
                       {local_address, Addr},
                       {max_address, Max_address},

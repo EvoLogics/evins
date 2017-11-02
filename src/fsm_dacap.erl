@@ -186,30 +186,30 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
-    {rcv_ul, {other, Msg}} ->
-      fsm:send_at_command(SM, {at, binary_to_list(Msg), ""});
-    {rcv_ul, {command,<<"Z1,">>}} ->
+    {at, "Z", "1"} ->
       fsm:send_at_command(SM, {at, "Z1", ""}),
       fsm:clear_timeouts(SM#sm{state = idle});
-    {rcv_ul, {command, C}} ->
-      fsm:send_at_command(SM, {at, binary_to_list(C), ""});
-    {rcv_ul, {at, _, _, _, _}} ->
-      fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
+    {at, "C", ""} ->
+      fsm:send_at_command(SM, {at, "C", ""});
+    {at, Cmd, Param} ->
+      fsm:send_at_command(SM, {at, Cmd, Param});
+    {at, _, _, _, _} ->
+      fsm:cast(SM, at_impl, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
-    {rcv_ul, T = {at, _PID, _, IDst, _, _}} when State =:= idle ->
+    {at, _PID, _, IDst, _, _} when State =:= idle ->
       share:put(SM, rts_cts_time_total, {0, 0}),
       if IDst =:= 255 ->
-        fsm:send_at_command(SM, T);
+        fsm:send_at_command(SM, Term);
       true ->
-        share:put(SM, current_pkg, T),
-        fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, T})
+        share:put(SM, current_pkg, Term),
+        fsm:run_event(MM, SM#sm{event = send_rts}, {send_rts, IDst, Term})
       end;
-    {rcv_ul, _} ->
-      fsm:cast(SM, alh,  {send, {sync, "OK"} }),
+    _ when MM#mm.role == at ->
+      fsm:cast(SM, at_impl,  {send, {sync, "OK"} }),
       SM;
-    T = {async, PID, Tuple} ->
+    {async, PID, Tuple} ->
       %% recv, recvim
-      [SMN, ParsedRecv] = parse_ll_msg(SM, T),
+      [SMN, ParsedRecv] = parse_ll_msg(SM, Term),
       case ParsedRecv of
         {_BPID, Flag, RTuple} ->
           [SM1, Param] = process_rcv_flag(SMN, PID, Flag, Tuple, RTuple),
@@ -218,11 +218,11 @@ handle_event(MM, SM, Term) ->
           SMN
       end;
     {async, Tuple} ->
-      fsm:cast(SM, alh, {send, {async, Tuple} }),
+      fsm:cast(SM, at_impl, {send, {async, Tuple} }),
       process_tmstmp(SM, Tuple);
     {sync, Req, Answer} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
-      fsm:cast(SMAT, alh, {send, {sync, Answer} }),
+      fsm:cast(SMAT, at_impl, {send, {sync, Answer} }),
       [Param_Term, SM1] = nl_mac_hf:event_params(SMAT, Term, rcv_rts_fm),
       [SM2, Param] = process_sync(SM1, Req, Answer, Param_Term),
       fsm:run_event(MM, SM2, Param);
@@ -479,7 +479,7 @@ process_rcv_flag(SM, PID, Flag, Tuple, RTuple) ->
   case Tuple of
     {recvim, _, _, _, _, _, _, _, _, _} ->
       RcvPid = [BPid | tuple_to_list(RTuple) ],
-      fsm:cast(SM, alh, {send, {async, list_to_tuple([H | RcvPid] )} });
+      fsm:cast(SM, at_impl, {send, {async, list_to_tuple([H | RcvPid] )} });
     {recvims, _, _, _, _, _, _, _, _, _} -> nothing
   end,
   Tmo_defer_trans = fsm:check_timeout(SM, tmo_defer_trans),

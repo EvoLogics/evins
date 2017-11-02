@@ -141,7 +141,7 @@ handle_event(MM, SM, Term) ->
   Local_address = share:get(SM, local_address),
   NProtocol = share:get(SM, nlp),
   Protocol  = share:get(SM, {protocol_config, NProtocol}),
-
+  Pid = share:get(SM, pid),
   case Term of
     {timeout, Event} ->
       ?INFO(?ID, "timeout ~140p~n", [Event]),
@@ -207,19 +207,22 @@ handle_event(MM, SM, Term) ->
         _ ->
           fsm:run_event(MM, SM#sm{event=Event}, {})
       end;
-    {connected} when MM#mm.role == at ->
-      fsm:cast(SM, at, {ctrl, {allow, self()}}),
-      fsm:cast(SM, at, {ctrl, {filter, net}}),
-      fsm:cast(SM, at, {ctrl, {waitsync, no}}),
-      fsm:cast(SM, at, {ctrl, {ext_networking, yes}});
-    %% pid ? 
-    {disconnected, _} when MM#mm.role == at ->
-      fsm:cast(SM, at, {ctrl, {waitsync, no}});
+    %% {connected} when MM#mm.role == at ->
+    %%   fsm:cast(SM, at, {ctrl, {allow, self()}}),
+    %%   fsm:cast(SM, at, {ctrl, {filter, net}}),
+    %%   fsm:cast(SM, at, {ctrl, {waitsync, no}}),
+    %%   fsm:cast(SM, at, {ctrl, {ext_networking, yes}});
+    %% %% pid ? 
+    %% {disconnected, _} when MM#mm.role == at ->
+    %%   fsm:cast(SM, at, {ctrl, {waitsync, no}});
+    {allowed} when MM#mm.role == at ->
+      NPid = share:get(SM, {pid, MM}),
+      ?INFO(?ID, ">>>>>> Pid: ~p~n", [NPid]),
+      share:put(SM, pid, NPid),
+      SM;
     {connected} ->
-      ?INFO(?ID, "connected ~n", []),
       SM;
     {disconnected, _} ->
-      ?INFO(?ID, "disconnected ~n", []),
       SM;
     {sync, _, _} ->
       %% case NLMsg = share:get(SM, last_nl_sent) of
@@ -249,7 +252,8 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, delivered, 0, Local_address, BDst}});
     {async, {failed, mac, BDst}} ->
       fsm:cast(SM, nl_impl, {send, {nl, failed, 0, Local_address, BDst}});
-    {async, Tuple} ->
+    {async, {pid, Pid}, Tuple} ->
+      ?INFO(?ID, "My message: ~p~n", [Tuple]),
       [SMN, NT] = parse_ll_msg(SM, {async, Tuple}),
       case NT of
         nothing ->
@@ -292,7 +296,6 @@ handle_event(MM, SM, Term) ->
           SMN
         end;
     {async, {pid, _}, Tuple} ->
-      %% if pid is defined - overheard message
       ?INFO(?ID, "Overheard message: ~p~n", [Tuple]),
       {Src, Rssi, Integrity} =
         case Tuple of
