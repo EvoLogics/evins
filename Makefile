@@ -16,6 +16,8 @@ APP_VERSION = $(shell cat $(RELX_OUTPUT_DIR)/$(RELX_REL_NAME)/version)
 AR_NAME = $(RELX_OUTPUT_DIR)/$(RELX_REL_NAME)/$(RELX_REL_NAME)-$(APP_VERSION).tar.gz
 EVINS_DIR ?= /opt/evins
 
-install:
+.PHONY: install
+
+install:: all
 	@mkdir -p $(EVINS_DIR)
 	@tar -xzf $(AR_NAME) -C $(EVINS_DIR)
