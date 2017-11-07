@@ -127,7 +127,7 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       Yn = YO + R * math:sin(Phy1),
       Zn = ZO,
       broadcast_position(SM, [Xn,Yn,Zn]),
-      share:put(SM, circle, {circle, C, R, V, Tau, Phy1}),
+      share:put(SM, movement, {circle, C, R, V, Tau, Phy1}),
       fsm:set_event(SM, eps);
     brownian ->
       {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, X, Y, Z} = share:get(SM, movement),
@@ -135,7 +135,7 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       Yn = geometry:brownian_walk(YMin, YMax, Y),
       Zn = geometry:brownian_walk(ZMin, ZMax, Z),
       broadcast_position(SM, [Xn,Yn,Zn]),
-      share:put(SM, brownian, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xn, Yn, Zn}),
+      share:put(SM, movement, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xn, Yn, Zn}),
       fsm:set_event(SM, eps);
     rocking ->
       {ahrs, [Yaw, Pitch, Roll]} = share:get(SM, ahrs),
