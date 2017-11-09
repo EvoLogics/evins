@@ -27,6 +27,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 -module(fsm_move).
 -behaviour(fsm).
+-compile({parse_transform, pipeline}).
 
 -include("fsm.hrl").
 
@@ -139,7 +140,9 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       fsm:set_event(SM, eps);
     rocking ->
       {ahrs, [Yaw, Pitch, Roll]} = share:get(SM, ahrs),
-      fsm:broadcast(fsm:set_event(SM, eps), nmea, {send, {nmea, {tnthpr,Yaw,"N",Pitch,"N",Roll,"N"}}});
+      [fsm:broadcast(fsm:set_event(__, eps), nmea, {send, {nmea, {tnthpr,Yaw,"N",Pitch,"N",Roll,"N"}}}),
+       fsm:broadcast(fsm:set_event(__, eps), nmea, {send, {nmea, {smcs,Roll,Pitch,0.0}}}),
+       fsm:broadcast(fsm:set_event(__, eps), nmea, {send, {nmea, {hdt,Yaw}}})](SM);
     {nmea, _} ->
       SM;
     _ ->
