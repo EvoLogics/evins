@@ -109,6 +109,12 @@ split(L, Cfg) ->
                 <<"TNTHPR">> -> [extract_tnthpr(Params) | split(Rest, Cfg)];
                 <<"SMCS">>   -> [extract_smcs(Params)   | split(Rest, Cfg)];
                 <<"DBS">>    -> [extract_dbs(Params)    | split(Rest, Cfg)];
+                <<"SXN">>    -> [extract_sxn(Params)    | split(Rest, Cfg)];
+                <<"SAT">>    -> [extract_sat(Params)    | split(Rest, Cfg)];
+                %<<"IXSE">>   -> [extract_ixse(Params)   | split(Rest, Cfg)];
+                %<<"HOCT">>   -> [extract_hoct(Params)   | split(Rest, Cfg)];
+                %<<"ASHR">>   -> [extract_ashr(Params)   | split(Rest, Cfg)];
+                %<<"RDID">>   -> [extract_rdid(Params)   | split(Rest, Cfg)];
                 <<"DBT">>    -> [extract_dbt(Params)    | split(Rest, Cfg)];
                 <<"EVO">>    -> [extract_evo(Params)    | split(Rest, Cfg)];
                 <<"EVOTAP">> -> [extract_evotap(Params) | split(Rest, Cfg)];
@@ -307,6 +313,46 @@ extract_simsvt(Params) ->
     {nmea, {simsvt, Total, Idx, Lst}}
   catch
     error:_ -> {error, {parseError, simsvt, Params}}
+  end.
+
+%% $PSXN,23,Roll,Pitch,Heading,Heave
+%% 23      x         Message type (Roll, Pitch, Heading and Heave)
+%% Roll    x.x       Roll in degrees. Positive with port side up.
+%% Pitch   x.x       Pitch in degrees. Positive is bow up. (NED)
+%% Heading x.x       Heading in degrees true.
+%% Heave   x.x       Heave in meters. Positive is down.
+%% Example: $PSXN,23,0.02,-0.76,330.56,*0B
+extract_sxn(Params) ->
+  try
+    [Type | Rest] = lists:sublist(re:split(Params, ","),5),
+    case Type of
+      <<"23">> ->
+        [Roll, Pitch, Heading, Heave] = [safe_binary_to_float(X) || X <- Rest],
+        {nmea, {sxn, 23, Roll, Pitch, Heading, Heave}};
+      _ -> {error, {parseError, sxn_23, Params}}
+    end
+  catch error:_ -> {error, {parseError, sxn_23, Params}}
+  end.
+
+%% $PSAT,HPR,TIME,HEADING,PITCH,ROLL,TYPE*CC<CR><LF>
+%% UTC     hhmmss.ss UTC of position
+%% Heading x.x       Heading in degrees true.
+%% Pitch   x.x       Pitch in degrees. Positive is bow up. (NED)
+%% Roll    x.x       Roll in degrees. Positive with port side up.
+%% Type    a_        Type N=gps or G=Gyro.
+extract_sat(Params) ->
+  try
+    [Type | Rest] = lists:sublist(re:split(Params, ","),6),
+    case Type of
+      <<"HPR">> ->
+        [BUTC,BHeading,BPitch,BRoll,BType] = Rest,
+        [Roll,Pitch,Heading] = [safe_binary_to_float(X) || X <- [BRoll,BPitch,BHeading]],
+        UTC = extract_utc(BUTC),
+        MType = case BType of <<"N">> -> gps; <<"G">> -> gyro; _ -> unknown end,
+        {nmea, {sat, hpr, UTC, Heading, Pitch, Roll, MType}};
+      _ -> {error, {parseError, sat_hpr, Params}}
+    end
+  catch error:_ -> {error, {parseError, sat_hpr, Params}}
   end.
 
 %% $PEVO,Request
@@ -914,6 +960,20 @@ build_simsvt(Total, Idx, Lst) ->
   SHead = io_lib:format(",~B,~B", [Total, Idx]),
   flatten(["PSIMSVT,P",SHead,SPoints,STail]).
 
+%% Example: $PSXN,23,0.02,-0.76,330.56,*0B
+build_sxn(23,Roll,Pitch,Heading,Heave) ->
+  SRest = safe_fmt(["~.2f","~.2f","~.2f","~.2f"],
+                   [Roll,Pitch,Heading,Heave], ","),
+  flatten(["PSXN,23",SRest]).
+
+%% $PSAT,HPR,TIME,HEADING,PITCH,ROLL,TYPE*CC<CR><LF>
+build_sat(hpr,UTC,Heading,Pitch,Roll,Type) ->
+  SUTC = utc_format(UTC),
+  SHPR = safe_fmt(["~.2f","~.2f","~.2f"], [Heading,Pitch,Roll], ","),
+  SType = case Type of gps -> ",N"; gyro -> ",G"; _ -> "," end,
+  % почему не ставится запятая перед SType? почему она ставится перед SUTC и SHPR?
+  flatten(["PSAT,HPR",SUTC,SHPR,SType]).
+
 build_evo(Request) ->
   "PEVO," ++ Request.
 
@@ -1196,6 +1256,10 @@ from_term_helper(Sentense) ->
       build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus);
     {smcs, Roll, Pitch, Heave} ->
       build_smcs(Roll, Pitch, Heave);
+    {sxn,23,Roll,Pitch,Heading,Heave} ->
+      build_sxn(23,Roll,Pitch,Heading,Heave);
+    {sat,hpr,UTC,Heading,Pitch,Roll,Type} ->
+      build_sat(hpr,UTC,Heading,Pitch,Roll,Type);
     {dbs,Depth} ->
       build_dbs(Depth);
     {dbt,Depth} ->
