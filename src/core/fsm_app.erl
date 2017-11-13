@@ -31,8 +31,13 @@
 -export([start/2, stop/1]).
 
 start(_Type, _Args) ->
-  %evins:rb(start),
-  %evins:logon(),
+  case maybe_config(log_output) of
+    on ->
+      evins:rb(start),
+      evins:logon();
+    _ ->
+      nothing
+  end,
   case error_logger:delete_report_handler(log_mf_h) of
     {_,Dir,MaxB,MaxF,_,_,_,_,Fun} ->
       error_logger:add_report_handler(fsm_log_mf_h,fsm_log_mf_h:init(Dir,MaxB,MaxF,Fun));

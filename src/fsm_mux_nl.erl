@@ -166,6 +166,8 @@ handle_event(MM, SM, Term) ->
       Routing_table = lists:map(fun( {A, _I, _R, _T} ) -> {A, A} end, NL),
       Tuple = {nl, routing, Routing_table},
       fsm:cast(SM, nl_impl, {send, Tuple});
+    {nl, get, neighbours} when State =/= discovery ->
+      get_neighbours(SM);
     {nl, get, neighbours} ->
       Tuple = {nl, neighbours, share:get(SM, nothing, neighbours, empty)},
       fsm:cast(SM, nl_impl, {send, Tuple});
@@ -197,7 +199,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, routing, _} when MM#mm.role == nl_impl ->
       fsm:cast(SM, nl_impl, {send, Term});
-    {nl, neighbours, NL} when is_list(NL), MM#mm.role == nl ->
+    {nl, neighbours, NL} when State == discovery, is_list(NL), MM#mm.role == nl ->
       %% set protocol static
       %% set routing
       set_routing(SM, NL);
@@ -260,7 +262,7 @@ handle_event(MM, SM, Term) ->
            %% Waiting_sync == false ->
       fsm:cast(SM, nl_impl, {send, Term});
     UUg ->
-      ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
+      ?ERROR(?ID, "~s: unhandled event:~p from ~p~n", [?MODULE, UUg, MM#mm.role]),
       SM
   end.
 

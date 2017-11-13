@@ -151,7 +151,7 @@ handle_event(MM, SM, Term) ->
   ?TRACE(?ID, "~p~n", [Term]),
   case Term of
     {timeout, answer_timeout} ->
-      fsm:cast(SM, alh, {send, {sync, {error, <<"ANSWER TIMEOUT">>} } }),
+      fsm:cast(SM, at_impl, {send, {sync, {error, <<"ANSWER TIMEOUT">>} } }),
       SM;
     {timeout, {retransmit, Msg}} ->
       ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
@@ -162,16 +162,16 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       ?INFO(?ID, "connected ~n", []),
       SM;
-    {rcv_ul, {command,<<"Z1,">>}} ->
+    {at, "Z", "1"} ->
       fsm:send_at_command(SM, {at, "Z1", ""}),
       fsm:clear_timeouts(SM#sm{state = idle});
-    {rcv_ul, {at, _, _, _, _}} ->
-      fsm:cast(SM, alh, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
+    {at, _, _, _, _} ->
+      fsm:cast(SM, at_impl, {send, {sync, {error, <<"WRONG FORMAT">>} } }),
       SM;
-    {rcv_ul, Msg = {at, _PID, _, _, _, _}} ->
-      share:put(SM, current_msg, Msg),
-      SM1 = nl_mac_hf:process_send_payload(SM, Msg),
-      fsm:run_event(MM, SM1#sm{event = rcv_ul}, {rcv_ul, Msg});
+    {at, _PID, _, _, _, _} ->
+      share:put(SM, current_msg, Term),
+      SM1 = nl_mac_hf:process_send_payload(SM, Term),
+      fsm:run_event(MM, SM1#sm{event = rcv_ul}, {rcv_ul, Term});
       %StoredRetransmit = nl_mac_hf:get_params_spec_timeout(SM1, retransmit),
       %if StoredRetransmit == [] ->
       %    SM1;
@@ -189,13 +189,13 @@ handle_event(MM, SM, Term) ->
       case ParsedRecv of
         {_, _, STuple} ->
           SMsg = list_to_tuple([H | [BPid | tuple_to_list(STuple) ]]),
-          fsm:cast(SMN, alh, {send, {async, SMsg} }),
+          fsm:cast(SMN, at_impl, {send, {async, SMsg} }),
           fsm:run_event(MM, SMN, {});
         _ ->
           SMN
       end;
     {async, Tuple} ->
-      fsm:cast(SM, alh, {send, {async, Tuple} }),
+      fsm:cast(SM, at_impl, {send, {async, Tuple} }),
       Ev = process_async(SM, Tuple),
       fsm:run_event(MM, SM#sm{event = Ev}, {});
     {sync, _, {error, _}} ->
@@ -205,7 +205,7 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event = busy}, {rcv_ul, Current_msg});
     {sync, _Req, Answer} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
-      fsm:cast(SMAT, alh, {send, {sync, Answer} });
+      fsm:cast(SMAT, at_impl, {send, {sync, Answer} });
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -228,7 +228,7 @@ handle_sp(_MM, SM, Term) ->
       Backoff_tmp = change_backoff(SM, increment),
       fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
     {rcv_ul, _Msg} when Backoff_timeout =:= true ->
-      fsm:cast(SM, alh,  {send, {sync, "OK"} }),
+      fsm:cast(SM, at_impl,  {send, {sync, "OK"} }),
       SM#sm{event = eps};
     _ when SM#sm.event =:= backoff_timeout ->
       Backoff_tmp = change_backoff(SM, increment),

@@ -125,6 +125,7 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts
 
 cast_connected(#ifstate{fsm_pids = FSMs} = State) ->
   lists:map(fun(FSM) -> cast_connected(FSM, State) end, FSMs),
+  lists:map(fun(FSM) -> maybe_cast_allowed(FSM, State) end, FSMs),
   State.
 
 cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
@@ -136,6 +137,19 @@ cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
     _ ->
       nothing
   end,
+  maybe_cast_allowed(FSM, State).
+
+maybe_cast_allowed(FSM, #ifstate{mm = MM, cfg = #{allow := Allow}} = State) ->
+  case Allow of
+    all ->
+      gen_server:cast(FSM, {chan, MM, {allowed}});
+    FSM ->
+      gen_server:cast(FSM, {chan, MM, {allowed}});
+    _ ->
+      nothing
+  end,
+  State;
+maybe_cast_allowed(_, State) ->
   State.
 
 connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) ->

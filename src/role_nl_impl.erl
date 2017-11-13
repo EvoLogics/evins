@@ -119,7 +119,10 @@ nl_extract_subject(<<"set">>, <<"neighbours,", Params/binary>>) ->
       [4] -> [list_to_tuple([binary_to_integer(I) || I <- Item]) || Item <- Lst]
     end,
   {nl, set, neighbours, Neighbours};
-%% NL,set,polling,seq,[Addr1,...,AddrN]
+%% NL,set,polling,[Addr1,...,AddrN]
+%% NL,set,polling,empty
+nl_extract_subject(<<"set">>, <<"polling,empty">>) ->
+  {nl, set, polling, []};
 nl_extract_subject(<<"set">>, <<"polling,", Params/binary>>) ->
   Seq = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>,[global])],
   {nl, set, polling, Seq};
@@ -160,6 +163,8 @@ from_term({nl, routing, Routing}, Cfg) when is_list(Routing) ->
               end, Routing),
   [list_to_binary(["NL,routing,",lists:join(",",RoutingLst),Cfg#config.eol]), Cfg];
 %% NL,neighbours,A1,...<AN>
+from_term({nl, neighbours, []}, Cfg) ->
+  [list_to_binary(["NL,neighbours,empty", Cfg#config.eol]), Cfg];
 from_term({nl, neighbours, [H|_] = Neighbours}, Cfg) when is_number(H) ->
   NeighboursLst = [integer_to_list(A) || A <- Neighbours],
   [list_to_binary(["NL,neighbours,",lists:join(",",NeighboursLst),Cfg#config.eol]), Cfg];
@@ -233,6 +238,8 @@ from_term({nl,statistics,data,Data}, Cfg) ->
 from_term({nl,protocols,Protocols}, Cfg) ->
   [list_to_binary(["NL,protocols,",lists:join(",", [atom_to_binary(P,utf8) || P <- Protocols]),Cfg#config.eol]), Cfg];
 %% NL,polling,Addr,...,AddrN
+from_term({nl,polling,[]}, Cfg) ->
+  [list_to_binary(["NL,polling,empty", Cfg#config.eol]), Cfg];
 from_term({nl,polling,Sequence}, Cfg) when is_list(Sequence) ->
   [list_to_binary(["NL,polling,",lists:join(",", [integer_to_binary(P) || P <- Sequence]),Cfg#config.eol]), Cfg];
 

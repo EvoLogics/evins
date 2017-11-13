@@ -38,7 +38,7 @@
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-  _ = {ok, busy, error, failed, delivered, send, recv}, %% atom vocabular
+  _ = {ok, busy, error, failed, delivered, send, recv, empty}, %% atom vocabular
   _ = {staticr, staticrack, sncfloodr, sncfloodrack, dpfloodr, dpfloodrack, icrpr, sncfloodpfr, sncfloodpfrack, evoicrppfr, evoicrppfrack, dblfloodpfr, dblfloodpfrack, laorp},
   _ = {time, period},
   _ = {source, relay},
@@ -185,12 +185,17 @@ nl_extract_subject(<<"discovery">>, <<"busy">>) ->
 nl_extract_subject(<<"discovery">>, Params) ->
   [Period, Time] = [binary_to_integer(V) || V <- binary:split(Params, <<$,>>)],
   {nl, discovery, Period, Time};
-%% NL,polling,ok
-%% NL,polling,error
-nl_extract_subject(<<"polling">>, Params) when Params == <<"ok">>; Params == <<"error">> ->
-  {nl, polling, binary_to_existing_atom(Params, utf8)};
+%% NL,polling,[ok|error|empty|Seq]
 nl_extract_subject(<<"polling">>, Params) ->
-  {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]};
+  [H|T] = re:split(Params,",",[{parts,2}]),
+  case H of
+    <<I:8,_/binary>> when I >= $0, I =< $9 ->
+      {nl, polling, [binary_to_integer(P) || P <- binary:split(Params, <<$,>>, [global])]};
+    <<"status">> ->
+      {nl, polling, status, binary_to_existing_atom(hd(T), utf8)};
+    _ ->
+      {nl, polling, binary_to_existing_atom(Params, utf8)}
+  end;
 %% NL,delivered,PC,Src,Dst
 nl_extract_subject(<<"delivered">>, Params) ->
   [PC, Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
@@ -323,7 +328,10 @@ from_term({nl,set,neighbours,Neighbours}, Cfg) ->
                   lists:flatten(io_lib:format("~B:~B:~B:~B",tuple_to_list(T)))
               end, Neighbours),
   [list_to_binary(["NL,set,neighbours,",lists:join(",",NeighboursLst),Cfg#config.eol]), Cfg];
-%% NL,set,polling,seq,[Addr1,...,AddrN]
+%% NL,set,polling,[Addr1,...,AddrN]
+%% NL,set,polling,empty
+from_term({nl,set,polling,[]}, Cfg) ->
+  [list_to_binary(["NL,set,polling,empty",Cfg#config.eol]), Cfg];
 from_term({nl,set,polling,Seq}, Cfg) ->
   SeqLst = [integer_to_list(A) || A <- Seq],
   [list_to_binary(["NL,set,polling,",lists:join(",",SeqLst),Cfg#config.eol]), Cfg];
