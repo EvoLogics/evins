@@ -237,7 +237,6 @@ handle_event(MM, SM, Term) ->
       [H |_] = tuple_to_list(Tuple),
       %% BPid = <<"p", (integer_to_binary(NPid))/binary>>,
       [SMN, ParsedRecv] = parse_ll_msg(SM, Term),
-
       case ParsedRecv of
         {_BPid, Flag, STuple} ->
           %% SMsg = list_to_tuple([H | [BPid | tuple_to_list(STuple) ]]),

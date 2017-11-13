@@ -207,14 +207,6 @@ handle_event(MM, SM, Term) ->
         _ ->
           fsm:run_event(MM, SM#sm{event=Event}, {})
       end;
-    %% {connected} when MM#mm.role == at ->
-    %%   fsm:cast(SM, at, {ctrl, {allow, self()}}),
-    %%   fsm:cast(SM, at, {ctrl, {filter, net}}),
-    %%   fsm:cast(SM, at, {ctrl, {waitsync, no}}),
-    %%   fsm:cast(SM, at, {ctrl, {ext_networking, yes}});
-    %% %% pid ? 
-    %% {disconnected, _} when MM#mm.role == at ->
-    %%   fsm:cast(SM, at, {ctrl, {waitsync, no}});
     {allowed} when MM#mm.role == at ->
       NPid = share:get(SM, {pid, MM}),
       ?INFO(?ID, ">>>>>> Pid: ~p~n", [NPid]),
@@ -223,6 +215,7 @@ handle_event(MM, SM, Term) ->
     {connected} ->
       SM;
     {disconnected, _} ->
+      ?INFO(?ID, "disconnected ~n", []),
       SM;
     {sync, _, _} ->
       %% case NLMsg = share:get(SM, last_nl_sent) of
