@@ -114,7 +114,7 @@ split(L, Cfg) ->
                 <<"IXSE">>   -> [extract_ixse(Params)   | split(Rest, Cfg)];
                 %<<"HOCT">>   -> [extract_hoct(Params)   | split(Rest, Cfg)];
                 <<"ASHR">>   -> [extract_ashr(Params)   | split(Rest, Cfg)];
-                %<<"RDID">>   -> [extract_rdid(Params)   | split(Rest, Cfg)];
+                <<"RDID">>   -> [extract_rdid(Params)   | split(Rest, Cfg)];
                 <<"DBT">>    -> [extract_dbt(Params)    | split(Rest, Cfg)];
                 <<"EVO">>    -> [extract_evo(Params)    | split(Rest, Cfg)];
                 <<"EVOTAP">> -> [extract_evotap(Params) | split(Rest, Cfg)];
@@ -411,6 +411,17 @@ extract_ashr(Params) ->
     {nmea, {ashr,UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq}}
   catch
     error:_ -> {error, {parseError, ashr, Params}}
+  end.
+
+%% $PRDID,PPP.PP,RRR.RR,xxx.xx
+%% PPP.PP  x.x       Pitch in degrees
+%% RRR.RR  x.x       Roll in degrees
+%% xxx.xx  x.x       Heading in degrees true.
+extract_rdid(Params) ->
+  try
+    [Pitch,Roll,Heading] = [safe_binary_to_float(X) || X <- lists:sublist(re:split(Params, ","),3)],
+    {nmea, {rdid, Pitch, Roll, Heading}}
+  catch error:_ -> {error, {parseError, rdid, Params}}
   end.
 
 %% $PEVO,Request
@@ -1054,6 +1065,11 @@ build_ashr(UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq
   SRest = safe_fmt([RollFmt,PitchFmt,HeadingFmt,"~.3f","~.3f","~.3f","~B","~B"], [Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq], ","),
   flatten(["PASHR",SUTC,SHeading,STrue,SRest]).
 
+%% $PRDID,PPP.PP,RRR.RR,xxx.xx
+build_rdid(Pitch,Roll,Heading) ->
+  SPRH = safe_fmt(["~.2f","~.2f","~.2f"], [Pitch,Roll,Heading], ","),
+  flatten(["PRDID",SPRH]).
+
 build_evo(Request) ->
   "PEVO," ++ Request.
 
@@ -1350,6 +1366,8 @@ from_term_helper(Sentense) ->
       build_ixse(positi,Lat,Lon,Alt);
     {ashr,UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq} ->
       build_ashr(UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq);
+    {rdid, Pitch, Roll, Heading} ->
+      build_rdid(Pitch,Roll,Heading);
     _ -> ""
   end.
 
