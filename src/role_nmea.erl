@@ -111,7 +111,7 @@ split(L, Cfg) ->
                 <<"DBS">>    -> [extract_dbs(Params)    | split(Rest, Cfg)];
                 <<"SXN">>    -> [extract_sxn(Params)    | split(Rest, Cfg)];
                 <<"SAT">>    -> [extract_sat(Params)    | split(Rest, Cfg)];
-                %<<"IXSE">>   -> [extract_ixse(Params)   | split(Rest, Cfg)];
+                <<"IXSE">>   -> [extract_ixse(Params)   | split(Rest, Cfg)];
                 %<<"HOCT">>   -> [extract_hoct(Params)   | split(Rest, Cfg)];
                 %<<"ASHR">>   -> [extract_ashr(Params)   | split(Rest, Cfg)];
                 %<<"RDID">>   -> [extract_rdid(Params)   | split(Rest, Cfg)];
@@ -353,6 +353,37 @@ extract_sat(Params) ->
       _ -> {error, {parseError, sat_hpr, Params}}
     end
   catch error:_ -> {error, {parseError, sat_hpr, Params}}
+  end.
+
+%% format desc from:
+%%      https://github.com/rock-drivers/drivers-phins_ixsea/blob/master/src/PhinsStandardParser.cpp
+%%
+%% $PIXSE,ATITUD,Roll,Pitch
+%% Roll     x.x     Roll in degrees
+%% Pitch    x.x     Pitch in degrees
+%%
+%% $PIXSE,POSITI,Lat,Lon,Alt*71
+%% Lat     x.x     Latitude in degrees
+%% Lon     x.x     Longitude in degrees
+%% Alt     x.x     Altitude in meters
+%%
+%% $PIXSE,ATITUD,-1.641,-0.490*6D
+%% $PIXSE,POSITI,53.10245714,8.83994382,-0.115*71
+extract_ixse(Params) ->
+  try
+    [Type | Rest] = lists:sublist(re:split(Params, ","),4),
+    case Type of
+      <<"ATITUD">> ->
+        [BRoll,BPitch] = Rest,
+        [Roll,Pitch] = [safe_binary_to_float(X) || X <- [BRoll,BPitch]],
+        {nmea, {ixse, atitud, Roll, Pitch}};
+      <<"POSITI">> ->
+        [BLat,BLon,BAlt] = Rest,
+        [Lat,Lon,Alt] = [safe_binary_to_float(X) || X <- [BLat,BLon,BAlt]],
+        {nmea, {ixse, positi, Lat, Lon, Alt}};
+      _ -> {error, {parseError, ixse, Params}}
+    end
+  catch error:_ -> {error, {parseError, ixse, Params}}
   end.
 
 %% $PEVO,Request
@@ -974,6 +1005,16 @@ build_sat(hpr,UTC,Heading,Pitch,Roll,Type) ->
   % почему не ставится запятая перед SType? почему она ставится перед SUTC и SHPR?
   flatten(["PSAT,HPR",SUTC,SHPR,SType]).
 
+%% $PIXSE,ATITUD,-1.641,-0.490*6D
+build_ixse(atitud,Roll,Pitch) ->
+  SPR = safe_fmt(["~.3f","~.3f"], [Roll,Pitch], ","),
+  flatten(["PIXSE,ATITUD",SPR]).
+
+%% $PIXSE,POSITI,53.10245714,8.83994382,-0.115*71
+build_ixse(positi,Lat,Lon,Alt) ->
+  SPR = safe_fmt(["~.8f","~.8f","~.3f"], [Lat,Lon,Alt], ","),
+  flatten(["PIXSE,POSITI",SPR]).
+
 build_evo(Request) ->
   "PEVO," ++ Request.
 
@@ -1264,6 +1305,10 @@ from_term_helper(Sentense) ->
       build_dbs(Depth);
     {dbt,Depth} ->
       build_dbt(Depth);
+    {ixse, atitud, Roll, Pitch} ->
+      build_ixse(atitud,Roll,Pitch);
+    {ixse, positi, Lat, Lon, Alt} ->
+      build_ixse(positi,Lat,Lon,Alt);
     _ -> ""
   end.
 
