@@ -112,7 +112,7 @@ split(L, Cfg) ->
                 <<"SXN">>    -> [extract_sxn(Params)    | split(Rest, Cfg)];
                 <<"SAT">>    -> [extract_sat(Params)    | split(Rest, Cfg)];
                 <<"IXSE">>   -> [extract_ixse(Params)   | split(Rest, Cfg)];
-                %<<"HOCT">>   -> [extract_hoct(Params)   | split(Rest, Cfg)];
+                <<"HOCT">>   -> [extract_hoct(Params)   | split(Rest, Cfg)];
                 <<"ASHR">>   -> [extract_ashr(Params)   | split(Rest, Cfg)];
                 <<"RDID">>   -> [extract_rdid(Params)   | split(Rest, Cfg)];
                 <<"DBT">>    -> [extract_dbt(Params)    | split(Rest, Cfg)];
@@ -422,6 +422,47 @@ extract_rdid(Params) ->
     [Pitch,Roll,Heading] = [safe_binary_to_float(X) || X <- lists:sublist(re:split(Params, ","),3)],
     {nmea, {rdid, Pitch, Roll, Heading}}
   catch error:_ -> {error, {parseError, rdid, Params}}
+  end.
+
+%% $PHOCT,01,hhmmss.sss,G,AA,HHH.HHH,N,eRRR.RRR,L,ePP.PPP,K,eFF.FFF,M,eHH.HHH,eSS.SSS,eWW.WWW,eZZ.ZZZ,eYY.YYY,eXX.XXX,eQQQ.QQ
+%% 01       xx      Protovol version id
+%% hhmmss.sss   s   UTC-time
+%% G            c   UTC status (T -- valid, E -- invalid)
+%% AA           xx  INS latency (03)
+%% HHH.HHH      x.x Heading
+%% N            c   Heading status (T -- valid, E -- invalid, I -- initializing)
+%% eRRR.RRR     x.x Roll in deg (± always shown, positive -- port up)
+%% L            c   Roll status (T -- valid, E -- invalid, I -- initializing)
+%% ePPP.PPP     x.x Pitch in deg (± always shown, positive -- bow down)
+%% K            c   Pitch status (T -- valid, E -- invalid, I -- initializing)
+%% eFF.FFF      x.x Heave (primary lever-arms )in meters (± always shown, positive -- up)
+%% K            c   Heave,surge,sway,speed status (T -- valid, E -- invalid, I -- initializing)
+%% eHH.HHH      x.x Heave (chosen lever-arms) in meters (± always shown, positive -- up)
+%% eSS.SSS      x.x Surge (chosen lever-arms) in meters (± always shown)
+%% eWW.WWW      x.x Sway (chosen lever-arms) in meters (± always shown)
+%% eZZ.ZZZ      x.x Heave speed in meters (± always shown)
+%% eYY.YYY      x.x Surge speed in meters (± always shown)
+%% eXX.XXX      x.x Sway speed in meters (± always shown)
+%% eQQQQ.QQ     x.x Heading rate of turns in deg/min (± always shown)
+extract_hoct(Params) ->
+  S = fun(<<"T">>) -> valid; (<<"E">>) -> invalid; ("I") -> initialization; (_) -> unknown end,
+  try
+    [Ver | Rest] = lists:sublist(re:split(Params, ","),19),
+    case Ver of
+      <<"01">> ->
+        [BUTC,BTmS,BLt,BHd,BHdS,BRl,BRlS,BPt,BPtS,BHvI,BHvS,BHv,BSr,BSw,BHvR,BSrR,BSwR,BHdR] = Rest,
+        UTC = extract_utc(BUTC),
+        [Hd,Rl,Pt,HvI,Hv,Sr,Sw,HvR,SrR,SwR,HdR] = [safe_binary_to_float(X) || X <- [BHd,BRl,BPt,BHvI,BHv,BSr,BSw,BHvR,BSrR,BSwR,BHdR]],
+        Lt = safe_binary_to_integer(BLt),
+        TmS = S(BTmS),
+        HdS = S(BHdS),
+        RlS = S(BRlS),
+        PtS = S(BPtS),
+        HvS = S(BHvS),
+        {nmea, {hoct,1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR}};
+      _ -> {error, {parseError, hoct_01, Params}}
+    end
+  catch error:_ -> {error, {parseError, hoct_01, Params}}
   end.
 
 %% $PEVO,Request
@@ -1070,6 +1111,22 @@ build_rdid(Pitch,Roll,Heading) ->
   SPRH = safe_fmt(["~.2f","~.2f","~.2f"], [Pitch,Roll,Heading], ","),
   flatten(["PRDID",SPRH]).
 
+%% $PHOCT,01,hhmmss.sss,G,AA,HHH.HHH,N,eRRR.RRR,L,ePP.PPP,K,eFF.FFF,M,eHH.HHH,eSS.SSS,eWW.WWW,eZZ.ZZZ,eYY.YYY,eXX.XXX,eQQQ.QQ
+%% NOTE: UTC format has no microseconds (hhmmss.ss)
+build_hoct(1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR) ->
+  F = fun(Val, Fmt) when Val >= 0 -> "+" ++ Fmt; (_, Fmt) -> Fmt end,
+  S = fun(valid) -> ",T"; (invalid) -> ",E"; (initializing) -> ",I"; (_) -> "," end,
+
+  SUTC = utc_format(UTC),
+  SLt  = safe_fmt(["~2.10.0B"], [Lt], ","),
+  SHd  = safe_fmt([F(Hd ,"~6.3.0f")], [Hd], ","),
+  SRl  = safe_fmt([F(Rl ,"~6.3.0f")], [Rl], ","),
+  SPt  = safe_fmt([F(Pt ,"~6.3.0f")], [Pt], ","),
+  SHvI = safe_fmt([F(HvI,"~6.3.0f")], [HvI],","),
+  SRest = safe_fmt([F(Hv,"~6.3.0f"),F(Sr,"~6.3.0f"),F(Sw,"~6.3.0f"),F(HvR,"~6.3.0f"),F(SrR,"~6.3.0f"),F(SwR,"~6.3.0f"),F(HdR,"~7.2.0f")],
+                   [Hv,Sr,Sw,HvR,SrR,SwR,HdR], ","),
+  flatten(["PHOCT,01",SUTC,S(TmS),SLt,SHd,S(HdS),SRl,S(RlS),SPt,S(PtS),SHvI,S(HvS),SRest]).
+
 build_evo(Request) ->
   "PEVO," ++ Request.
 
@@ -1368,6 +1425,8 @@ from_term_helper(Sentense) ->
       build_ashr(UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq);
     {rdid, Pitch, Roll, Heading} ->
       build_rdid(Pitch,Roll,Heading);
+    {hoct,1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR} ->
+      build_hoct(1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR);
     _ -> ""
   end.
 
