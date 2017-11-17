@@ -245,7 +245,7 @@ handle_event(MM, SM, Term) ->
       %TODO: we do not need a Src in alarm messages, it will be broadcasted
       stop_polling(SM, Data);
     {nl, recv, _Src, 255, <<"D">>} ->
-      get_neighbours(SM);
+      SM;
     {nl, recv, Src, Dst, <<"A", DataT/binary>>} ->
       stop_polling(SM, alarm),
       fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, DataT}});
