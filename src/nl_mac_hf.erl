@@ -1013,6 +1013,7 @@ process_pkg_id(SM, TTL, Tuple) ->
   QueueLimit = 30,
   [SMN, StoredTTL, NQueue_ids] = searchQKey(SM, Queue_ids, Tuple, queue:new(), nothing, Pkg_life, QueueLimit),
   % if StoredTTL == nothing, it is a new package and does not exist in the queue
+  ?INFO(?ID, "process_pkg_id: TTL ~p StoredTTL ~p ~n", [TTL, StoredTTL]),
   case StoredTTL of
     nothing ->
       NewQ = queue_limited_push(NQueue_ids, Tuple, QueueLimit),
@@ -1321,7 +1322,11 @@ process_retransmit(SM, Msg, Ev) ->
       NewMsg = create_payload_nl_flag(SM, BPid, num2flag(Flag, nl), PkgID, increaseTTL(TTL), Src, Dst, Data),
       AT = {at, PID, Type, ATDst, FlagAck, NewMsg},
       SM1 = process_send_payload(SM, AT),
-      [SM1#sm{event = Ev}, {Ev, AT}];
+      if Ev == eps ->
+        [SM1#sm{event = Ev}, AT];
+      true ->
+        [SM1#sm{event = Ev}, {Ev, AT}]
+      end;
     true ->
       [SM, {}]
   end.
