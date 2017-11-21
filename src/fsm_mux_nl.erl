@@ -384,7 +384,7 @@ set_routing(SM, empty) ->
       SM;
     _ ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, []}}),
-      ffsm:clear_timeouts(SM#sm{state = ready_nl})
+      fsm:clear_timeouts(SM#sm{state = ready_nl})
   end;
 set_routing(SM, [H|_] = NL) when is_number(H) ->
   Burst_protocol = share:get(SM, burst_protocol),
