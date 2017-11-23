@@ -169,11 +169,12 @@ send_cts(SM, Interface, MACP, Timestamp, USEC, Dur) ->
 
 send_mac(SM, _Interface, Flag, MACP) ->
   AT = mac2at(SM, Flag, MACP),
+  ?INFO(?ID, ">>>>>>>>>>>>>>>> send_mac ~p~n", [AT]),
   fsm:send_at_command(SM, AT).
 
 send_ack(SM,  {send_ack, {_, [Packet_id, _, _PAdditional]}, {nl, recv, Real_dst, Real_src, _}}, Count_hops) ->
   BCount_hops = create_ack(Count_hops),
-  send_nl_command(SM, at_impl, {ack, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BCount_hops}).
+  send_nl_command(SM, at, {ack, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BCount_hops}).
 
 send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {nl, recv, Real_dst, Real_src, Payload}}) ->
   MAC_addr  = convert_la(SM, integer, mac),
@@ -206,7 +207,7 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {nl, recv, Real_
           analyse(SMNTmp, paths, RCheckDblPath, {Real_src, Real_dst}),
           [SM1, fill_msg(neighbours_path, {BCN, RCheckDblPath})]
       end,
-      send_nl_command(SMN, at_impl, {path, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BMsg})
+      send_nl_command(SMN, at, {path, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BMsg})
   end.
 
 send_nl_command(SM, Interface, {Flag, [IPacket_id, Real_src, _PAdditional]}, NL) ->
@@ -1012,6 +1013,7 @@ process_pkg_id(SM, TTL, Tuple) ->
   QueueLimit = 30,
   [SMN, StoredTTL, NQueue_ids] = searchQKey(SM, Queue_ids, Tuple, queue:new(), nothing, Pkg_life, QueueLimit),
   % if StoredTTL == nothing, it is a new package and does not exist in the queue
+  ?INFO(?ID, "process_pkg_id: TTL ~p StoredTTL ~p ~n", [TTL, StoredTTL]),
   case StoredTTL of
     nothing ->
       NewQ = queue_limited_push(NQueue_ids, Tuple, QueueLimit),
@@ -1040,6 +1042,7 @@ searchQKey(SM, {[],[]}, _Tuple, NQ, TTL, _Pkg_life, _) ->
   [SM, TTL, NQ];
 searchQKey(SM, Q, {Flag, CurrentTTL, ID, S, D, Data} = Tuple, NQ, TTL, Pkg_life, QueueLimit) ->
   { {value, CTuple}, Q1 } = queue:out(Q),
+  ?INFO(?ID, "searchQKey: Tuple in Q ~p Tuple to find ~p TTL ~p Pkg_life ~p~n", [CTuple, Tuple, TTL, Pkg_life]),
   case CTuple of
     {Flag, CurrentTTL, ID, S, D, Data} ->
       LimQ = queue_limited_push(NQ, CTuple, QueueLimit),
@@ -1267,6 +1270,7 @@ process_send_payload(SM, {at, PID, P1, P2, P3, Payload}) ->
   NewPayload = check_TTL(SM, Ttl_table, BPid, Tuple, Payload),
   NewMsg = {at, PID, P1, P2, P3, NewPayload},
   Tmo_retransmit = rand_float(SM1, tmo_retransmit),
+  ?INFO(?ID, "process_send_payload ~p NewPayload ~p ~n", [num2flag(Flag, nl), NewPayload]),
   case num2flag(Flag, nl) of
     dst_reached when TTL == 1, NewPayload =/= nothing->
       fsm:set_timeout(SM1, {ms, Tmo_retransmit}, {retransmit, NewMsg});
@@ -1285,6 +1289,7 @@ check_TTL(SM, nothing, _BPid, Tuple, Msg) ->
 check_TTL(SM, Ttl_table, BPid, Tuple = {Flag, CurrentTTL, PkgID, Src, Dst, Data}, Msg) ->
   QueueLimit = 30,
   [_SMN, StoredTTL, NTtl_table] = searchQKey(SM, Ttl_table, Tuple, queue:new(), nothing, nothing, QueueLimit),
+  ?INFO(?ID, "Ttl_table ~p CurrentTTL ~p StoredTTL ~p ~n", [Ttl_table, CurrentTTL, StoredTTL]),
   case StoredTTL of
     nothing ->
       share:put(SM, ttl_table, queue:in(Tuple, Ttl_table)),
@@ -1317,7 +1322,11 @@ process_retransmit(SM, Msg, Ev) ->
       NewMsg = create_payload_nl_flag(SM, BPid, num2flag(Flag, nl), PkgID, increaseTTL(TTL), Src, Dst, Data),
       AT = {at, PID, Type, ATDst, FlagAck, NewMsg},
       SM1 = process_send_payload(SM, AT),
-      [SM1#sm{event = Ev}, {Ev, AT}];
+      if Ev == eps ->
+        [SM1#sm{event = Ev}, AT];
+      true ->
+        [SM1#sm{event = Ev}, {Ev, AT}]
+      end;
     true ->
       [SM, {}]
   end.

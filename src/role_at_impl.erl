@@ -154,12 +154,12 @@ from_term({async, {pid, Pid}, {recvim,Len,S,D,Flag,Dur,R,I,V,Payload}}, Cfg) ->
 
 from_term({async, {Recv,Len,S,D,X,Dur,R,I,V,Payload}}, Cfg) ->
   SRecv = case Recv of recv -> "RECV"; recvims -> "RECVIMS" end,
-  Data = io_lib:format("~s,~b,~b,~b,~b,~b,~b,~b,~.2.0f", [SRecv,Len,S,D,X,Dur,R,I,V]),
+  Data = io_lib:format("~s,~b,~b,~b,~b,~b,~b,~b,~.2.0f,", [SRecv,Len,S,D,X,Dur,R,I,V]),
   [list_to_binary([Data,Payload,"\r\n"]), Cfg];
 
 from_term({async, {pid, Pid}, {Recv,Len,S,D,X,Dur,R,I,V,Payload}}, Cfg) ->
   SRecv = case Recv of recv -> "RECV"; recvims -> "RECVIMS" end,
-  Data = io_lib:format("~s,p~b,~b,~b,~b,~b,~b,~b,~b,~.2.0f", [SRecv,Pid,Len,S,D,X,Dur,R,I,V]),
+  Data = io_lib:format("~s,p~b,~b,~b,~b,~b,~b,~b,~b,~.2.0f,", [SRecv,Pid,Len,S,D,X,Dur,R,I,V]),
   [list_to_binary([Data,Payload,"\r\n"]), Cfg];
 
 from_term({async, Async}, Cfg) ->

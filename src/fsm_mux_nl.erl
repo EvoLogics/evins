@@ -162,10 +162,15 @@ handle_event(MM, SM, Term) ->
         end,
       fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
     {nl, get, routing} ->
-      NL = share:get(SM, nothing, neighbours, []),
-      Routing_table = lists:map(fun( {A, _I, _R, _T} ) -> {A, A} end, NL),
-      Tuple = {nl, routing, Routing_table},
-      fsm:cast(SM, nl_impl, {send, Tuple});
+      NL = share:get(SM, nothing, neighbours, empty),
+      if NL == empty ->
+        Tuple = {nl, routing, empty},
+        fsm:cast(SM, nl_impl, {send, Tuple});
+      true ->
+        Routing_table = lists:map(fun( {A, _I, _R, _T} ) -> {A, A} end, NL),
+        Tuple = {nl, routing, Routing_table},
+        fsm:cast(SM, nl_impl, {send, Tuple})
+      end;
     {nl, get, neighbours} when State =/= discovery ->
       get_neighbours(SM);
     {nl, get, neighbours} ->
@@ -384,7 +389,7 @@ set_routing(SM, empty) ->
       SM;
     _ ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, []}}),
-      ffsm:clear_timeouts(SM#sm{state = ready_nl})
+      fsm:clear_timeouts(SM#sm{state = ready_nl})
   end;
 set_routing(SM, [H|_] = NL) when is_number(H) ->
   Burst_protocol = share:get(SM, burst_protocol),

@@ -248,6 +248,7 @@ handle_event(MM, SM, Term) ->
     {async, {pid, Pid}, Tuple} ->
       ?INFO(?ID, "My message: ~p~n", [Tuple]),
       [SMN, NT] = parse_ll_msg(SM, {async, Tuple}),
+      ?INFO(?ID, "parse_ll_msg: ~p~n", [NT]),
       case NT of
         nothing ->
           SMN;
@@ -593,6 +594,9 @@ handle_wack(_MM, SM, Term) ->
       end;
     % TEST!!!
     {dst_reached, Params = {data, _} , Tuple} ->
+        {nl, recv, ISrc, IDst, Payload} = Tuple,
+        {_, NData, _} = nl_mac_hf:parse_path_data(SM, Payload),
+        fsm:cast(SM, nl_impl, {send, {nl, recv, ISrc, IDst, NData}}),
         Rand_timeout_wack = nl_mac_hf:rand_float(SM, wack_tmo),
         fsm:set_timeout(SM#sm{event = eps}, {ms, Rand_timeout_wack}, {send_ack, Params, Tuple});
     _ ->
