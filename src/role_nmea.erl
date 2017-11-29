@@ -923,7 +923,7 @@ extract_tnthpr(Params) ->
 
 extract_smcs(Params) ->
   try
-    [BPitch,BRoll,BHeave] = re:split(Params, ","),
+    [BRoll,BPitch,BHeave] = re:split(Params, ","),
     [Roll, Pitch, Heave] = [ safe_binary_to_float(X) || X <- [BRoll,BPitch,BHeave]],
     {nmea, {smcs, Roll, Pitch, Heave}}
   catch
@@ -1336,7 +1336,7 @@ build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus) ->
 
 build_smcs(Roll,Pitch,Heave) ->
   flatten(["PSMCS",
-           safe_fmt(["~.1.0f","~.1.0f","~.1.0f"],
+           safe_fmt(["~.1.3f","~.1.3f","~.1.2f"],
                     [Roll,Pitch,Heave], ",")]).
 
 build_dbs(Depth) ->
