@@ -103,9 +103,8 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   true ->
     [_, SMN] = Module,
     ShareID = #sm{share = Share},
-    La = share:get(ShareID, local_address),  
-    DetsName = list_to_atom(atom_to_list(share_file_) ++ integer_to_list(La)),
-    Roles = fsm_worker:role_info(Role_IDs, [at, nl, nl_impl]),
+    Share_file_path = case [P || {share_file_path,P} <- ArgS] of [] -> "."; [P] -> P end,
+    DetsName = lists:flatten([Share_file_path,"/","share_file_",integer_to_list(La)]),
     {ok, Ref} = dets:open_file(DetsName,[]),
     [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
@@ -171,7 +170,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {rtt, RTT + RTT/2},
                       {send_wv_dbl_tmo, Tmo_dbl_wv},
                       {probability, Probability},
-                      {pkg_life, Pkg_life}]),
+                      {pkg_life, Pkg_life}
+                     ]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
   ?TRACE(Mod_ID, "Routing Table ~p ~n", [Routing_table]),
