@@ -106,7 +106,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     La = share:get(ShareID, local_address),
     Share_file_path = case [P || {share_file_path,P} <- ArgS] of [] -> "."; [P] -> P end,
     DetsName = lists:flatten([Share_file_path,"/","share_file_",integer_to_list(La)]),
-    Roles = fsm_worker:role_info(Role_IDs, [at_impl, nl, nl_impl]),
+    Roles = fsm_worker:role_info(Role_IDs, [at, at_impl, nl, nl_impl]),
     {ok, Ref} = dets:open_file(DetsName,[]),
     [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, dets_share = Ref, module = SMN}]
   end.
