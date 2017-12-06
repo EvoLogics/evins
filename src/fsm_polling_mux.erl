@@ -161,7 +161,8 @@ handle_event(MM, SM, Term) ->
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   Check_state = fsm:check_timeout(SM, check_state),
   Current_poll_addr = get_current_poll_addr(SM),
-  Check_state_pbm = fsm:check_timeout(SM, check_state_pbm),
+
+  Check_state_pbm = share:get(SM, check_state_pbm),
 
   ?INFO(?ID, ">> SeqPollAddrs=~p Local_address=~p Pid=~p State=~p~n", [SeqPollAddrs, Local_address, Pid, State]),
   ?INFO(?ID, ">> Polling_started=~p Wait_pc=~p Send_next_poll_data=~p BroadcastData=~p~n", [Polling_started, Wait_pc, Send_next_poll_data, BroadcastData]),
@@ -179,8 +180,6 @@ handle_event(MM, SM, Term) ->
       Time_wait_recv = share:get(SM, time_wait_recv),
       fsm:set_timeout(SM, {s, Time_wait_recv}, wait_rest_poll_data);
       %SM;
-    {timeout, check_state_pbm} ->
-      SM;
     {timeout, check_state} when Answer_timeout == false ->
       fsm:send_at_command(SM, {at, "?S", ""});
     {timeout, check_state} ->
@@ -327,13 +326,15 @@ handle_event(MM, SM, Term) ->
       RecvTuple = {recv, {Pid, Len, Src, Local_address, Flag, Data}},
       NEvent_params = add_to_event_params(SM, RecvTuple),
       SM1 = SM#sm{event_params = NEvent_params},
+      SM2 =
+      if Check_state == false ->
+        fsm:set_timeout(SM1, ?ANSWER_TIMEOUT, check_state);
+      true -> SM1
+      end,
       [
-       fsm:send_at_command(__, {at, "?S", ""}),
-       fsm:set_timeout(__, ?ANSWER_TIMEOUT, check_state_pbm),
-       fsm:run_event(MM, __, {})
-      ] (SM1);
-
-      %fsm:run_event(MM, SM#sm{event = recv_poll_seq, event_params = NEvent_params}, {});
+        share:put(__, check_state_pbm, true),
+        fsm:run_event(MM, __, {})
+      ] (SM2);
     {async, {pid, _Pid}, {recvim, _Len, Src, _Dst, _Flag, _, _, _, _, Data}} ->
       % Overhearing broadcast messages
       try
@@ -389,7 +390,7 @@ handle_event(MM, SM, Term) ->
       SM;
     {sync,"?S", Status} when Check_state_pbm == true ->
       InitiatListen = extract_status(SM, Status),
-      SM1 = fsm:clear_timeout(SM, check_state_pbm),
+      SM1 = share:put(SM, check_state_pbm, false),
       SM2 =
       case InitiatListen of
         [true] ->
@@ -397,7 +398,7 @@ handle_event(MM, SM, Term) ->
         _ when Check_state == false ->
           [
             fsm:set_timeout(__, ?ANSWER_TIMEOUT, check_state),
-            fsm:set_timeout(__, ?ANSWER_TIMEOUT, check_state_pbm)
+            share:put(__, check_state_pbm, true)
           ] (SM1);
         _ -> SM1
       end,
