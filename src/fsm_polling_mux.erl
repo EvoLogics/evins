@@ -386,6 +386,9 @@ handle_event(MM, SM, Term) ->
     {async, {failedim, Current_poll_addr}} ->
       share:put(SM, wait_delivery_im_report, false),
       fsm:send_at_command(SM, {at, "?S", ""});
+    {async, {canceledim, Current_poll_addr}} ->
+      share:put(SM, wait_delivery_im_report, false),
+      fsm:send_at_command(SM, {at, "?S", ""});
     {async, _Tuple} ->
       SM;
     {sync,"?S", Status} when Check_state_pbm == true ->
