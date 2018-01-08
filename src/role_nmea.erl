@@ -681,6 +681,7 @@ extract_evorcp(Params) ->
 %% $PEVOSSB,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
 %% UTC hhmmss.ss
 %% TID transponder ID
+%% DID transceiver ID
 %% S status OK/NOK
 %% Err error code cc_
 %% CS coordinate system: Local frame (LF)/ ENU / GEOD
@@ -691,10 +692,11 @@ extract_evorcp(Params) ->
 %% Vel velocity in m/s
 extract_evossb(Params) ->
   try
-    [BUTC,BTID,BS,BErr,BCS,BFS,BX,BY,BZ,BAcc,BPr,BVel] = 
-      lists:sublist(re:split(Params, ","),12),
+    [BUTC,BTID,BDID,BS,BErr,BCS,BFS,BX,BY,BZ,BAcc,BPr,BVel] = 
+      lists:sublist(re:split(Params, ","),13),
     UTC = extract_utc(BUTC),
     TID = safe_binary_to_integer(BTID),
+    DID = safe_binary_to_integer(BDID),
     [X,Y,Z,Acc,Pr,Vel] = [safe_binary_to_float(V) || V <- [BX,BY,BZ,BAcc,BPr,BVel]],
     S = case BS of
           <<"OK">> -> ok;
@@ -711,7 +713,7 @@ extract_evossb(Params) ->
            <<"R">> -> reconstructed
          end,
     Err = binary_to_list(BErr),
-    {nmea, {evossb, UTC, TID, S, Err, CS, FS, X, Y, Z, Acc, Pr, Vel}}
+    {nmea, {evossb, UTC, TID, DID, S, Err, CS, FS, X, Y, Z, Acc, Pr, Vel}}
   catch
     error:_ -> {error, {parseError, evossb, Params}}
   end.
@@ -719,6 +721,7 @@ extract_evossb(Params) ->
 %% $PEVOSSA,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel
 %% UTC hhmmss.ss
 %% TID transponder ID
+%% DID transceiver ID
 %% S status OK/NOK
 %% Err error code cc_
 %% CS coordinate system: Local frame (LF)/ ENU / GEOD
@@ -729,10 +732,11 @@ extract_evossb(Params) ->
 %% Vel velocity in m/s
 extract_evossa(Params) ->
   try
-    [BUTC,BTID,BS,BErr,BCS,BFS,BB,BE,BAcc,BPr,BVel] = 
-      lists:sublist(re:split(Params, ","),11),
+    [BUTC,BTID,BDID,BS,BErr,BCS,BFS,BB,BE,BAcc,BPr,BVel] = 
+      lists:sublist(re:split(Params, ","),12),
     UTC = extract_utc(BUTC),
     TID = safe_binary_to_integer(BTID),
+    DID = safe_binary_to_integer(BDID),
     [B,E,Acc,Pr,Vel] = [safe_binary_to_float(V) || V <- [BB,BE,BAcc,BPr,BVel]],
     S = case BS of
           <<"OK">> -> ok;
@@ -749,7 +753,7 @@ extract_evossa(Params) ->
            <<"R">> -> reconstructed
          end,
     Err = binary_to_list(BErr),
-    {nmea, {evossa, UTC, TID, S, Err, CS, FS, B, E, Acc, Pr, Vel}}
+    {nmea, {evossa, UTC, TID, DID, S, Err, CS, FS, B, E, Acc, Pr, Vel}}
   catch
     error:_ -> {error, {parseError, evossb, Params}}
   end.
@@ -1265,8 +1269,8 @@ build_evorcp(Type, Status, Substatus, Interval, Mode, Cycles, Broadcast) ->
            safe_fmt(["~s","~s","~s","~.2.0f","~s","~B","~s"], [SType, SStatus, Substatus, Interval, SMode, NCycles, SCast], ","),
            ",,"]).
 
-%% $PEVOSSB,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
-build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
+%% $PEVOSSB,UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
+build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
   SUTC = utc_format(UTC),
   SS = case S of
          ok -> "OK";
@@ -1283,12 +1287,12 @@ build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
           reconstructed -> <<"R">>
         end,
   flatten(["PEVOSSB",SUTC,
-           safe_fmt(["~B","~s","~s","~s","~s",Fmt,Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
-                    [TID, SS, Err, SCS, SFS, X, Y, Z, Acc, Pr, Vel], ",")
+           safe_fmt(["~B","~B","~s","~s","~s","~s",Fmt,Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
+                    [TID, DID, SS, Err, SCS, SFS, X, Y, Z, Acc, Pr, Vel], ",")
           ]).
 
-%% $PEVOSSA,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel
-build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
+%% $PEVOSSA,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel
+build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
   SUTC = utc_format(UTC),
   SS = case S of
          ok -> "OK";
@@ -1305,8 +1309,8 @@ build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
           reconstructed -> <<"R">>
         end,
   flatten(["PEVOSSA",SUTC,
-           safe_fmt(["~B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
-                    [TID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
+           safe_fmt(["~B","~B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
+                    [TID, DID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
           ]).
 
 build_hdg(Heading,Dev,Var) ->
@@ -1385,10 +1389,10 @@ from_term_helper(Sentense) ->
       build_evorct(TX_utc,TX_phy,GPS,Pressure,AHRS,Lever_arm,HL);
     {evorcm,RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS} ->
       build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS);
-    {evossb,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel} ->
-      build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
-    {evossa,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
-      build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
+    {evossb,UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel} ->
+      build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
+    {evossa,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
+      build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
     {evoseq,Sid,Total,MAddr,Range,Seq} ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
     {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}} ->
