@@ -127,6 +127,7 @@ split(L, Cfg) ->
                 <<"EVOSSB">> -> [extract_evossb(Params) | split(Rest, Cfg)];
                 <<"EVOSSA">> -> [extract_evossa(Params) | split(Rest, Cfg)];
                 <<"EVOCTL">> -> [extract_evoctl(Params) | split(Rest, Cfg)];
+                <<"EVOGPS">> -> [extract_evogps(Params) | split(Rest, Cfg)];
                 _ ->      [{error, {notsupported, Cmd}} | split(Rest, Cfg)]
               end;
              true -> [{error, {checksum, CS, XOR, Raw}} | split(Rest, Cfg)]
@@ -758,6 +759,32 @@ extract_evossa(Params) ->
     error:_ -> {error, {parseError, evossb, Params}}
   end.
 
+%% $PEVOGPS,UTC,TID,M,Lat,LatPole,Lon,LonPole,Alt
+%% UTC hhmmss.ss
+%% TID point ID (DID or FTID)
+%% M mode: M measured, C computed, F filtered
+%% Lat Latitude
+%% LatPole N or S
+%% Lon Longitude
+%% LonPole E or W
+%% Alt Altitude over Geoid
+extract_evogps(Params) ->
+  try
+    [BUTC,BTID,BM,BLat,BN,BLon,BE,BAlt] =
+      lists:sublist(re:split(Params, ","),8),
+    [UTC, Lat, Lon] = extract_geodata(BUTC, BLat, BN, BLon, BE),
+    TID = safe_binary_to_integer(BTID),
+    Alt = safe_binary_to_float(BAlt),
+    Mode = case BM of
+           <<"M">> -> measured;
+           <<"F">> -> filtered;
+           <<"C">> -> computed
+         end,
+    {nmea, {evogga, UTC, TID, Mode, Lat, Lon, Alt}}
+  catch
+    error:_ -> {error, {parseError, evossb, Params}}
+  end.
+
 %% $PEVOCTL,BUSBL,...
 %% ID - configuration id (BUSBL/SBL...)
 %% $PEVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
@@ -1313,6 +1340,18 @@ build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
                     [TID, DID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
           ]).
 
+build_evogps(UTC,TID,Mode,Lat,Lon,Alt) ->
+  SUTC = utc_format(UTC),
+  SLat = lat_format(Lat),
+  SLon = lon_format(Lon),
+  SMode = case Mode of
+              measured -> ",M";
+              filtered -> ",F";
+              computed -> ",C"
+          end,
+  [STID, SAlt] = safe_fmt(["~B","~.2.0f"],[TID, Alt]),
+  flatten(["PEVOGPS",SUTC,",",STID,SMode,SLat,SLon,",",SAlt]).
+
 build_hdg(Heading,Dev,Var) ->
   F = fun(V) -> case V < 0 of true -> {"W",-V}; _ -> {"E",V} end end,
   {DevS,DevA} = F(Dev),
@@ -1393,6 +1432,8 @@ from_term_helper(Sentense) ->
       build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
     {evossa,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
       build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
+    {evogps,UTC,TID,Mode,Lat,Lon,Alt} ->
+      build_evogps(UTC,TID,Mode,Lat,Lon,Alt);
     {evoseq,Sid,Total,MAddr,Range,Seq} ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
     {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}} ->
