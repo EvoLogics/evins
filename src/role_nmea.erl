@@ -1340,7 +1340,7 @@ build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
           reconstructed -> <<"R">>
         end,
   flatten(["PEVOSSB",SUTC,
-           safe_fmt(["~B","~B","~s","~s","~s","~s",Fmt,Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
+           safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~s","~s",Fmt,Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
                     [TID, DID, SS, Err, SCS, SFS, X, Y, Z, Acc, Pr, Vel], ",")
           ]).
 
@@ -1362,7 +1362,7 @@ build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
           reconstructed -> <<"R">>
         end,
   flatten(["PEVOSSA",SUTC,
-           safe_fmt(["~B","~B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
+           safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
                     [TID, DID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
           ]).
 
@@ -1375,8 +1375,8 @@ build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt) ->
               filtered -> ",F";
               computed -> ",C"
           end,
-  [STID, SDID, SAlt] = safe_fmt(["~B","~B","~.2.0f"],[TID, DID, Alt]),
-  flatten(["PEVOGPS",SUTC,",",STID,SDID,SMode,SLat,SLon,",",SAlt]).
+  [STID, SDID, SAlt] = safe_fmt(["~3.10.0B","~3.10.0B","~.2.0f"],[TID, DID, Alt]),
+  flatten(["PEVOGPS",SUTC,",",STID,",",SDID,SMode,SLat,SLon,",",SAlt]).
 
 build_evorpy(UTC,TID,DID,Mode,Roll,Pitch,Yaw) ->
   SUTC = utc_format(UTC),
@@ -1386,7 +1386,7 @@ build_evorpy(UTC,TID,DID,Mode,Roll,Pitch,Yaw) ->
               computed -> "C"
           end,
   flatten(["PEVORPY",SUTC,
-           safe_fmt(["~B","~B","~s","~.2.0f","~.2.0f","~.2.0f"],
+           safe_fmt(["~3.10.0B","~3.10.0B","~s","~.2.0f","~.2.0f","~.2.0f"],
                     [TID, DID, SMode, Roll, Pitch, Yaw], ",")
           ]).
 
