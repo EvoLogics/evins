@@ -128,6 +128,7 @@ split(L, Cfg) ->
                 <<"EVOSSA">> -> [extract_evossa(Params) | split(Rest, Cfg)];
                 <<"EVOCTL">> -> [extract_evoctl(Params) | split(Rest, Cfg)];
                 <<"EVOGPS">> -> [extract_evogps(Params) | split(Rest, Cfg)];
+                <<"EVORPY">> -> [extract_evorpy(Params) | split(Rest, Cfg)];
                 _ ->      [{error, {notsupported, Cmd}} | split(Rest, Cfg)]
               end;
              true -> [{error, {checksum, CS, XOR, Raw}} | split(Rest, Cfg)]
@@ -787,6 +788,29 @@ extract_evogps(Params) ->
     error:_ -> {error, {parseError, evossb, Params}}
   end.
 
+%% $PEVORPY,UTC,TID,DID,M,Roll,Pitch,Yaw
+%% UTC hhmmss.ss
+%% TID point ID (FTID)
+%% DID device ID
+%% M mode: M measured, C computed, F filtered
+extract_evorpy(Params) ->
+  try
+    [BUTC,BTID,BDID,BM,BRoll,BPitch,BYaw] =
+      lists:sublist(re:split(Params, ","),7),
+    UTC = extract_utc(BUTC),
+    TID = safe_binary_to_integer(BTID),
+    DID = safe_binary_to_integer(BDID),
+    [Roll, Pitch, Yaw] = [safe_binary_to_float(X) || X <- [BRoll, BPitch, BYaw]],
+    Mode = case BM of
+           <<"M">> -> measured;
+           <<"F">> -> filtered;
+           <<"C">> -> computed
+         end,
+    {nmea, {evorpy, UTC, TID, DID, Mode, Roll, Pitch, Yaw}}
+  catch
+    error:_ -> {error, {parseError, evossb, Params}}
+  end.
+
 %% $PEVOCTL,BUSBL,...
 %% ID - configuration id (BUSBL/SBL...)
 %% $PEVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
@@ -1354,6 +1378,18 @@ build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt) ->
   [STID, SDID, SAlt] = safe_fmt(["~B","~B","~.2.0f"],[TID, DID, Alt]),
   flatten(["PEVOGPS",SUTC,",",STID,SDID,SMode,SLat,SLon,",",SAlt]).
 
+build_evorpy(UTC,TID,DID,Mode,Roll,Pitch,Yaw) ->
+  SUTC = utc_format(UTC),
+  SMode = case Mode of
+              measured -> "M";
+              filtered -> "F";
+              computed -> "C"
+          end,
+  flatten(["PEVORPY",SUTC,
+           safe_fmt(["~B","~B","~s","~.2.0f","~.2.0f","~.2.0f"],
+                    [TID, DID, SMode, Roll, Pitch, Yaw], ",")
+          ]).
+
 build_hdg(Heading,Dev,Var) ->
   F = fun(V) -> case V < 0 of true -> {"W",-V}; _ -> {"E",V} end end,
   {DevS,DevA} = F(Dev),
@@ -1436,6 +1472,8 @@ from_term_helper(Sentense) ->
       build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
     {evogps,UTC,TID,DID,Mode,Lat,Lon,Alt} ->
       build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt);
+    {evorpy,UTC,TID,DID,Mode,Roll,Pitch,Yaw} ->
+      build_evorpy(UTC,TID,DID,Mode,Roll,Pitch,Yaw);
     {evoseq,Sid,Total,MAddr,Range,Seq} ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
     {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}} ->
