@@ -759,9 +759,10 @@ extract_evossa(Params) ->
     error:_ -> {error, {parseError, evossb, Params}}
   end.
 
-%% $PEVOGPS,UTC,TID,M,Lat,LatPole,Lon,LonPole,Alt
+%% $PEVOGPS,UTC,TID,DID,M,Lat,LatPole,Lon,LonPole,Alt
 %% UTC hhmmss.ss
-%% TID point ID (DID or FTID)
+%% TID point ID (FTID)
+%% DID device ID
 %% M mode: M measured, C computed, F filtered
 %% Lat Latitude
 %% LatPole N or S
@@ -770,17 +771,18 @@ extract_evossa(Params) ->
 %% Alt Altitude over Geoid
 extract_evogps(Params) ->
   try
-    [BUTC,BTID,BM,BLat,BN,BLon,BE,BAlt] =
-      lists:sublist(re:split(Params, ","),8),
+    [BUTC,BTID,BDID,BM,BLat,BN,BLon,BE,BAlt] =
+      lists:sublist(re:split(Params, ","),9),
     [UTC, Lat, Lon] = extract_geodata(BUTC, BLat, BN, BLon, BE),
     TID = safe_binary_to_integer(BTID),
+    DID = safe_binary_to_integer(BDID),
     Alt = safe_binary_to_float(BAlt),
     Mode = case BM of
            <<"M">> -> measured;
            <<"F">> -> filtered;
            <<"C">> -> computed
          end,
-    {nmea, {evogga, UTC, TID, Mode, Lat, Lon, Alt}}
+    {nmea, {evogps, UTC, TID, DID, Mode, Lat, Lon, Alt}}
   catch
     error:_ -> {error, {parseError, evossb, Params}}
   end.
@@ -1340,7 +1342,7 @@ build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
                     [TID, DID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
           ]).
 
-build_evogps(UTC,TID,Mode,Lat,Lon,Alt) ->
+build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt) ->
   SUTC = utc_format(UTC),
   SLat = lat_format(Lat),
   SLon = lon_format(Lon),
@@ -1349,8 +1351,8 @@ build_evogps(UTC,TID,Mode,Lat,Lon,Alt) ->
               filtered -> ",F";
               computed -> ",C"
           end,
-  [STID, SAlt] = safe_fmt(["~B","~.2.0f"],[TID, Alt]),
-  flatten(["PEVOGPS",SUTC,",",STID,SMode,SLat,SLon,",",SAlt]).
+  [STID, SDID, SAlt] = safe_fmt(["~B","~B","~.2.0f"],[TID, DID, Alt]),
+  flatten(["PEVOGPS",SUTC,",",STID,SDID,SMode,SLat,SLon,",",SAlt]).
 
 build_hdg(Heading,Dev,Var) ->
   F = fun(V) -> case V < 0 of true -> {"W",-V}; _ -> {"E",V} end end,
@@ -1432,8 +1434,8 @@ from_term_helper(Sentense) ->
       build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
     {evossa,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
       build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
-    {evogps,UTC,TID,Mode,Lat,Lon,Alt} ->
-      build_evogps(UTC,TID,Mode,Lat,Lon,Alt);
+    {evogps,UTC,TID,DID,Mode,Lat,Lon,Alt} ->
+      build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt);
     {evoseq,Sid,Total,MAddr,Range,Seq} ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
     {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}} ->
