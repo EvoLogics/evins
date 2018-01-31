@@ -138,6 +138,10 @@ handle_event(MM, SM, Term) ->
     {nl, stop, discovery} ->
       fsm:cast(SM, nl_impl, {send, {nl, discovery, ok}}),
       fsm:clear_timeouts(SM#sm{state = ready_nl});
+    {nl, get, time, monotonic} ->
+      Discovery_protocol = share:get(SM, discovery_protocol),
+      ProtocolMM = share:get(SM, Discovery_protocol),
+      fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
     {nl, get, version} ->
       Discovery_protocol = share:get(SM, discovery_protocol),
       ProtocolMM = share:get(SM, Discovery_protocol),
@@ -210,6 +214,8 @@ handle_event(MM, SM, Term) ->
       set_routing(SM, NL);
     {nl, neighbours, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
+    {nl, time, monotonic, Time} ->
+      fsm:cast(SM, nl_impl, {send, {nl, time, monotonic, Time}});
     {nl, version, Major, Minor, Description} ->
       fsm:cast(SM, nl_impl, {send, {nl, version, Major, Minor, "mux:" ++ Description}});
     {nl, protocol, NPA} when SM#sm.state == init_roles ->

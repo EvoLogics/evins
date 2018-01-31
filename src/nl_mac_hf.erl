@@ -797,7 +797,7 @@ add_neighbours(SM, Flag, NLSrcAT, {RealSrc, Real_dst}, {IRssi, IIntegrity}) ->
   try
     Neighbours_channel = share:get(SM, neighbours_channel),
     SM1 = fsm:set_timeout(SM, {s, share:get(SM, neighbour_life)}, {neighbour_life, NLSrcAT}),
-    Current_time = erlang:monotonic_time(milli_seconds),
+    Current_time = erlang:monotonic_time(milli_seconds) - share:get(SM, nl_start_time),
     analyse(SM1, st_neighbours, NLSrcAT, {RealSrc, Real_dst}),
     Add_neighbours =
     fun(Neighbours) ->

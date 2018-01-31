@@ -43,7 +43,7 @@ start(Role_ID, Mod_ID, MM) ->
   _ = {time, period},
   _ = {source, relay},
   _ = {sensitive, alarm, tolerant, broadcast},
-  _ = {set, get, address, start, stop, protocolinfo, protocol, protocols, routing, neighbours, neighbour, state, states, paths, data, statistics, flush, polling, discovery, buffer},
+  _ = {set, get, address, start, stop, protocolinfo, protocol, protocols, routing, neighbours, neighbour, state, states, paths, data, statistics, flush, polling, discovery, buffer, time},
   Cfg = #config{eol = "\r\n"},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
@@ -242,7 +242,9 @@ from_term({nl,polling,[]}, Cfg) ->
   [list_to_binary(["NL,polling,empty", Cfg#config.eol]), Cfg];
 from_term({nl,polling,Sequence}, Cfg) when is_list(Sequence) ->
   [list_to_binary(["NL,polling,",lists:join(",", [integer_to_binary(P) || P <- Sequence]),Cfg#config.eol]), Cfg];
-
+%% NL,time,monotonic,Time
+from_term({nl,time,monotonic,Time}, Cfg) when is_integer(Time) ->
+  [list_to_binary(["NL,time,monotonic,", integer_to_binary(Time),Cfg#config.eol]), Cfg];
 from_term({nl, buffer, []}, Cfg) ->
   EOL = Cfg#config.eol,
   [list_to_binary(["NL,buffer,",atom_to_list(empty),EOL,EOL]), Cfg];
