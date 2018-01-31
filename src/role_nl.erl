@@ -212,13 +212,16 @@ nl_extract_subject(<<"protocolinfo">>, Params) ->
   PropList = [list_to_tuple(re:split(I," : ",[{return,list}])) || I <- tl(re:split(KVParams,"\r?\n"))],
   %% {value, ["name",Protocol], PropList} = lists:keytake("name", 1, KVLst),
   {nl,protocolinfo,binary_to_existing_atom(Protocol,utf8),PropList};
-%5 NL,states,<EOL><State1>(<Event1>)<EOL>...<StateN>(<EventN>)<EOL><EOL>
+%% NL,states,<EOL><State1>(<Event1>)<EOL>...<StateN>(<EventN>)<EOL><EOL>
 nl_extract_subject(<<"states">>, Params) ->
   {nl,states,
    lists:map(fun(Param) ->
                  {match, BList} = re:run(Param,"(.*)\\((.*)\\)",[{capture, [1,2], binary}]),
                  list_to_tuple([binary_to_list(I) || I <- BList])
              end, tl(re:split(Params,"\r?\n")))};
+
+nl_extract_subject(<<"time">>, <<"monotonic,",Time/binary>>) ->
+  {nl,time,monotonic, binary_to_integer(Time)};
 %% NL,statistics,ok
 nl_extract_subject(<<"statistics">>, <<"ok">>) ->
   {nl, statistics, ok};

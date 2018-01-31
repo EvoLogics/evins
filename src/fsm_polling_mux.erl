@@ -259,11 +259,16 @@ handle_event(MM, SM, Term) ->
       %% Is it neceessary to add the msg type???
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, set, polling, LSeq} when is_list(LSeq) ->
-      [
-       init_poll_index(__),
-       share:put(__, polling_seq, LSeq),
-       fsm:cast(__, nl_impl, {send, {nl, polling, LSeq}})
-      ] (SM);
+      LA_Seq = lists:member(Local_address, LSeq),
+      if LA_Seq ->
+          fsm:cast(SM, nl_impl, {send, {nl, polling, error}});
+        true ->
+        [
+         init_poll_index(__),
+         share:put(__, polling_seq, LSeq),
+         fsm:cast(__, nl_impl, {send, {nl, polling, LSeq}})
+        ] (SM)
+      end;
     {nl, get, polling} ->
       LSeq = share:get(SM, nothing, polling_seq, empty),
       fsm:cast(SM, nl_impl, {send, {nl, polling, LSeq}});

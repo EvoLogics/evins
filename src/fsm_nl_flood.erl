@@ -325,6 +325,9 @@ handle_event(MM, SM, Term) ->
       nl_mac_hf:process_command(SM, false, {statistics, Some_statistics});
     {nl, get, protocolinfo, Some_protocol} ->
       nl_mac_hf:process_command(SM, false, {protocolinfo, Some_protocol});
+    {nl,get,time,monotonic} ->
+      Current_time = erlang:monotonic_time(milli_seconds) - share:get(SM, nl_start_time),
+      fsm:cast(SM, nl_impl, {send, {nl, time, monotonic, Current_time}});
     {nl, get, Command} ->
       nl_mac_hf:process_command(SM, false, Command);
     {nl, set, address, Addr} ->
