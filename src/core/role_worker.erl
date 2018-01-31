@@ -35,6 +35,11 @@
 
 -export([start/4, start/5, to_term/4, bridge/2]).
 
+-define(SER_OPEN, 0).
+-define(SER_SEND, 1).
+-define(SER_RECV, 2).
+-define(SER_ERROR, 3).
+
 -callback start(ref(), ref(), #mm{}) -> {ok,pid()} | ignore | {error,any()}.
 -callback stop(any()) -> ok.
 -callback to_term(Tail :: binary(), Bin :: binary() | list(), Cfg :: any()) -> [list() | [list() | [list() | [binary() | list(any())]]]].
@@ -50,8 +55,9 @@
           id,                   % Role_ID
           module_id,            % FSM handling module name
           fsm_pids = [],        % FSM controller module PID
-          type = client,        % TCP client or server
-          opt = [],             % TCP Socket options
+          type = client,        % TCP/UDP client or server
+          opt = [],             % TCP/UDP Socket options
+          proto = nothing,      % tcp | udp -- protocol
           mm,                   % #mm - more info about this interface:
                                 % {role,role_id,ip,port,type,status,params}).
           tail = <<>>,          % Not yet processed data tail
@@ -92,6 +98,13 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {port,Port,PortSetti
   gen_server:cast(Mod_ID, {Self, ID, ok}),
   connect(State);
 
+init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {serial,Port,BaudRate,StartBits,Parity,StopBits,FlowControl}}} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {serial,Port,BaudRate,StartBits,Parity,StopBits,FlowControl}}}}),
+  process_flag(trap_exit, true),
+  Self = self(),
+  gen_server:cast(Mod_ID, {Self, ID, ok}),
+  connect(State#ifstate{proto = serial});
+
 init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts}}} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {socket,IP,Port,Opts}}}}),
   Type = case Opts of
@@ -121,7 +134,37 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts
           end,
   Self = self(),
   gen_server:cast(Mod_ID, {Self, ID, ok}),
-  connect(State#ifstate{type = Type, opt = SOpts}).
+  connect(State#ifstate{type = Type, opt = SOpts, proto = tcp});
+
+init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {udp,IP,Port,Opts}}} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {socket,IP,Port,Opts}}}}),
+  Type = case Opts of
+           L when is_list(L) ->
+             Tserver = [server || server <- L],
+             Tclient = [client || client <- L],
+             case {Tserver, Tclient} of
+               {[server],[]} -> server;
+               {[],[client]} -> client;
+               _ ->
+                 ?ERROR(ID, "Undefined connection type: ~p, set to client per default~n", [L]),
+                 client
+             end;
+           A -> A
+         end,
+  IsMulticast = try {HdIP, _, _, _} = IP, (HdIP >= 224) andalso (HdIP =< 239)
+                catch error:_ -> false end,
+  SOpts = case Type of
+            client -> [binary, {active, true}, {broadcast, true}];
+            server ->
+                  Mcast = case IsMulticast of
+                              true -> [{multicast_if, IP}, {add_membership, {IP, {0, 0, 0, 0}}}];
+                              _ -> []
+                          end,
+                  [binary, {ip, IP}, {active, true}, {reuseaddr, true}] ++ Mcast
+          end,
+  Self = self(),
+  gen_server:cast(Mod_ID, {Self, ID, ok}),
+  connect(State#ifstate{type = Type, opt = SOpts, proto = udp}).
 
 cast_connected(#ifstate{fsm_pids = FSMs} = State) ->
   lists:map(fun(FSM) -> cast_connected(FSM, State) end, FSMs),
@@ -132,7 +175,11 @@ cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
   case MM#mm.iface of
     {socket,_,_,_} when Socket /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
+    {udp,_,_,_} when Socket /= nothing ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
     {port,_,_} when Port /= nothing ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
+    {serial,_,_,_,_,_,_} when Port /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
     _ ->
       nothing
@@ -166,7 +213,27 @@ connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) -
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
   {ok, cast_connected(State#ifstate{port = PortID})};
 
-connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, opt = SOpts} = State) ->
+connect(#ifstate{id = ID, mm = #mm{iface = {serial,Port,BaudRate,DataBits,Parity,StopBits,FlowControl}}} = State) ->
+  process_flag(trap_exit, true),
+  PortID = open_port({spawn, code:priv_dir(evins) ++ "/evo_serial"}, [binary, {packet, 1}, overlapped_io]),
+  Par = case Parity of
+            none -> 0;
+            odd -> 1;
+            even -> 2
+        end,
+  FC = case FlowControl of
+           none -> 0;
+           ctsrts -> 1
+       end,
+  DB = DataBits - 1,
+  SB = StopBits - 1,
+  Zero = 0,
+  BPort = list_to_binary(Port),
+  PortID ! {self(), {command, <<?SER_OPEN:8, BaudRate:24/integer-native, DB:3/integer, Par:2/integer, SB:1/integer, FC:1/integer, Zero:1/integer, BPort/binary>>}},
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
+  {ok, cast_connected(State#ifstate{port = PortID})};
+
+connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, proto = tcp, opt = SOpts} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
   case gen_tcp:connect(IP, Port, SOpts, 1000) of
     {ok, Socket} ->
@@ -182,15 +249,41 @@ connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, o
       {ok, State}
   end;
 
-connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = server, opt = SOpts} = State) ->
+connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = server, proto = tcp, opt = SOpts} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {listening, IP, Port}}}),
   case gen_tcp:listen(Port, SOpts) of
     {ok, LSock} ->
       {ok, Ref} = prim_inet:async_accept(LSock, -1),
       {ok, State#ifstate{listener = LSock, acceptor = Ref}};
     {error, Reason} ->
-      error_logger:error_report([{file,?MODULE,?LINE},{id, ID}, {IP,Port,Reason}]),
-      {stop, Reason}
+      gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
+      error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Reason]),
+      {ok, _} = timer:send_after(1000, timeout),
+      {ok, State}
+  end;
+
+connect(#ifstate{id = ID, mm = #mm{iface = {udp,_IP,_Port,_}}, type = client, proto = udp, opt = SOpts} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
+  case gen_udp:open(0, SOpts) of
+    {ok, Socket} ->
+      {ok, cast_connected(State#ifstate{socket = Socket})};
+    Error ->
+      gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
+      error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Error]),
+      {ok, _} = timer:send_after(1000, timeout),
+      {ok, State}
+  end;
+
+connect(#ifstate{id = ID, mm = #mm{iface = {udp,IP,Port,_}}, type = server, proto = udp, opt = SOpts} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {listening, IP, Port}}}),
+  case gen_udp:open(Port, SOpts) of
+    {ok, Socket} ->
+      {ok, cast_connected(State#ifstate{socket = Socket})};
+    {error, Reason} ->
+      gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
+      error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Reason]),
+      {ok, _} = timer:send_after(1000, timeout),
+      {ok, State}
   end.
 
 broadcast(FSMs, Term) ->
@@ -229,10 +322,14 @@ handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Po
           broadcast(FSMs, {chan_error, MM, disconnected});
         {socket,_,_,_} ->
           gen_tcp:send(Socket, Bin);
+        {udp,IP,P,_} ->
+          gen_udp:send(Socket, IP, P, Bin);
         {port,_,_} when Port == nothing -> 
           broadcast(FSMs, {chan_error, MM, disconnected});
         {port,_,_} ->
           Port ! {self(), {command, Bin}};
+        {serial,_,_,_,_,_,_} ->
+          serial_send(Port, Bin);
         {erlang,_,_,_} -> todo
       end,
       {noreply, State#ifstate{cfg = NewCfg}};
@@ -324,9 +421,22 @@ handle_info({inet_async, LSock, Ref, Error}, #ifstate{id = ID, listener=LSock, a
 handle_info({tcp, Socket, Bin}, #ifstate{socket = Socket} = State) ->
   process_bin(Bin, State);
 
+handle_info({udp, Socket, _IP, _Port, Bin}, #ifstate{socket = Socket} = State) ->
+  process_bin(Bin, State);
+
 handle_info({tcp, Socket1, Bin}, #ifstate{socket = Socket2} = State) ->
   error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
   {noreply, State};
+
+handle_info({udp, Socket1, _IP, _Port, Bin}, #ifstate{socket = Socket2} = State) ->
+  error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
+  {noreply, State};
+
+handle_info({PortID,{data,<<Type:8/integer, Bin/binary>>}}, #ifstate{port = PortID, proto = serial} = State) ->
+  case Type of
+    ?SER_RECV -> process_bin(Bin, State);
+    _ -> {noreply, State}
+  end;
 
 handle_info({PortID,{data,Bin}}, #ifstate{port = PortID} = State) ->
   process_bin(Bin, State);
@@ -340,7 +450,7 @@ handle_info({bridge,Term}, #ifstate{fsm_pids = FSMs, mm = MM, cfg = Cfg} = State
   conditional_cast(FSMs, Cfg, {chan, MM, Term}),
   {noreply, State};
 
-handle_info(timeout, #ifstate{id = ID, type = client} = State) ->
+handle_info(timeout, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, timeout}}),
   case connect(State) of
     {ok, NewState} -> {noreply, NewState};
@@ -444,3 +554,9 @@ process_bin(Bin, #ifstate{behaviour = B, fsm_pids = FSMs, cfg = Cfg, tail = Tail
           end,
   lists:foreach(fun(Term) -> conditional_cast(FSMs, Cfg, {chan, MM, Term}) end, Terms),
   {noreply, State#ifstate{cfg = NewCfg, tail = More}}.
+
+serial_send(Port, <<Chunk:253/binary, Rest/binary>>) ->
+    Port ! {self(), {command, <<?SER_SEND:8, Chunk/binary>>}},
+    serial_send(Port, Rest);
+serial_send(Port, Chunk) ->
+    Port ! {self(), {command, <<?SER_SEND:8, Chunk/binary>>}}.

@@ -10,6 +10,12 @@ dep_edown = git https://github.com/uwiger/edown.git 0.8
 
 CT_SUITES = share
 
+C_SRC_TYPE = executable
+C_SRC_OUTPUT ?= $(CURDIR)/priv/evo_serial
+
+CFLAGS ?= -std=gnu99 -O3 -finline-functions -Wall -Wmissing-prototypes
+LDFLAGS ?= -lm
+
 include erlang.mk
 
 APP_VERSION = $(shell cat $(RELX_OUTPUT_DIR)/$(RELX_REL_NAME)/version)
