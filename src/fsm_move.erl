@@ -170,6 +170,7 @@ hypot(X,Y) ->
 sign(A) when A < 0 -> -1;
 sign(_) -> 1.
 
+-ifndef(floor_bif).
 floor(X) when X < 0 ->
     T = trunc(X),
     case X - T == 0 of
@@ -178,6 +179,7 @@ floor(X) when X < 0 ->
     end;
 floor(X) ->
     trunc(X).
+-endif.
 
 smod(X, M)  -> X - floor(X / M + 0.5) * M.
 wrap_pi(A) -> smod(A, -2*math:pi()).

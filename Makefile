@@ -16,6 +16,14 @@ C_SRC_OUTPUT ?= $(CURDIR)/priv/evo_serial
 CFLAGS ?= -std=gnu99 -O3 -finline-functions -Wall -Wmissing-prototypes
 LDFLAGS ?= -lm
 
+otp_release = $(shell erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), init:stop()')
+otp_20plus = $(shell test $(otp_release) -ge 20; echo $$?)
+
+ifeq ($(otp_20plus),0)
+	ERLC_OPTS += -Dfloor_bif=1
+	TEST_ERLC_OPTS += -Dfloor_bif=1
+endif
+
 include erlang.mk
 
 APP_VERSION = $(shell cat $(RELX_OUTPUT_DIR)/$(RELX_REL_NAME)/version)
