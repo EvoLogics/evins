@@ -680,7 +680,7 @@ extract_evorcp(Params) ->
     error:_ -> {error, {parseError, evorcp, Params}}
   end.
 
-%% $PEVOSSB,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
+%% $PEVOSSB,UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
 %% UTC hhmmss.ss
 %% TID transponder ID
 %% DID transceiver ID
