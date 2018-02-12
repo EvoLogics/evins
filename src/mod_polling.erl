@@ -57,6 +57,13 @@ parse_conf(_Mod_ID, ArgS, Share) ->
   Max_packets_transmit_sens  = set_params(Max_packets_transmit_sens_set, 3),
   Max_packets_tolerant_transmit  = set_params(Max_packets_tolerant_transmit_set, 3),
 
+  Ref =
+    case [{LatRef, LonRef} || {reference_position, {LatRef, LonRef}} <- ArgS] of
+      [{Lat, Lon}] -> {Lat, Lon};
+      _ -> {63.444158, 10.365286}
+    end,
+
+  share:put(ShareID, reference_position, Ref),
   share:put(ShareID, [{nl_protocol, NL_Protocol}]),
   share:put(ShareID, [{time_wait_recv, Time_wait_recv}]),
   share:put(ShareID, [{max_burst_len, Max_burst_len}]),

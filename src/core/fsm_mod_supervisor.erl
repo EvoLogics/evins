@@ -48,11 +48,17 @@ role_workers(ID, Mod_ID, Offset, ConfigData) ->
     [{R,{erlang,I1,Target},E}  || {role,R,params,E,iface,{erlang,id,I1,target,Target}} <- ConfigData] ++
     [{R,{socket,I,P,T},[]}     || {role,R,iface,{socket,I,P,T}} <- ConfigData] ++
     [{R,{socket,I,P,T},E}      || {role,R,params,E,iface,{socket,I,P,T}} <- ConfigData] ++  
+    [{R,{udp,I,P,T},[]}        || {role,R,iface,{udp,I,P,T}} <- ConfigData] ++
+    [{R,{udp,I,P,T},E}         || {role,R,params,E,iface,{udp,I,P,T}} <- ConfigData] ++
+    [{R,{serial,P,B,S,Q,T,F},[]} || {role,R,iface,{serial,P,B,S,Q,T,F}} <- ConfigData] ++
+    [{R,{serial,P,B,S,Q,T,F},E}  || {role,R,params,E,iface,{serial,P,B,S,Q,T,F}} <- ConfigData] ++
     [{R,{port,P,PS},[]}        || {role,R,iface,{port,P,PS}} <- ConfigData] ++      
     [{R,{port,P,PS},E}         || {role,R,params,E,iface,{port,P,PS}} <- ConfigData],
   Role_ID_list = map(fun({N, {R,If,_}}) ->
                          list_to_atom(lists:flatten(case If of
                                                       {socket,_,_,_}  -> io_lib:format("~p_~p_~p",[R,ID,N]);
+                                                      {udp,_,_,_}  -> io_lib:format("~p_~p_~p",[R,ID,N]);
+                                                      {serial,_,_,_,_,_,_} -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {port,_,_}      -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {cowboy,_,_}    -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {erlang,I1,_} -> io_lib:format("~p_~p",[ID,I1])
@@ -64,6 +70,9 @@ role_workers(ID, Mod_ID, Offset, ConfigData) ->
                                    {socket, I, P, T} ->
                                      {ok, IP} = inet:parse_ipv4_address(I),
                                      {socket, IP, P, T};
+                                   {udp, I, P, T} ->
+                                     {ok, IP} = inet:parse_ipv4_address(I),
+                                     {udp, IP, P, T};
                                    {erlang, _, MID} when is_atom(MID) ->
                                      {erlang, MID};
                                    {erlang, _, {M2, I2}} ->

@@ -153,8 +153,10 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Path_life       = set_params(Path_life_set, 2 * WTmo_path),
   Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
 
+  Start_time = erlang:monotonic_time(milli_seconds),
   ShareID = #sm{share = Share},
-  share:put(ShareID, [{nl_protocol, NL_Protocol},
+  share:put(ShareID, [{nl_start_time, Start_time},
+                      {nl_protocol, NL_Protocol},
                       {routing_table, Routing_table},
                       {local_address, Addr},
                       {max_address, Max_address},

@@ -24,7 +24,7 @@
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> SM.
+init(SM)       -> share:put(SM, heading, 0).
 trans()        -> ?TRANS.
 final()        -> [].
 init_event()   -> init.
@@ -44,8 +44,8 @@ handle_event(MM, SM, Term) ->
       ](SM);
 
     %% ------ IM logic -------
-    {async, _, {recvpbm, _, RAddr, LAddr, _, _, _, _, Payload}} ->
-      io:format("RAngles: ~p~n", [extractAM(Payload)]),
+    {async, _, {recvpbm, _, RAddr, LAddr, _, _, _, _, _Payload}} ->
+      %io:format("RAngles: ~p~n", [extractAM(Payload)]),
       SM;
 
     {async, {deliveredim, RAddr}} ->
@@ -61,7 +61,7 @@ handle_event(MM, SM, Term) ->
       Delay = share:get(SM, query_delay),
       {PTime, _} = string:to_integer(PTimeStr),
       Dist = PTime * 1500.0e-6,
-      io:format("LDistance: ~p~n", [Dist]),
+      %io:format("LDistance: ~p~n", [Dist]),
       [share:put(__, distance, Dist),
        fsm:clear_timeout(__, query_timeout),
        fsm:set_timeout(__, {ms, Delay}, query_timeout),
@@ -73,14 +73,14 @@ handle_event(MM, SM, Term) ->
     {async, {sendend, RAddr,"ims", STS, _}} ->
       share:put(SM, sts, STS);
 
-    {async, _, {recvims, _, RAddr, LAddr, TS, _, _, _, _, Payload}} ->
-      io:format("RAngles: ~p~n", [extractAM(Payload)]),
+    {async, _, {recvims, _, RAddr, LAddr, TS, _, _, _, _, _Payload}} ->
+      %io:format("RAngles: ~p~n", [extractAM(Payload)]),
       Delay = share:get(SM, query_delay),
       STS = share:get(SM, sts),
       AD = share:get(SM, answer_delay),
       PTime = (TS - STS - AD * 1000) / 2,
       Dist = PTime * 1500.0e-6,
-      io:format("LDistance: ~p~n", [Dist]),
+      %io:format("LDistance: ~p~n", [Dist]),
       [share:put(__, distance, Dist),
        fsm:clear_timeout(__, query_timeout),
        fsm:set_timeout(__, {ms, Delay}, query_timeout)
@@ -90,6 +90,9 @@ handle_event(MM, SM, Term) ->
       [fsm:clear_timeout(__, answer_timeout),
        fsm:run_event(MM, __#sm{event=sync_answer}, {})
       ](SM);
+
+    {nmea, {tnthpr, Heading, _, _Pitch, _, _Roll, _}} ->
+       share:put(SM, heading, Heading);
 
     _ -> SM
   end.
@@ -141,13 +144,17 @@ createIM(SM) ->
   RAddr = share:get(SM, dst),
   Pid = share:get(SM, pid),
   Dist = share:get(SM, distance),
+  Heading = share:get(SM, heading),
   Mode = share:get(SM, mode),
   Payload = case Dist of
               nothing ->
                 <<"N">>;
               _ ->
-                V = trunc(Dist * 10),
-                <<"D", V:16/little-unsigned-integer>>
+                V = round(Dist * 10),
+                H = round(Heading * 10),
+                <<"D", V:16/little-unsigned-integer,
+                       H:12/little-unsigned-integer,
+                       0:4>>
             end,
   case Mode of
     im  -> {at, {pid, Pid}, "*SENDIM", RAddr, ack, Payload};
@@ -155,13 +162,13 @@ createIM(SM) ->
   end.
 
 
-extractAM(Payload) ->
-  case Payload of
-    <<"L", Bearing:12/little-unsigned-integer,
-           Elevation:12/little-unsigned-integer,
-           Roll:12/little-unsigned-integer,
-           Pitch:12/little-unsigned-integer,
-           Yaw:12/little-unsigned-integer, _/bitstring>> ->
-      lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]);
-    _ -> nothing
-  end.
+%extractAM(Payload) ->
+%  case Payload of
+%    <<"L", Bearing:12/little-unsigned-integer,
+%           Elevation:12/little-unsigned-integer,
+%           Roll:12/little-unsigned-integer,
+%           Pitch:12/little-unsigned-integer,
+%           Yaw:12/little-unsigned-integer, _/bitstring>> ->
+%      lists:map(fun(A) -> A / 10 end, [Bearing, Elevation, Roll, Pitch, Yaw]);
+%    _ -> nothing
+%  end.
