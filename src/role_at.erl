@@ -532,8 +532,13 @@ parse_the_rest(Len, Rest) ->
 
 from_term(Term, #{waitsync := no} = Cfg) ->
   from_term_priv(Term, Cfg);
-from_term(_, _) ->
-  {error, at_sequenceError}.
+from_term(Term, #{txtime := TXTime} = Cfg) ->
+  case erlang:system_time(seconds) - TXTime of
+    D when D > 1 ->
+      from_term_priv(Term, Cfg);
+    _ ->
+      {error, at_sequenceError}
+  end.
 
 %% Term format:
 %% {raw,Data}
@@ -553,7 +558,7 @@ from_term_priv(Term, #{pid := Pid, filter := Filter, eol := EOL} = Cfg) ->
   %% io:format("Term = ~p~n",[Term]),
   {Request, Wait, Telegram} = from_term_helper(Term, Pid, Filter),
   [list_to_binary([prefix(Cfg), Telegram, EOL])
-  , Cfg#{waitsync => Wait, request => Request, telegram => Telegram}].
+  , Cfg#{waitsync => Wait, txtime => erlang:system_time(seconds), request => Request, telegram => Telegram}].
 
 %% NOTE: disabled @ZF not supported!!!
 %% {at,{pid,Pid},"*SEND",Dst,Data}} or {at,"*SEND",Dst,Data}

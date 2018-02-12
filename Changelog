@@ -11,6 +11,11 @@
 ### Changed
  - starting to maintain Changelog
  - WIP: refactoring to exclude role_alh
+ - at_seqeunceError doesn't cause reconnection to the modem,
+   generates {send_error, MM, Reason} event instead
+ - in case, if role_at waits modem answer longer than a second,
+   it doesn't produce at_sequenceError anymore and tries to send 
+   to the modem
  
 ### Added
  - added role_at_impl to mirror implementation side AT interface (supports only NET mode)

@@ -86,6 +86,10 @@ handle_cast({chan, MM, Term}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, MM#mm.role_id, Term}}}),
   handle_event(Module, MM, SM, Term);
 
+handle_cast({send_error, MM, Reason}, #sm{module = Module} = SM) ->
+  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {send_error, MM#mm.role_id, Reason}}}),
+  handle_event(Module, MM, SM, {send_error, Reason});
+
 handle_cast(final, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, final}}),
   {stop, normal, SM};

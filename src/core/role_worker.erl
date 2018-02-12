@@ -220,7 +220,7 @@ handle_cast_helper({_, {send, Term}}, #ifstate{mm = #mm{iface = {erlang,Target}}
   Target ! {bridge, Term},
   {noreply, State};
 
-handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Port, socket = Socket, fsm_pids = FSMs, cfg = Cfg} = State) ->
+handle_cast_helper({Src, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Port, socket = Socket, fsm_pids = FSMs, cfg = Cfg} = State) ->
   %% Self = self(),
   case B:from_term(Term, Cfg) of
     [Bin, NewCfg] ->
@@ -237,7 +237,7 @@ handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Po
       end,
       {noreply, State#ifstate{cfg = NewCfg}};
     {error, Reason} ->
-      broadcast(FSMs, {chan_error, MM, Reason}),
+      gen_server:cast(Src, {send_error, MM, Reason}),
       {noreply, State}
   end.
 
