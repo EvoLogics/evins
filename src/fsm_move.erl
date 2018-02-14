@@ -87,7 +87,7 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
                         {tide, Tau, _Pr, _Amp, _Phy, _Period} -> fsm:set_interval(SM_acc, {ms, Tau}, tide);
                         {stationary, _, _, _} -> fsm:set_timeout(SM_acc, {ms, 1}, stationary);
                         {stationary, _, _, _, Tau} -> fsm:set_interval(SM_acc, {ms, Tau}, stationary);
-                        {circle, _C, _R, _V, Tau, _Phy} -> fsm:set_interval(SM_acc, {ms, Tau}, circle);
+                        {circle, _C, _R, _V, Tau, _Phy} -> fsm:set_interval(SM_acc, {ms, Tau / share:get(SM, decim)}, circle);
                         {brownian,Tau,_,_,_,_,_,_,_,_,_} -> fsm:set_interval(SM_acc, {ms, Tau}, brownian);
                         {rocking, Tau} -> fsm:set_interval(SM_acc, {ms, Tau}, rocking);
                         _ ->
@@ -122,7 +122,7 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
     circle ->
       {circle, C, R, V, Tau, Phy} = share:get(SM, movement),
       {XO, YO, ZO} = C,
-      Phy1 = Phy + V*(Tau/1000)/R,
+      Phy1 = Phy + V*(Tau/1000/share:get(SM, decim))/R,
       %% X,Y,Z in ENU reference frame
       Xn = XO + R * math:cos(Phy1),
       Yn = YO + R * math:sin(Phy1),
@@ -194,7 +194,7 @@ flip_rot([ Heading, Pitch, Roll]) ->
 rock(SM, [E2,N2,_]=P2) ->
   K = 0.1,
   {tail, [P1,P0,_], Pitch_phase, Heading_prev, Roll_prev} = share:get(SM, tail),
-  Pitch_phase1 = Pitch_phase + 2 * math:pi() / 20, %% freq dependend, here update each second
+  Pitch_phase1 = Pitch_phase + 2 * math:pi() / 20 / share:get(SM, decim), %% freq dependend, here update each second
   Pitch = 5 * math:sin(Pitch_phase1) * math:pi() / 180,
   [E0,N0,_] = P0,
   [E1,N1,_] = P1,
@@ -212,15 +212,22 @@ rock(SM, [E2,N2,_]=P2) ->
 
 broadcast_nmea(SM, [X, Y, Z]) ->
   try  {MS,S,US} = os:timestamp(),
-       {{Year,Month,Day},{HH,MM,SS}} = calendar:now_to_universal_time({MS,S,US}),
-       Timestamp = 60*(60*HH + MM) + SS + US / 1000000,
-       Ref = share:get(SM, geodetic),
-       [Lat,Lon,Alt] = ecef2geodetic(enu2ecef([X,Y,Z], Ref)),
+       DecimMax = share:get(SM, decim),
+       case share:get(SM, pos_decim) of
+           N when N < DecimMax -> share:put(SM, pos_decim, N + 1);
+           _ ->
+               share:put(SM, pos_decim, 0),
 
-       GGA = {gga, Timestamp, Lat, Lon, 4,nothing,nothing,Alt,nothing,nothing,nothing},
-       ZDA = {zda, Timestamp, Day, Month, Year, 0, 0},
-       fsm:broadcast(SM, nmea, {send, {nmea, GGA}}),
-       fsm:broadcast(SM, nmea, {send, {nmea, ZDA}})
+               {{Year,Month,Day},{HH,MM,SS}} = calendar:now_to_universal_time({MS,S,US}),
+               Timestamp = 60*(60*HH + MM) + SS + US / 1000000,
+               Ref = share:get(SM, geodetic),
+               [Lat,Lon,Alt] = ecef2geodetic(enu2ecef([X,Y,Z], Ref)),
+
+               GGA = {gga, Timestamp, Lat, Lon, 4,nothing,nothing,Alt,nothing,nothing,nothing},
+               ZDA = {zda, Timestamp, Day, Month, Year, 0, 0},
+               fsm:broadcast(SM, nmea, {send, {nmea, GGA}}),
+               fsm:broadcast(SM, nmea, {send, {nmea, ZDA}})
+       end
   catch T:E -> ?ERROR(?ID, "~p:~p~n", [T,E])
   end.
 

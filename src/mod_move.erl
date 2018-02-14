@@ -78,6 +78,14 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   ShareID = #sm{share = Share},
   share:put(ShareID, lever_arm, Lever_arm),
 
+  Decim =
+  case lists:keyfind(decim, 1, ArgS) of
+      {decim, Dec} -> Dec;
+      _ -> 1
+  end,
+  share:put(ShareID, decim, Decim),
+  share:put(ShareID, pos_decim, 0),
+
   ?TRACE(Mod_ID, "Movements: ~140p~n", [Movements]),
   lists:map(fun({jitter, _, _, _} = Movement) ->
                 share:put(ShareID, jitter, Movement);
