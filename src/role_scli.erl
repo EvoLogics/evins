@@ -40,7 +40,7 @@ to_term(Tail, Chunk, Cfg) ->
   role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
 
 split(L, _Cfg) ->
-  Lst = lists:reverse(re:split(L,"\n")),
+Lst = lists:flatten(lists:reverse([re:split(I,"\r",[trim]) || I <- re:split(L,"\n")])),
   lists:reverse([{more, hd(Lst)} | tl(Lst)]).
 
 from_term({string, S}, Cfg) -> [list_to_binary(S ++ "\n"), Cfg];
