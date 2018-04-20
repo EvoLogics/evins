@@ -47,6 +47,7 @@
                  [{tide, moving},
                   {brownian, moving},
                   {circle, moving},
+                  {eight, moving},
                   {rocking, moving},
                   {stationary, moving}
                  ]},
@@ -88,6 +89,7 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
                         {stationary, _, _, _} -> fsm:set_timeout(SM_acc, {ms, 1}, stationary);
                         {stationary, _, _, _, Tau} -> fsm:set_interval(SM_acc, {ms, Tau}, stationary);
                         {circle, _C, _R, _V, Tau, _Phy} -> fsm:set_interval(SM_acc, {ms, Tau / share:get(SM, decim)}, circle);
+                        {eight, _C, _R, _V, Tau, _Phy} -> fsm:set_interval(SM_acc, {ms, Tau / share:get(SM, decim)}, eight);
                         {brownian,Tau,_,_,_,_,_,_,_,_,_} -> fsm:set_interval(SM_acc, {ms, Tau}, brownian);
                         {rocking, Tau} -> fsm:set_interval(SM_acc, {ms, Tau}, rocking);
                         _ ->
@@ -129,6 +131,17 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       Zn = ZO,
       broadcast_position(SM, [Xn,Yn,Zn]),
       share:put(SM, movement, {circle, C, R, V, Tau, Phy1}),
+      fsm:set_event(SM, eps);
+    eight ->
+      {eight, C, R, V, Tau, Phy} = share:get(SM, movement),
+      {XO, YO, ZO} = C,
+      Phy1 = Phy + V*(Tau/1000/share:get(SM, decim))/R,
+      %% X,Y,Z in ENU reference frame
+      Xn = XO + R * math:sin(Phy1),
+      Yn = YO + R * math:sin(Phy1) * math:cos(Phy1),
+      Zn = ZO,
+      broadcast_position(SM, [Xn,Yn,Zn]),
+      share:put(SM, movement, {eight, C, R, V, Tau, Phy1}),
       fsm:set_event(SM, eps);
     brownian ->
       {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, X, Y, Z} = share:get(SM, movement),
