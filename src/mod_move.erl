@@ -93,6 +93,10 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
                 share:put(ShareID, tide, Movement);
                ({rocking, _Tau} = Movement) ->
                 share:put(ShareID, rocking, Movement);
+               ({rotate, _Tau} = Movement) ->
+                share:put(ShareID, rocking, Movement);
+               ({freeze, _Tau} = Movement) ->
+                share:put(ShareID, rocking, Movement);
                (_) ->
                 nothing
             end, Movements),
@@ -108,6 +112,8 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
        ({stationary, _, _, _} = Movement) ->
         Init_movement(Movement);
        ({circle, _C, _R, _V, _Tau, _Phy} = Movement) ->
+        Init_movement(Movement);
+       ({eight, _C, _R, _V, _Tau, _Phy} = Movement) ->
         Init_movement(Movement);
        ({brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax}) ->
         Xs = (rand:uniform() * (XMax - XMin)) + XMin,
