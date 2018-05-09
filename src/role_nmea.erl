@@ -53,7 +53,9 @@ start(Role_ID, Mod_ID, MM) ->
       false -> #{in => all}
     end,
   Cfg = maps:merge(Out,In),
-  role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
+  {ok, RSplit} = re:compile("\r?\n"),
+  {ok, RParse} = re:compile("^\\\$((P|..)([^,]+),([^*]+))(\\\*(..)|)",[dotall]),
+  role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg#{rsplit => RSplit, rparse => RParse}).
 
 ctrl(_,Cfg) -> Cfg.
 
@@ -83,11 +85,11 @@ checksum(<<>>) -> 0;
 checksum([H|T]) -> H bxor checksum(T);
 checksum(<<H,T/binary>>) -> H bxor checksum(T).
 
-split(L, Cfg) ->
-  case re:split(L,"\r?\n",[{parts,2}]) of
+split(L, #{rsplit := RSplit, rparse := RParse} = Cfg) ->
+  case re:split(L,RSplit,[{parts,2}]) of
     [Sentense,Rest] ->
       %% NMEA checksum might be optional
-      case re:run(Sentense,"^\\\$((P|..)([^,]+),([^*]+))(\\\*(..)|)",[dotall,{capture,[1,3,4,6],binary}]) of
+      case re:run(Sentense,RParse,[{capture,[1,3,4,6],binary}]) of
         {match, [Raw,Cmd,Params,XOR]} ->
           CS = checksum(Raw),
           Flag = case binary_to_list(XOR) of
