@@ -278,7 +278,7 @@ extract_evolbp(Params) ->
   try
     [BUTC,BArray,BAddress,BStatus,_,BLat,BLon,BAlt,BPressure,_,_,_,Bsmean,Bstd] = binary:split(Params,<<",">>,[global]),
     Basenodes = if BArray == <<>> -> [];
-                   true -> [binary_to_integer(Bnode) || Bnode <- binary:split(BArray, <<":">>)]
+                   true -> [binary_to_integer(Bnode) || Bnode <- binary:split(BArray, <<":">>, [global])]
                 end,
     <<BHH:2/binary,BMM:2/binary,BSS/binary>> = BUTC,
     SS = case binary:split(BSS,<<".">>) of
@@ -507,7 +507,7 @@ extract_evotdp(Params) ->
     [BTransceiver,BMax_range,BSequence,BLAx,BLAy,BLAz,BHL,BYaw,BPitch,BRoll] = binary:split(Params,<<",">>,[global]),
     [Transceiver,Max_range] = [safe_binary_to_integer(X) || X <- [BTransceiver,BMax_range]],
     [LAx,LAy,LAz,HL,Yaw,Pitch,Roll] = [safe_binary_to_float(X) || X <- [BLAx,BLAy,BLAz,BHL,BYaw,BPitch,BRoll]],
-    Sequence = [safe_binary_to_integer(X) || X <- binary:split(BSequence,<<":">>)],
+    Sequence = [safe_binary_to_integer(X) || X <- binary:split(BSequence,<<":">>, [global])],
     {nmea, {evotdp, Transceiver, Max_range, Sequence, LAx,LAy,LAz,HL,Yaw,Pitch,Roll}}
   catch 
     error:_ -> {error, {parseError, evotdp, Params}}
@@ -558,7 +558,7 @@ extract_evorcm(Params) ->
     RX_utc = extract_utc(BRX),
     [RX_phy,Src,TS,RSSI,Int] = [safe_binary_to_integer(X) || X <- [BRXP,BSrc,BTS,BRSSI,BInt]],
     PSrc = safe_binary_to_float(BPSrc),
-    [AS,TSS,TDS,TDOAS] = [[safe_binary_to_integer(X) || X <- binary:split(Y,<<":">>)]
+    [AS,TSS,TDS,TDOAS] = [[safe_binary_to_integer(X) || X <- binary:split(Y,<<":">>, [global])]
                           || Y <- [BAS,BTSS,BTDS,BTDOAS]],
     {nmea, {evorcm,RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS}}
   catch
@@ -579,7 +579,7 @@ extract_evoseq(Params) ->
   try
     [BSID,BTotal,BMaddr,BRange,BSeq] = binary:split(Params,<<",">>,[global]),
     [Sid,Total,MAddr,Range] = [safe_binary_to_integer(X) || X <- [BSID,BTotal,BMaddr,BRange]],
-    Seq = [safe_binary_to_integer(X) || X <- binary:split(BSeq,<<":">>)],
+    Seq = [safe_binary_to_integer(X) || X <- binary:split(BSeq,<<":">>, [global])],
     {nmea, {evoseq,Sid,Total,MAddr,Range,Seq}}
   catch error:_ -> {error, {parseError, evoseq, Params}}
   end.
@@ -830,7 +830,7 @@ extract_evoctl(<<"BUSBL,",Params/binary>>) ->
              <<>> -> nothing;
              <<"S">> -> silent;
              <<"T">> -> transponder;
-             _ -> [binary_to_integer(BI) || BI <- binary:split(BMode, <<":">>)]
+             _ -> [binary_to_integer(BI) || BI <- binary:split(BMode, <<":">>, [global])]
            end,
     [IT, MP, AD] = [safe_binary_to_integer(X) || X <- [BIT, BMP, BAD]],
     {nmea, {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}}}
@@ -852,7 +852,7 @@ extract_evoctl(<<"SBL,",Params/binary>>) ->
              <<>> -> nothing;
              <<"S">> -> silent;
              <<"T">> -> transponder;
-             _ -> [binary_to_integer(BI) || BI <- binary:split(BMode, <<":">>)]
+             _ -> [binary_to_integer(BI) || BI <- binary:split(BMode, <<":">>, [global])]
            end,
     [IT, MP, AD] = [safe_binary_to_integer(Item) || Item <- [BIT, BMP, BAD]],
     {nmea, {evoctl, sbl, {X, Y, Z, Mode, IT, MP, AD}}};
@@ -870,7 +870,7 @@ extract_evoctl(<<"SUSBL,",Params/binary>>) ->
     [MRange,SVel] = [safe_binary_to_float(BV) || BV <- [BMRange, BSVel]],
     Seq = case BSeq of
             <<>> -> nothing;
-            _ -> [binary_to_integer(BI) || BI <- binary:split(BSeq, <<":">>)]
+            _ -> [binary_to_integer(BI) || BI <- binary:split(BSeq, <<":">>, [global])]
           end,
     {nmea, {evoctl, susbl, {Seq, MRange, SVel}}}
   catch
