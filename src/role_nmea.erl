@@ -53,9 +53,8 @@ start(Role_ID, Mod_ID, MM) ->
       false -> #{in => all}
     end,
   Cfg = maps:merge(Out,In),
-  {ok, RSplit} = re:compile("\r?\n"),
   {ok, RParse} = re:compile("^\\\$((P|..)([^,]+),([^*]+))(\\\*(..)|)",[dotall]),
-  role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg#{rsplit => RSplit, rparse => RParse}).
+  role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg#{re => RParse}).
 
 ctrl(_,Cfg) -> Cfg.
 
@@ -85,8 +84,8 @@ checksum(<<>>) -> 0;
 checksum([H|T]) -> H bxor checksum(T);
 checksum(<<H,T/binary>>) -> H bxor checksum(T).
 
-split(L, #{rsplit := RSplit, rparse := RParse} = Cfg) ->
-  case re:split(L,RSplit,[{parts,2}]) of
+split(L, #{re := RParse} = Cfg) ->
+  case binary:split(L,[<<"\r\n">>, <<"\n">>]) of
     [Sentense,Rest] ->
       %% NMEA checksum might be optional
       case re:run(Sentense,RParse,[{capture,[1,3,4,6],binary}]) of
@@ -145,7 +144,7 @@ extract_utc(nothing) ->
   nothing;
 extract_utc(BUTC) ->
   <<BHH:2/binary,BMM:2/binary,BSS/binary>> = BUTC,
-  SS = case re:split(BSS,"\\\.") of
+  SS = case binary:split(BSS,<<".">>) of
          [_,_] -> binary_to_float(BSS);
          _ -> binary_to_integer(BSS)
        end,
@@ -184,7 +183,7 @@ extract_geodata(BUTC, BLat, BN, BLon, BE) ->
 extract_rmc(Params) ->
   try
     [BUTC,BStatus,BLat,BN,BLon,BE,BSpeed,BTangle,BDate,BMagvar,BME] = 
-      lists:sublist(re:split(Params, ","),11),
+      lists:sublist(binary:split(Params,<<",">>,[global]),11),
     Status = case BStatus of <<"A">> -> active; _ -> void end,
     [UTC, Lat, Lon] = extract_geodata(BUTC, BLat, BN, BLon, BE),
     [Speed,Tangle,MagvarV] = [safe_binary_to_float(X) || X <- [BSpeed,BTangle,BMagvar]],
@@ -218,7 +217,7 @@ extract_rmc(Params) ->
 %% 14   = Diff. reference station ID#
 extract_gga(Params) ->
   try
-    [BUTC,BLat,BN,BLon,BE,BQ,BSat,BHDil,BAlt,<<"M">>,BGeoid,<<"M">>,BAge,BID] = re:split(Params, ","),
+    [BUTC,BLat,BN,BLon,BE,BQ,BSat,BHDil,BAlt,<<"M">>,BGeoid,<<"M">>,BAge,BID] = binary:split(Params,<<",">>,[global]),
     [UTC, Lat, Lon] = extract_geodata(BUTC, BLat, BN, BLon, BE),
     [Q,Sat,ID] = [safe_binary_to_integer(X) || X <- [BQ,BSat,BID]],
     [HDil,Alt,Geoid,Age] = [safe_binary_to_float(X) || X <- [BHDil,BAlt,BGeoid,BAge]],
@@ -236,9 +235,9 @@ extract_gga(Params) ->
 %% xx = Local zone minutes description (same sign as hours)
 extract_zda(Params) ->
   try
-    [BUTC,BD,BM,BY,BZD,BZM] = re:split(Params, ","),
+    [BUTC,BD,BM,BY,BZD,BZM] = binary:split(Params,<<",">>,[global]),
     <<BHH:2/binary,BMM:2/binary,BSS/binary>> = BUTC,
-    SS = case re:split(BSS,"\\\.") of
+    SS = case binary:split(BSS,<<".">>) of
            [_,_] -> binary_to_float(BSS);
            _ -> binary_to_integer(BSS)
          end,
@@ -259,7 +258,7 @@ extract_zda(Params) ->
 %% D - undefined position
 extract_evolbl(Params) ->
   try
-    [BType,_,BLoc,BSer,BLat,BLon,BAlt,BPressure,_,_,_] = re:split(Params, ","),
+    [BType,_,BLoc,BSer,BLat,BLon,BAlt,BPressure,_,_,_] = binary:split(Params,<<",">>,[global]),
     Type = binary_to_list(BType),
     [Loc,Ser] = [safe_binary_to_integer(X) || X <- [BLoc,BSer]],
     [Lat,Lon,Alt,Pressure] = [safe_binary_to_float(X) || X <- [BLat,BLon,BAlt,BPressure]],
@@ -277,12 +276,12 @@ extract_evolbl(Params) ->
 %% Coordinates r (degrees, 7 digits)
 extract_evolbp(Params) ->
   try
-    [BUTC,BArray,BAddress,BStatus,_,BLat,BLon,BAlt,BPressure,_,_,_,Bsmean,Bstd] = re:split(Params, ","),
+    [BUTC,BArray,BAddress,BStatus,_,BLat,BLon,BAlt,BPressure,_,_,_,Bsmean,Bstd] = binary:split(Params,<<",">>,[global]),
     Basenodes = if BArray == <<>> -> [];
-                   true -> [binary_to_integer(Bnode) || Bnode <- re:split(BArray, ":")]
+                   true -> [binary_to_integer(Bnode) || Bnode <- binary:split(BArray, <<":">>)]
                 end,
     <<BHH:2/binary,BMM:2/binary,BSS/binary>> = BUTC,
-    SS = case re:split(BSS,"\\\.") of
+    SS = case binary:split(BSS,<<".">>) of
            [_,_] -> binary_to_float(BSS);
            _ -> binary_to_integer(BSS)
          end,
@@ -306,7 +305,7 @@ extract_evolbp(Params) ->
 %% Sv[1-4]      x.x Sound velocity for the previous depth [m/s].
 extract_simsvt(Params) ->
   try
-    [<<"P">>,BTotal,BIdx,BD1,DS1,BD2,BS2,BD3,BS3,BD4,BS4] = re:split(Params, ","),
+    [<<"P">>,BTotal,BIdx,BD1,DS1,BD2,BS2,BD3,BS3,BD4,BS4] = binary:split(Params,<<",">>,[global]),
     [Total,Idx] = [binary_to_integer(X) || X <- [BTotal,BIdx]],
     Lst = foldl(fun({BD,BS},Acc) ->
                     case {safe_binary_to_float(BD),safe_binary_to_float(BS)} of
@@ -328,7 +327,7 @@ extract_simsvt(Params) ->
 %% Example: $PSXN,23,0.02,-0.76,330.56,*0B
 extract_sxn(Params) ->
   try
-    [Type | Rest] = lists:sublist(re:split(Params, ","),5),
+    [Type | Rest] = lists:sublist(binary:split(Params,<<",">>,[global]),5),
     case Type of
       <<"23">> ->
         [Roll, Pitch, Heading, Heave] = [safe_binary_to_float(X) || X <- Rest],
@@ -346,7 +345,7 @@ extract_sxn(Params) ->
 %% Type    a_        Type N=gps or G=Gyro.
 extract_sat(Params) ->
   try
-    [Type | Rest] = lists:sublist(re:split(Params, ","),6),
+    [Type | Rest] = lists:sublist(binary:split(Params,<<",">>,[global]),6),
     case Type of
       <<"HPR">> ->
         [BUTC,BHeading,BPitch,BRoll,BType] = Rest,
@@ -375,7 +374,7 @@ extract_sat(Params) ->
 %% $PIXSE,POSITI,53.10245714,8.83994382,-0.115*71
 extract_ixse(Params) ->
   try
-    [Type | Rest] = lists:sublist(re:split(Params, ","),4),
+    [Type | Rest] = lists:sublist(binary:split(Params,<<",">>,[global]),4),
     case Type of
       <<"ATITUD">> ->
         [BRoll,BPitch] = Rest,
@@ -407,7 +406,7 @@ extract_ixse(Params) ->
 %% $PASHR,200345.00,78.00,T,-3.00,+2.00,+0.00,1.000,1.000,1.000,1,1*32
 extract_ashr(Params) ->
   try
-    [BUTC,BHeading,BTrue,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD,BGPSq,BINSq] = re:split(Params, ","),
+    [BUTC,BHeading,BTrue,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD,BGPSq,BINSq] = binary:split(Params,<<",">>,[global]),
     UTC = extract_utc(BUTC),
     [Heading,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD] = [safe_binary_to_float(X) || X <- [BHeading,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD]],
     [GPSq,INSq] = [safe_binary_to_integer(X) || X <- [BGPSq,BINSq]],
@@ -423,7 +422,7 @@ extract_ashr(Params) ->
 %% xxx.xx  x.x       Heading in degrees true.
 extract_rdid(Params) ->
   try
-    [Pitch,Roll,Heading] = [safe_binary_to_float(X) || X <- lists:sublist(re:split(Params, ","),3)],
+    [Pitch,Roll,Heading] = [safe_binary_to_float(X) || X <- lists:sublist(binary:split(Params,<<",">>,[global]),3)],
     {nmea, {rdid, Pitch, Roll, Heading}}
   catch error:_ -> {error, {parseError, rdid, Params}}
   end.
@@ -451,7 +450,7 @@ extract_rdid(Params) ->
 extract_hoct(Params) ->
   S = fun(<<"T">>) -> valid; (<<"E">>) -> invalid; ("I") -> initialization; (_) -> unknown end,
   try
-    [Ver | Rest] = lists:sublist(re:split(Params, ","),19),
+    [Ver | Rest] = lists:sublist(binary:split(Params,<<",">>,[global]),19),
     case Ver of
       <<"01">> ->
         [BUTC,BTmS,BLt,BHd,BHdS,BRl,BRlS,BPt,BPtS,BHvI,BHvS,BHv,BSr,BSw,BHvR,BSrR,BSwR,BHdR] = Rest,
@@ -485,7 +484,7 @@ extract_evo(Params) ->
 %% Down    x.x downwards offset in meters
 extract_evotap(Params) ->
   try
-    [BForward,BRight,BDown,_,_,_] = re:split(Params, ","),
+    [BForward,BRight,BDown,_,_,_] = binary:split(Params,<<",">>,[global]),
     [Forward,Right,Down] = [safe_binary_to_float(X) || X <- [BForward,BRight,BDown]],
     {nmea, {evotap,Forward,Right,Down}}
   catch
@@ -505,10 +504,10 @@ extract_evotap(Params) ->
 %% Roll        x.x  NED reference frame adjustment, roll in degrees  (Spare)
 extract_evotdp(Params) ->
   try
-    [BTransceiver,BMax_range,BSequence,BLAx,BLAy,BLAz,BHL,BYaw,BPitch,BRoll] = re:split(Params,","),
+    [BTransceiver,BMax_range,BSequence,BLAx,BLAy,BLAz,BHL,BYaw,BPitch,BRoll] = binary:split(Params,<<",">>,[global]),
     [Transceiver,Max_range] = [safe_binary_to_integer(X) || X <- [BTransceiver,BMax_range]],
     [LAx,LAy,LAz,HL,Yaw,Pitch,Roll] = [safe_binary_to_float(X) || X <- [BLAx,BLAy,BLAz,BHL,BYaw,BPitch,BRoll]],
-    Sequence = [safe_binary_to_integer(X) || X <- re:split(BSequence,":")],
+    Sequence = [safe_binary_to_integer(X) || X <- binary:split(BSequence,<<":">>)],
     {nmea, {evotdp, Transceiver, Max_range, Sequence, LAx,LAy,LAz,HL,Yaw,Pitch,Roll}}
   catch 
     error:_ -> {error, {parseError, evotdp, Params}}
@@ -526,7 +525,7 @@ extract_evotdp(Params) ->
 %% HL         x.x housing arm from pressure sensor to transducer in meters (down is positive)
 extract_evotpc(Params) ->
   try
-    [BPair,BPraw,BPtrans,BTransS,BYaw,BPitch,BRoll,BAHRSS,BHL] = re:split(Params, ","),
+    [BPair,BPraw,BPtrans,BTransS,BYaw,BPitch,BRoll,BAHRSS,BHL] = binary:split(Params,<<",">>,[global]),
     [Pair,Praw,Ptrans,HL,Yaw,Pitch,Roll] = [safe_binary_to_float(X) || X <- [BPair,BPraw,BPtrans,BHL,BYaw,BPitch,BRoll]],
     Status = fun(<<"">>) -> undefined;
                 (<<$R>>) -> raw;
@@ -555,11 +554,11 @@ extract_evotpc(Params) ->
 %% TDOA1:...:TDOAn x:x:...:x Time difference of arrival between Src and Ai
 extract_evorcm(Params) ->
   try
-    [BRX,BRXP,BSrc,BRSSI,BInt,BPSrc,BTS,BAS,BTSS,BTDS,BTDOAS] = re:split(Params, ","),
+    [BRX,BRXP,BSrc,BRSSI,BInt,BPSrc,BTS,BAS,BTSS,BTDS,BTDOAS] = binary:split(Params,<<",">>,[global]),
     RX_utc = extract_utc(BRX),
     [RX_phy,Src,TS,RSSI,Int] = [safe_binary_to_integer(X) || X <- [BRXP,BSrc,BTS,BRSSI,BInt]],
     PSrc = safe_binary_to_float(BPSrc),
-    [AS,TSS,TDS,TDOAS] = [[safe_binary_to_integer(X) || X <- re:split(Y,":")]
+    [AS,TSS,TDS,TDOAS] = [[safe_binary_to_integer(X) || X <- binary:split(Y,<<":">>)]
                           || Y <- [BAS,BTSS,BTDS,BTDOAS]],
     {nmea, {evorcm,RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS}}
   catch
@@ -578,9 +577,9 @@ extract_evorcm(Params) ->
 %% store sequences on reception of total-1
 extract_evoseq(Params) ->
   try
-    [BSID,BTotal,BMaddr,BRange,BSeq] = re:split(Params, ","),
+    [BSID,BTotal,BMaddr,BRange,BSeq] = binary:split(Params,<<",">>,[global]),
     [Sid,Total,MAddr,Range] = [safe_binary_to_integer(X) || X <- [BSID,BTotal,BMaddr,BRange]],
-    Seq = [safe_binary_to_integer(X) || X <- re:split(BSeq,":")],
+    Seq = [safe_binary_to_integer(X) || X <- binary:split(BSeq,<<":">>)],
     {nmea, {evoseq,Sid,Total,MAddr,Range,Seq}}
   catch error:_ -> {error, {parseError, evoseq, Params}}
   end.
@@ -606,7 +605,7 @@ extract_evoseq(Params) ->
 %% HL         x.x       housing arm from pressure sensor to transducer in meters (down is positive)
 extract_evorct(Params) ->
   try
-    [BTX,BTXP,BLat,BN,BLon,BE,BAlt,BGPSS,BP,BPS,BYaw,BPitch,BRoll,BAHRSS,BLx,BLy,BLz,BHL] = re:split(Params, ","),
+    [BTX,BTXP,BLat,BN,BLon,BE,BAlt,BGPSS,BP,BPS,BYaw,BPitch,BRoll,BAHRSS,BLx,BLy,BLz,BHL] = binary:split(Params,<<",">>,[global]),
     [TX_utc, Lat, Lon] = extract_geodata(BTX, BLat, BN, BLon, BE),
     Status = fun(<<"">>) -> undefined;
                 (<<$R>>) -> raw;
@@ -646,7 +645,7 @@ extract_evorct(Params) ->
 %%          $PEVORCP,S,A,,0.0,P,,B,,
 extract_evorcp(Params) ->
   try
-    [BType,BStatus,BSub,BInt,BMode,BCycles,BCast,_,_] = re:split(Params, ","),
+    [BType,BStatus,BSub,BInt,BMode,BCycles,BCast,_,_] = binary:split(Params,<<",">>,[global]),
     Type = case BType of
              <<"G">> -> georeference;
              <<"S">> -> standard;
@@ -697,7 +696,7 @@ extract_evorcp(Params) ->
 extract_evossb(Params) ->
   try
     [BUTC,BTID,BDID,BS,BErr,BCS,BFS,BX,BY,BZ,BAcc,BPr,BVel] = 
-      lists:sublist(re:split(Params, ","),13),
+      lists:sublist(binary:split(Params,<<",">>,[global]),13),
     UTC = extract_utc(BUTC),
     TID = safe_binary_to_integer(BTID),
     DID = safe_binary_to_integer(BDID),
@@ -737,7 +736,7 @@ extract_evossb(Params) ->
 extract_evossa(Params) ->
   try
     [BUTC,BTID,BDID,BS,BErr,BCS,BFS,BB,BE,BAcc,BPr,BVel] = 
-      lists:sublist(re:split(Params, ","),12),
+      lists:sublist(binary:split(Params,<<",">>,[global]),12),
     UTC = extract_utc(BUTC),
     TID = safe_binary_to_integer(BTID),
     DID = safe_binary_to_integer(BDID),
@@ -775,7 +774,7 @@ extract_evossa(Params) ->
 extract_evogps(Params) ->
   try
     [BUTC,BTID,BDID,BM,BLat,BN,BLon,BE,BAlt] =
-      lists:sublist(re:split(Params, ","),9),
+      lists:sublist(binary:split(Params,<<",">>,[global]),9),
     [UTC, Lat, Lon] = extract_geodata(BUTC, BLat, BN, BLon, BE),
     TID = safe_binary_to_integer(BTID),
     DID = safe_binary_to_integer(BDID),
@@ -798,7 +797,7 @@ extract_evogps(Params) ->
 extract_evorpy(Params) ->
   try
     [BUTC,BTID,BDID,BM,BRoll,BPitch,BYaw] =
-      lists:sublist(re:split(Params, ","),7),
+      lists:sublist(binary:split(Params,<<",">>,[global]),7),
     UTC = extract_utc(BUTC),
     TID = safe_binary_to_integer(BTID),
     DID = safe_binary_to_integer(BDID),
@@ -824,14 +823,14 @@ extract_evorpy(Params) ->
 extract_evoctl(<<"BUSBL,",Params/binary>>) ->
   try
     [BLat,BN,BLon,BE,BAlt,BMode,BIT,BMP,BAD] = 
-      lists:sublist(re:split(Params, ","),9),
+      lists:sublist(binary:split(Params,<<",">>,[global]),9),
     [_, Lat, Lon] = safe_extract_geodata(nothing, BLat, BN, BLon, BE),
     Alt = safe_binary_to_float(BAlt),
     Mode = case BMode of
              <<>> -> nothing;
              <<"S">> -> silent;
              <<"T">> -> transponder;
-             _ -> [binary_to_integer(BI) || BI <- re:split(BMode, ":")]
+             _ -> [binary_to_integer(BI) || BI <- binary:split(BMode, <<":">>)]
            end,
     [IT, MP, AD] = [safe_binary_to_integer(X) || X <- [BIT, BMP, BAD]],
     {nmea, {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}}}
@@ -847,13 +846,13 @@ extract_evoctl(<<"BUSBL,",Params/binary>>) ->
 extract_evoctl(<<"SBL,",Params/binary>>) ->
   %% try
     [BX,BY,BZ,BMode,BIT,BMP,BAD] = 
-      lists:sublist(re:split(Params, ","),9),
+      lists:sublist(binary:split(Params,<<",">>,[global]),9),
     [X,Y,Z] = [safe_binary_to_float(BV) || BV <- [BX, BY, BZ]],
     Mode = case BMode of
              <<>> -> nothing;
              <<"S">> -> silent;
              <<"T">> -> transponder;
-             _ -> [binary_to_integer(BI) || BI <- re:split(BMode, ":")]
+             _ -> [binary_to_integer(BI) || BI <- binary:split(BMode, <<":">>)]
            end,
     [IT, MP, AD] = [safe_binary_to_integer(Item) || Item <- [BIT, BMP, BAD]],
     {nmea, {evoctl, sbl, {X, Y, Z, Mode, IT, MP, AD}}};
@@ -867,11 +866,11 @@ extract_evoctl(<<"SBL,",Params/binary>>) ->
 extract_evoctl(<<"SUSBL,",Params/binary>>) ->
   try
     [BMRange, BSVel, BSeq] =
-      lists:sublist(re:split(Params, ","), 3),
+      lists:sublist(binary:split(Params,<<",">>,[global]), 3),
     [MRange,SVel] = [safe_binary_to_float(BV) || BV <- [BMRange, BSVel]],
     Seq = case BSeq of
             <<>> -> nothing;
-            _ -> [binary_to_integer(BI) || BI <- re:split(BSeq, ":")]
+            _ -> [binary_to_integer(BI) || BI <- binary:split(BSeq, <<":">>)]
           end,
     {nmea, {evoctl, susbl, {Seq, MRange, SVel}}}
   catch
@@ -890,7 +889,7 @@ extract_evoctl(Params) ->
 %% Example: $HCHDG,271.1,10.7,E,12.2,W*52
 extract_hdg(Params) ->
   try
-    [BHeading,BDev,BDevS,BVar,BVarS] = re:split(Params, ","),
+    [BHeading,BDev,BDevS,BVar,BVarS] = binary:split(Params,<<",">>,[global]),
     [Heading,Dev,Var] = [safe_binary_to_float(X) || X <- [BHeading,BDev,BVar]],
     DevS = case BDevS of <<"E">> -> 1; _ -> -1 end,
     VarS = case BVarS of <<"E">> -> 1; _ -> -1 end,
@@ -905,7 +904,7 @@ extract_hdg(Params) ->
 %% Example: $HCHDT,86.2,T*15
 extract_hdt(Params) ->
   try
-    [BHeading,<<"T">>] = re:split(Params, ","),
+    [BHeading,<<"T">>] = binary:split(Params,<<",">>,[global]),
     Heading = safe_binary_to_float(BHeading),
     {nmea, {hdt, Heading}}
   catch
@@ -922,7 +921,7 @@ extract_hdt(Params) ->
 %% Example: $HCXDR,A,-0.8,D,PITCH,A,0.8,D,ROLL,G,122,,MAGX,G,1838,,MAGY,G,-667,,MAGZ,G,1959,,MAGT*11
 extract_xdr(Params) ->
   try
-    BLst = re:split(Params, ","),
+    BLst = binary:split(Params,<<",">>,[global]),
     Lst = lists:map(fun(Idx) ->
                         [BType,BData,BUnits,BName] = lists:sublist(BLst, Idx, 4),
                         Data = safe_binary_to_float(BData),
@@ -943,7 +942,7 @@ extract_xdr(Params) ->
 %% Example: $GPVTG,054.7,T,034.4,M,005.5,N,010.2,K*48
 extract_vtg(Params) ->
   try
-    [BTMGT,<<"T">>,BTMGM,<<"M">>,BKnots,<<"N">>,BKPH,<<"K">>] = lists:sublist(re:split(Params, ","),8),
+    [BTMGT,<<"T">>,BTMGM,<<"M">>,BKnots,<<"N">>,BKPH,<<"K">>] = lists:sublist(binary:split(Params,<<",">>,[global]),8),
     %% optional FAA mode dropped
     %% KPH = Knots * 0.539956803456
     [TMGT,TMGM,Knots,_KPH] = [safe_binary_to_float(X) || X <- [BTMGT,BTMGM,BKnots,BKPH]],
@@ -967,7 +966,7 @@ extract_vtg(Params) ->
 %% $PTNTHPR,90,N,29,N,15,N*1C
 extract_tnthpr(Params) ->
   try
-    [BHeading,BHStatus,BPitch,BPStatus,BRoll,BRStatus] = re:split(Params, ","),
+    [BHeading,BHStatus,BPitch,BPStatus,BRoll,BRStatus] = binary:split(Params,<<",">>,[global]),
     [Heading, Pitch, Roll] = [case binary:split(X, <<".">>) of
                                 [<<>>]  -> nothing;
                                 [_I]    -> binary_to_integer(X) * 360 / 64000;  %% NATO mils to degrees
@@ -982,7 +981,7 @@ extract_tnthpr(Params) ->
 
 extract_smcs(Params) ->
   try
-    [BRoll,BPitch,BHeave] = re:split(Params, ","),
+    [BRoll,BPitch,BHeave] = binary:split(Params,<<",">>,[global]),
     [Roll, Pitch, Heave] = [ safe_binary_to_float(X) || X <- [BRoll,BPitch,BHeave]],
     {nmea, {smcs, Roll, Pitch, Heave}}
   catch
@@ -998,7 +997,7 @@ extract_smcs(Params) ->
 %% Example: $SDDBS,2348.56,f,715.78,M,391.43,F*4B
 extract_dbs(Params) ->
   try
-    [_BDf,<<"f">>,BDM,<<"M">>,_BDF,<<"F">>] = re:split(Params, ","),
+    [_BDf,<<"f">>,BDM,<<"M">>,_BDF,<<"F">>] = binary:split(Params,<<",">>,[global]),
     DM = safe_binary_to_float(BDM),
     {nmea, {dbs, DM}}
   catch
@@ -1015,7 +1014,7 @@ extract_dbs(Params) ->
 %% Example: $SDDBT,8.1,f,2.4,M,1.3,F*0B
 extract_dbt(Params) ->
   try
-    [_BDf,<<"f">>,BDM,<<"M">>,_BDF,<<"F">>] = re:split(Params, ","),
+    [_BDf,<<"f">>,BDM,<<"M">>,_BDF,<<"F">>] = binary:split(Params,<<",">>,[global]),
     DM = safe_binary_to_float(BDM),
     {nmea, {dbt, DM}}
   catch
