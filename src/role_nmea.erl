@@ -994,7 +994,7 @@ safe_fmt(Fmts,Values) ->
                ({Fmt,V}) ->
                 T = hd(lists:reverse(Fmt)),
                 Value = case T of $f -> float(V); _ -> V end,
-                flatten(io_lib:format(Fmt,[Value]))
+                (io_lib:format(Fmt,[Value]))
             end, lists:zip(Fmts,Values)).
 
 safe_fmt(Fmts, Values, Join) ->
@@ -1003,7 +1003,7 @@ safe_fmt(Fmts, Values, Join) ->
                  ({Fmt,V},Acc)     ->
                   T = hd(lists:reverse(Fmt)),
                   Value = case T of $f -> float(V); _ -> V end,
-                  [Join, lists:flatten(io_lib:format(Fmt,[Value])) | Acc]
+                  [Join, (io_lib:format(Fmt,[Value])) | Acc]
               end, "", Z).
 
 
@@ -1039,7 +1039,7 @@ lon_format(Lon) ->
 build_zda(UTC,DD,MM,YY,Z1,Z2) ->
   SUTC = utc_format(UTC),
   SDate = io_lib:format(",~2.10.0B,~2.10.0B,~4.10.0B,~2.10.0B,~2.10.0B", [DD,MM,YY,Z1,Z2]),
-  flatten(["GPZDA", SUTC, SDate]).
+  (["GPZDA", SUTC, SDate]).
 
 %% Example: $GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
 build_rmc(UTC,Status,Lat,Lon,Speed,Tangle,Date,Magvar) ->
@@ -1051,7 +1051,7 @@ build_rmc(UTC,Status,Lat,Lon,Speed,Tangle,Date,Magvar) ->
   SDate = io_lib:format("~2.10.0B~2.10.0B~2.10.0B",[DD,MM,YY rem 100]),
   ME = case Magvar < 0 of true -> "W"; _ -> "E" end,
   SRest = safe_fmt(["~5.1.0f","~5.1.0f","~s","~5.1.0f","~s"], [Speed,Tangle,SDate,abs(Magvar),ME], ","),
-  flatten(["GPRMC",SUTC,SStatus,SLat,SLon,SRest]).
+  (["GPRMC",SUTC,SStatus,SLat,SLon,SRest]).
 
 %% hhmmss.ss,llll.ll,a,yyyyy.yy,a,x,xx,x.x,x.x,M, x.x,M,x.x,xxxx
 build_gga(UTC,Lat,Lon,Q,Sat,HDil,Alt,Geoid,Age,ID) ->
@@ -1060,12 +1060,12 @@ build_gga(UTC,Lat,Lon,Q,Sat,HDil,Alt,Geoid,Age,ID) ->
   SLon = lon_format(Lon),
   SRest = safe_fmt(["~B","~2.10.0B","~.1.0f","~.1.0f","~s","~.1.0f","~s","~.1.0f","~4.4.0B"],
                    [Q,Sat,HDil,Alt,"M",Geoid,"M",Age,ID],","),
-  flatten(["GPGGA",SUTC,SLat,SLon,SRest]).
+  (["GPGGA",SUTC,SLat,SLon,SRest]).
 
 build_evolbl(Type,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure) ->
   S = safe_fmt(["~s","~s","~B","~B","~.7.0f","~.7.0f","~.2.0f","~.2.0f"],
                [Type,"r",Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure],","),
-  flatten(["PEVOLBL",S,",,,"]).
+  (["PEVOLBL",S,",,,"]).
 
 build_evolbp(UTC, Basenodes, Address, Status, Lat_rad, Lon_rad, Alt, Pressure, SMean, Std) ->
   S = erlang:trunc(UTC),
@@ -1081,11 +1081,11 @@ build_evolbp(UTC, Basenodes, Address, Status, Lat_rad, Lon_rad, Alt, Pressure, S
            end,
   SStd = case Std of
            nothing -> "";
-           _ -> lists:flatten(io_lib:format("~.3.0f",[float(Std)]))
+           _ -> (io_lib:format("~.3.0f",[float(Std)]))
          end,
   SRest = safe_fmt(["~B","~s","~s","~.7.0f","~.7.0f","~.2.0f","~.2.0f","~s","~s","~s","~.3.0f","~s"],
                    [Address,Status,"r",Lat_rad,Lon_rad,Alt,Pressure,"","","",SMean,SStd],","),
-  flatten(["PEVOLBP",SUTC,SNodes,SRest]).
+  (["PEVOLBP",SUTC,SNodes,SRest]).
 
 build_simsvt(Total, Idx, Lst) ->
   SPoints = lists:map(fun({D,S}) ->
@@ -1094,13 +1094,13 @@ build_simsvt(Total, Idx, Lst) ->
   STail = lists:map(fun(_) -> ",," end,
                     try lists:seq(1,4-length(Lst)) catch _:_ -> [] end),
   SHead = io_lib:format(",~B,~B", [Total, Idx]),
-  flatten(["PSIMSVT,P",SHead,SPoints,STail]).
+  (["PSIMSVT,P",SHead,SPoints,STail]).
 
 %% Example: $PSXN,23,0.02,-0.76,330.56,*0B
 build_sxn(23,Roll,Pitch,Heading,Heave) ->
   SRest = safe_fmt(["~.2f","~.2f","~.2f","~.2f"],
                    [Roll,Pitch,Heading,Heave], ","),
-  flatten(["PSXN,23",SRest]).
+  (["PSXN,23",SRest]).
 
 %% $PSAT,HPR,TIME,HEADING,PITCH,ROLL,TYPE*CC<CR><LF>
 build_sat(hpr,UTC,Heading,Pitch,Roll,Type) ->
@@ -1108,17 +1108,17 @@ build_sat(hpr,UTC,Heading,Pitch,Roll,Type) ->
   SHPR = safe_fmt(["~.2f","~.2f","~.2f"], [Heading,Pitch,Roll], ","),
   SType = case Type of gps -> ",N"; gyro -> ",G"; _ -> "," end,
   % почему не ставится запятая перед SType? почему она ставится перед SUTC и SHPR?
-  flatten(["PSAT,HPR",SUTC,SHPR,SType]).
+  (["PSAT,HPR",SUTC,SHPR,SType]).
 
 %% $PIXSE,ATITUD,-1.641,-0.490*6D
 build_ixse(atitud,Roll,Pitch) ->
   SPR = safe_fmt(["~.3f","~.3f"], [Roll,Pitch], ","),
-  flatten(["PIXSE,ATITUD",SPR]).
+  (["PIXSE,ATITUD",SPR]).
 
 %% $PIXSE,POSITI,53.10245714,8.83994382,-0.115*71
 build_ixse(positi,Lat,Lon,Alt) ->
   SPR = safe_fmt(["~.8f","~.8f","~.3f"], [Lat,Lon,Alt], ","),
-  flatten(["PIXSE,POSITI",SPR]).
+  (["PIXSE,POSITI",SPR]).
 
 %% $PASHR,200345.00,78.00,T,-3.00,+2.00,+0.00,1.000,1.000,1.000,1,1*32
 build_ashr(UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq) ->
@@ -1130,12 +1130,12 @@ build_ashr(UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq
   PitchFmt = case Pitch of M when M >= 0 -> "+~.2f"; _ -> "~.2f" end,
   HeadingFmt = case Heading of K when K >= 0 -> "+~.2f"; _ -> "~.2f" end,
   SRest = safe_fmt([RollFmt,PitchFmt,HeadingFmt,"~.3f","~.3f","~.3f","~B","~B"], [Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq], ","),
-  flatten(["PASHR",SUTC,SHeading,STrue,SRest]).
+  (["PASHR",SUTC,SHeading,STrue,SRest]).
 
 %% $PRDID,PPP.PP,RRR.RR,xxx.xx
 build_rdid(Pitch,Roll,Heading) ->
   SPRH = safe_fmt(["~.2f","~.2f","~.2f"], [Pitch,Roll,Heading], ","),
-  flatten(["PRDID",SPRH]).
+  (["PRDID",SPRH]).
 
 %% $PHOCT,01,hhmmss.sss,G,AA,HHH.HHH,N,eRRR.RRR,L,ePP.PPP,K,eFF.FFF,M,eHH.HHH,eSS.SSS,eWW.WWW,eZZ.ZZZ,eYY.YYY,eXX.XXX,eQQQ.QQ
 %% NOTE: UTC format has no microseconds (hhmmss.ss)
@@ -1151,7 +1151,7 @@ build_hoct(1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR) -
   SHvI = safe_fmt([F(HvI,"~6.3.0f")], [HvI],","),
   SRest = safe_fmt([F(Hv,"~6.3.0f"),F(Sr,"~6.3.0f"),F(Sw,"~6.3.0f"),F(HvR,"~6.3.0f"),F(SrR,"~6.3.0f"),F(SwR,"~6.3.0f"),F(HdR,"~7.2.0f")],
                    [Hv,Sr,Sw,HvR,SrR,SwR,HdR], ","),
-  flatten(["PHOCT,01",SUTC,S(TmS),SLt,SHd,S(HdS),SRl,S(RlS),SPt,S(PtS),SHvI,S(HvS),SRest]).
+  (["PHOCT,01",SUTC,S(TmS),SLt,SHd,S(HdS),SRl,S(RlS),SPt,S(PtS),SHvI,S(HvS),SRest]).
 
 build_evo(Request) ->
   "PEVO," ++ Request.
@@ -1162,32 +1162,32 @@ build_evotdp(Transceiver,Max_range,Sequence,LAx,LAy,LAz,HL,Yaw,Pitch,Roll) ->
            lists:foldl(fun(V,[])  -> [integer_to_list(V)];
                           (V,Acc) -> [integer_to_list(V),":"|Acc]
                        end, "", Sequence)),
-  flatten(["PEVOTDP",
+  (["PEVOTDP",
            safe_fmt(["~B","~B","~s","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f"],
-                    [Transceiver,Max_range,flatten(SLst),LAx,LAy,LAz,HL,Yaw,Pitch,Roll],",")]).
+                    [Transceiver,Max_range,(SLst),LAx,LAy,LAz,HL,Yaw,Pitch,Roll],",")]).
 
 %% $-EVORCM,RX,RX_phy,Src,RSSI,Int,P_src,TS,A1:...:An,TS1:...:TSn,TD1:...TDn,TDOA1:...:TDOAn
 build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS) ->
   SFun = fun(nothing) -> "";
-            (Lst) -> lists:flatten(
+            (Lst) -> (
                        lists:reverse(
                          lists:foldl(fun(V,[])  -> [safe_fmt(["~B"],[V])];
                                         (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
                                      end, "", Lst))) end,
   SRX = utc_format(RX_utc),
-  flatten(["PEVORCM",SRX,
+  (["PEVORCM",SRX,
            safe_fmt(["~B","~B","~.2.0f","~B","~B","~B","~s","~s","~s","~s"],
                     [RX_phy,Src,PSrc,RSSI,Int,TS,SFun(AS),SFun(TSS),SFun(TDS),SFun(TDOAS)],",")]).
 
 %% $-EVOSEQ,sid,total,maddr,range,seq
 build_evoseq(Sid,Total,MAddr,Range,Seq) ->
   SFun = fun(nothing) -> "";
-            (Lst) -> lists:flatten(
+            (Lst) -> (
                        lists:reverse(
                          lists:foldl(fun(V,[])  -> [safe_fmt(["~B"],[V])];
                                         (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
                                      end, "", Lst))) end,
-  flatten(["PEVOSEQ",safe_fmt(["~B","~B","~B","~B","~s"],
+  (["PEVOSEQ",safe_fmt(["~B","~B","~B","~B","~s"],
                               [Sid,Total,MAddr,Range,SFun(Seq)],",")]).
 
 %% $-EVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
@@ -1202,7 +1202,7 @@ build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}) ->
                         Acc ++ ":" ++ integer_to_list(Id)
                     end, integer_to_list(hd(Seq)), tl(Seq))
           end,
-  flatten(["PEVOCTL,BUSBL",SLat,SLon,
+  (["PEVOCTL,BUSBL",SLat,SLon,
            safe_fmt(["~.1.0f","~s","~B","~B","~B"],
                     [Alt,SMode,IT,MP,AD],",")]);
 %% $PEVOCTL,SBL,X,Y,Z,Mode,IT,MP,AD
@@ -1216,7 +1216,7 @@ build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD}) ->
                     end, integer_to_list(hd(Seq)), tl(Seq));
             _ -> ""
           end,
-  flatten(["PEVOCTL,SBL",
+  (["PEVOCTL,SBL",
            safe_fmt(["~.3.0f","~.3.0f","~.3.0f","~s","~B","~B","~B"],
                     [X,Y,Z,SMode,IT,MP,AD],",")]);
 %% $PEVOCTL,SUSBL,Seq,MRange,SVel
@@ -1224,7 +1224,7 @@ build_evoctl(sbl, {Seq, MRange, SVel}) ->
     SSeq = foldl(fun(Id,Acc) ->
                          Acc ++ ":" ++ integer_to_list(Id)
                  end, integer_to_list(hd(Seq)), tl(Seq)),
-  flatten(["PEVOCTL,SUSBL",
+  (["PEVOCTL,SUSBL",
            safe_fmt(["~s","~.1.0f","~.1.0f"],
                     [SSeq,MRange,SVel],",")]).
 
@@ -1239,13 +1239,13 @@ build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,
   STX_phy = safe_fmt(["~B"],[TX_phy],","),
   SLat = lat_format(Lat),
   SLon = lon_format(Lon),
-  flatten(["PEVORCT",STX,STX_phy,SLat,SLon,
+  (["PEVORCT",STX,STX_phy,SLat,SLon,
            safe_fmt(["~.2.0f","~s","~.2.0f","~s","~.1.0f","~.1.0f","~.1.0f","~s","~.2.0f","~.2.0f","~.2.0f","~.2.0f"],
                     [Alt,SStatus(GPSS),P,SStatus(PS),Yaw,Pitch,Roll,SStatus(AHRSS),Lx,Ly,Lz,HL], ",")]).
 
 %% $-EVOTAP,Forward,Right,Down,Spare1,Spare2,Spare3
 build_evotap(Forward, Right, Down) ->
-  flatten(["PEVOTAP",
+  (["PEVOTAP",
            safe_fmt(["~.2.0f","~.2.0f","~.2.0f"], [Forward,Right,Down], ","),
            ",,,"]).
 
@@ -1256,7 +1256,7 @@ build_evotpc(Pair,Praw,{Ptrans,S_trans},{Yaw,Pitch,Roll,S_ahrs},HL) ->
                (interpolated) -> "I";
                (ready)        -> "N"
             end,
-  flatten(["PEVOTPC",
+  (["PEVOTPC",
            safe_fmt(["~.2.0f","~.2.0f","~.2.0f","~s","~.2.0f","~.2.0f","~.2.0f","~s","~.2.0f"],
                     [Pair,Praw,Ptrans,SStatus(S_trans),Yaw,Pitch,Roll,SStatus(S_ahrs),HL], ",")]).
 
@@ -1287,7 +1287,7 @@ build_evorcp(Type, Status, Substatus, Interval, Mode, Cycles, Broadcast) ->
               inf -> nothing;
               _ -> Cycles
             end,
-  flatten(["PEVORCP",
+  (["PEVORCP",
            safe_fmt(["~s","~s","~s","~.2.0f","~s","~B","~s"], [SType, SStatus, Substatus, Interval, SMode, NCycles, SCast], ","),
            ",,"]).
 
@@ -1308,7 +1308,7 @@ build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
           filtered -> <<"F">>;
           reconstructed -> <<"R">>
         end,
-  flatten(["PEVOSSB",SUTC,
+  (["PEVOSSB",SUTC,
            safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~s","~s",Fmt,Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
                     [TID, DID, SS, Err, SCS, SFS, X, Y, Z, Acc, Pr, Vel], ",")
           ]).
@@ -1330,7 +1330,7 @@ build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
           filtered -> <<"F">>;
           reconstructed -> <<"R">>
         end,
-  flatten(["PEVOSSA",SUTC,
+  (["PEVOSSA",SUTC,
            safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
                     [TID, DID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
           ]).
@@ -1345,7 +1345,7 @@ build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt) ->
               computed -> ",C"
           end,
   [STID, SDID, SAlt] = safe_fmt(["~3.10.0B","~3.10.0B","~.2.0f"],[TID, DID, Alt]),
-  flatten(["PEVOGPS",SUTC,",",STID,",",SDID,SMode,SLat,SLon,",",SAlt]).
+  (["PEVOGPS",SUTC,",",STID,",",SDID,SMode,SLat,SLon,",",SAlt]).
 
 build_evorpy(UTC,TID,DID,Mode,Roll,Pitch,Yaw) ->
   SUTC = utc_format(UTC),
@@ -1354,7 +1354,7 @@ build_evorpy(UTC,TID,DID,Mode,Roll,Pitch,Yaw) ->
               filtered -> "F";
               computed -> "C"
           end,
-  flatten(["PEVORPY",SUTC,
+  (["PEVORPY",SUTC,
            safe_fmt(["~3.10.0B","~3.10.0B","~s","~.2.0f","~.2.0f","~.2.0f"],
                     [TID, DID, SMode, Roll, Pitch, Yaw], ",")
           ]).
@@ -1363,29 +1363,29 @@ build_hdg(Heading,Dev,Var) ->
   F = fun(V) -> case V < 0 of true -> {"W",-V}; _ -> {"E",V} end end,
   {DevS,DevA} = F(Dev),
   {VarS,VarA} = F(Var),
-  flatten(["HCHDG",safe_fmt(["~.1.0f","~.1.0f","~s","~.1.0f","~s"],[Heading,DevA,DevS,VarA,VarS],",")]).
+  (["HCHDG",safe_fmt(["~.1.0f","~.1.0f","~s","~.1.0f","~s"],[Heading,DevA,DevS,VarA,VarS],",")]).
 
 build_hdt(Heading) ->
-  flatten(["HCHDT", safe_fmt(["~.1.0f"],[Heading],","),",T"]).
+  (["HCHDT", safe_fmt(["~.1.0f"],[Heading],","),",T"]).
 
 build_xdr(Lst) ->
   F = fun(V) -> if is_integer(V) -> "~B"; true -> "~.1.0f" end end,
-  flatten(["HCXDR", lists:map(fun({Type,Data,Units,Name}) ->
+  (["HCXDR", lists:map(fun({Type,Data,Units,Name}) ->
                                   safe_fmt(["~s",F(Data),"~s","~s"],[Type,Data,Units,Name],",")
                               end, Lst)]).
 
 build_vtg(TMGT,TMGM,Knots) ->
   KMH = if is_number(Knots) -> Knots*0.539956803456; true -> nothing end,
   Fields = safe_fmt(["~5.1.0f","~5.1.0f","~5.1.0f","~5.1.0f"],[TMGT,TMGM,Knots,KMH]),
-  flatten(io_lib:format("GPVTG,~s,T,~s,M,~s,N,~s,K",Fields)).
+  (io_lib:format("GPVTG,~s,T,~s,M,~s,N,~s,K",Fields)).
 
 build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus) ->
-  flatten(["PTNTHPR",
+  (["PTNTHPR",
            safe_fmt(["~.1.0f","~s","~.1.0f","~s","~.1.0f","~s"],
                     [Heading,HStatus,Pitch,PStatus,Roll,RStatus], ",")]).
 
 build_smcs(Roll,Pitch,Heave) ->
-  flatten(["PSMCS",
+  (["PSMCS",
            safe_fmt(["~.1.3f","~.1.3f","~.1.2f"],
                     [Roll,Pitch,Heave], ",")]).
 
@@ -1395,7 +1395,7 @@ build_dbs(Depth) ->
                             nothing -> [nothing, nothing, nothing];
                             _ -> [Depth * 3.2808399, Depth, Depth * 0.546806649]
                           end),
-  flatten(io_lib:format("SDDBS,~s,f,~s,M,~s,F",Fields)).
+  (io_lib:format("SDDBS,~s,f,~s,M,~s,F",Fields)).
 
 build_dbt(Depth) ->
   Fmts = ["~.2.0f","~.2.0f","~.2.0f"],
@@ -1403,7 +1403,7 @@ build_dbt(Depth) ->
                             nothing -> [nothing, nothing, nothing];
                             _ -> [Depth * 3.2808399, Depth, Depth * 0.546806649]
                           end),
-  flatten(io_lib:format("SDDBT,~s,f,~s,M,~s,F",Fields)).
+  (io_lib:format("SDDBT,~s,f,~s,M,~s,F",Fields)).
 
 from_term_helper(Sentense) ->
   case Sentense of
@@ -1488,14 +1488,14 @@ from_term_helper(Sentense) ->
 from_term({nmea, Sentense}, Cfg) ->
   #{out := OutRule} = Cfg,
   Flag = is_filtered(Sentense, OutRule),
-  Body = if Flag -> from_term_helper(Sentense);
+  Body = if Flag -> flatten(from_term_helper(Sentense));
             true -> ""
          end,
   case length(Body) of
     0 -> [<<>>, Cfg];
     _ ->
       CS = checksum(Body),
-      [list_to_binary(flatten(["$",Body,"*",io_lib:format("~2.16.0B",[CS]),"\r\n"])), Cfg]
+      [list_to_binary((["$",Body,"*",io_lib:format("~2.16.0B",[CS]),"\r\n"])), Cfg]
   end;
 from_term(_, Cfg) -> [<<>>, Cfg].
 
