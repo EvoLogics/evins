@@ -229,7 +229,7 @@ rock(SM, [E2,N2,_]=P2) ->
       share:put(SM, tail, {tail, [P2,P1,P0], Pitch_phase1, Heading, Roll}),
       [Heading, Pitch, Roll];
     {rotate, _} ->
-      {tail, [P1, P0, _], PP, Heading_prev, RP} = share:get(SM, tail),
+      {tail, [P1, P0, _], PP, Heading_prev, _RP} = share:get(SM, tail),
       Heading = wrap_2pi(Heading_prev + 2 * math:pi() / 200 / share:get(SM, decim)), %% freq dependend, here update each second
       share:put(SM, tail, {tail, [P2, P1, P0], PP, Heading, 0.0}),
       [Heading, 0.0, 0.0];
