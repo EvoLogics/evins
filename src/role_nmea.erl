@@ -1058,7 +1058,7 @@ build_gga(UTC,Lat,Lon,Q,Sat,HDil,Alt,Geoid,Age,ID) ->
   SUTC = utc_format(UTC),
   SLat = lat_format(Lat),
   SLon = lon_format(Lon),
-  SRest = safe_fmt(["~B","~2.10.0B","~.1.0f","~.1.0f","~s","~.1.0f","~s","~.1.0f","~4.4.0B"],
+  SRest = safe_fmt(["~B","~2.10.0B","~.1.0f","~.1.0f","~s","~.1.0f","~s","~.1.0f","~4.10.0B"],
                    [Q,Sat,HDil,Alt,"M",Geoid,"M",Age,ID],","),
   (["GPGGA",SUTC,SLat,SLon,SRest]).
 
