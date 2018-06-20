@@ -1405,6 +1405,28 @@ build_dbt(Depth) ->
                           end),
   (io_lib:format("SDDBT,~s,f,~s,M,~s,F",Fields)).
 
+%% $PSIMSSB,UTC,B01,A,,C,H,M,X,Y,Z,Acc,N,,
+build_simssb(UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2) ->
+  SUTC = utc_format(UTC),
+  SS = case S of
+         ok -> "A";
+         nok -> "V"
+       end,
+  {SCS,SHS,Fmt,Depth} = case CS of
+                lf -> {<<"C">>,<<"H">>,"~.2.0f",Z};
+                enu -> {<<"C">>,<<"N">>,"~.2.0f",Z};
+                geod -> {<<"R">>,<<"G">>,"~.6.0f",-Z}
+        end,
+  SFS = case FS of
+          measured -> <<"M">>;
+          filtered -> <<"F">>;
+          reconstructed -> <<"R">>
+        end,
+  (["PSIMSSB",SUTC,
+           safe_fmt(["B~2.10.0B","~s","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~s","~.2.0f","~.2.0f"],
+                    [Addr, SS, Err, SCS, SHS, SFS, X, Y, Depth, Acc, AddT, Add1, Add2], ",")
+          ]).
+
 from_term_helper(Sentense) ->
   case Sentense of
     {rmc,UTC,Status,Lat,Lon,Speed,Tangle,Date,Magvar} ->
@@ -1481,6 +1503,8 @@ from_term_helper(Sentense) ->
       build_rdid(Pitch,Roll,Heading);
     {hoct,1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR} ->
       build_hoct(1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR);
+    {simssb, UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2} ->
+      build_simssb(UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2);
     _ -> ""
   end.
 
