@@ -1414,7 +1414,8 @@ build_simssb(UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2) ->
        end,
   {SCS,SHS,Fmt,Depth} = case CS of
                 lf -> {<<"C">>,<<"H">>,"~.2.0f",Z};
-                enu -> {<<"C">>,<<"N">>,"~.2.0f",Z};
+                enu -> {<<"C">>,<<"E">>,"~.2.0f",Z};
+                ned -> {<<"C">>,<<"N">>,"~.2.0f",Z};
                 geod -> {<<"R">>,<<"G">>,"~.6.0f",-Z}
         end,
   SFS = case FS of
