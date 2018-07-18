@@ -328,6 +328,8 @@ handle_event(MM, SM, Term) ->
       catch error:_ -> SM
       end;
     {async, {pid, Pid}, {recvim, Len, Src, Local_address, Flag, _, _, _,_, Data}} ->
+      ?INFO(?ID, "HERE~n", []),
+      extract_position(SM, Data),
       RecvTuple = {recv, {Pid, Len, Src, Local_address, Flag, Data}},
       NEvent_params = add_to_event_params(SM, RecvTuple),
       SM1 = SM#sm{event_params = NEvent_params},
@@ -342,6 +344,7 @@ handle_event(MM, SM, Term) ->
       ] (SM2);
     {async, {pid, _Pid}, {recvim, _Len, Src, _Dst, _Flag, _, _, _, _, Data}} ->
       % Overhearing broadcast messages
+      ?INFO(?ID, "HERE~n", []),
       try
         [MsgType, _BurstExist, Poll_data_len, Poll_data, _, _, _] = extract_CDT_msg(SM, Data),
         case MsgType of
@@ -485,10 +488,33 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, error}});
     _ when MM#mm.role == nl_impl ->
       fsm:cast(SM, nl_impl, {send, {nl, error}});
+    {nmea, {evossb, _UTC, TID, _DID, _S, _Err, geod, _FS, Lat, Lon, _Z, _Acc, _Pr, _Vel}} ->
+      ?INFO(?ID, "Term = ~p, Ref = ~p~n", [Term, share:get(SM, reference_position)]),
+      case share:get(SM, reference_position) of
+        nothing -> SM;
+        {LatRef, LonRef}  ->
+          LatD = round(((Lat - LatRef) * 1.0e6)),
+          LonD = round(((Lon - LonRef) * 1.0e6)),
+          share:put(SM, gps_diff, {erlang:monotonic_time(seconds), TID, LatD, LonD})
+      end;
+    {nmea, {evoctl, busbl, Settings}} ->
+      apply_settings(SM, Settings);
+    {nmea, _} ->
+      SM;
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
   end.
+
+apply_settings(SM, reference_position, {Lat, Lon}) when Lat /= nothing, Lon /= nothing ->
+  env:put(SM, reference_position, {Lat, Lon});
+apply_settings(SM, reference_position, _) ->
+  SM.
+
+apply_settings(SM, {Lat, Lon, _, _, _, _, _}) ->
+  lists:foldl(fun({Key, Value}, SM_acc) ->
+                  apply_settings(SM_acc, Key, Value)
+              end, SM, [{reference_position, {Lat, Lon}}]).
 
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
@@ -750,7 +776,7 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
     false ->
       try
         {recv, {Pid, _Len, Src, Dst, _Flag, DataCDT}} = RecvParams,
-        [MsgType, BurstExist, Poll_data_len, Poll_data, Position, PollingFlagBurst, Process] = extract_CDT_msg(SM, DataCDT),
+        [MsgType, BurstExist, Poll_data_len, Poll_data, _Position, PollingFlagBurst, Process] = extract_CDT_msg(SM, DataCDT),
         case Process of
           ignore ->
             SM#sm{event = ignore_recv_poll_seq};
@@ -764,7 +790,6 @@ handle_poll_response_pbm(_MM, #sm{event = recv_poll_seq} = SM, Term) ->
               _ ->
                 fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, Poll_data}})
             end,
-            fsm:cast(SM, nmea, {send, Position}),
 
             BroadcastExistMsg = share:get(SM, broadcast),
             Data = create_VDT_pbm_msg(SM, Src, PollingFlagBurst, BroadcastExistMsg),
@@ -1080,6 +1105,18 @@ get_part_of_list(Max, Q) ->
       Q1
   end.
 
+extract_position(SM, Msg) ->
+  try
+    CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
+    CBitsPosLen = nl_mac_hf:count_flag_bits(63),
+    CPollingCounterLen = nl_mac_hf:count_flag_bits(127),
+    <<"C", _:8/bitstring, _:8/bitstring, _:CPollingFlagBurst, _:CPollingCounterLen, PLen:CBitsPosLen, RPayload/bitstring>> = Msg,
+    <<Pos:PLen/binary, _/bitstring>> = RPayload,
+    fsm:cast(SM, nmea, {send, decode_position(share:get(SM, reference_position), Pos)})
+  catch _:_ ->
+      nothing
+  end.
+
 extract_CDT_msg(SM, Msg) ->
   CPollingFlagBurst = nl_mac_hf:count_flag_bits(1),
   CBitsPosLen = nl_mac_hf:count_flag_bits(63),
@@ -1088,6 +1125,12 @@ extract_CDT_msg(SM, Msg) ->
   <<"C", MsgType:8/bitstring, BurstExist:8/bitstring, PollingFlagBurst:CPollingFlagBurst, PC:CPollingCounterLen, PLen:CBitsPosLen, RPayload/bitstring>> = Msg,
 
   <<Pos:PLen/binary, Rest/bitstring>> = RPayload,
+  case decode_position(share:get(SM, reference_position), Pos) of
+    Position when is_tuple(Position) ->
+      fsm:cast(SM, nmea, {send, Position});
+    _ ->
+      nothing
+  end,      
   Data_bin = (bit_size(Msg) rem 8) =/= 0,
   CDTData =
   if Data_bin =:= false ->
@@ -1115,10 +1158,28 @@ extract_CDT_msg(SM, Msg) ->
   ?TRACE(?ID, ">>>> extract_CDT_msg ResultTuple ~p~n", [Res]),
   Res.
 
+encode_position(nothing) ->
+  <<>>;
+encode_position({MTime, TID, LatD, LonD}) ->
+  DT = 
+    case erlang:monotonic_time(seconds) - MTime of
+      T when T < 255 -> T;
+      _ -> 255
+    end,
+  <<TID:8, DT:8, LatD:24/signed, LonD:24/signed>>.
+
+decode_position({LatRef,LonRef}, <<TID:8, _DT:8, LatD:24/signed, LonD:24/signed>>) ->
+  Lat = LatD / 1.0e6 + LatRef,
+  Lon = LonD / 1.0e6 + LonRef,
+  MTime = erlang:system_time(millisecond)/1000,
+  {nmea, {evossb, MTime, TID, nothing, ok, nothing, geod, reconstructed, Lat, Lon, nothing, nothing, nothing, nothing}};
+decode_position(_, <<>>) ->
+  nothing.
+
 create_CDT_msg(SM, nb, nothing) ->
   Current_polling_addr = get_current_poll_addr(SM),
   PollingCounter = share:get(SM, polling_pc),
-  DataPos = <<"POS....">>,
+  DataPos = encode_position(share:get(SM, gps_diff)),
   LenDataPos = byte_size(DataPos),
 
   PollFlagBurst = 1,
@@ -1156,7 +1217,7 @@ create_CDT_msg(SM, b, nothing) ->
   DT = queue_to_data(SM, Current_polling_addr, tolerant),
 
   PollingCounter = share:get(SM, polling_pc),
-  DataPos = <<"POS....">>,
+  DataPos = encode_position(share:get(SM, gps_diff)),
   LenDataPos = byte_size(DataPos),
   DataCDT = list_to_binary([DS, DT]),
 
@@ -1198,7 +1259,7 @@ create_CDT_msg(SM, b, nothing) ->
 
 create_CDT_msg(SM, FlagBurst, BroadcastExistMsg) ->
   Current_polling_addr = get_current_poll_addr(SM),
-  DataPos = <<"POS....">>,
+  DataPos = encode_position(share:get(SM, gps_diff)),
   LenDataPos = byte_size(DataPos),
   PollingCounter = share:get(SM, polling_pc),
 

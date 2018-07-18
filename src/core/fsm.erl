@@ -38,6 +38,7 @@
 -export([run_event/3, send_at_command/2, broadcast/3, cast/2, cast/3, cast/5]).
 -export([role_available/2]).
 -export([set_event/2, set_timeout/3, set_interval/3, check_timeout/2]).
+-export([maybe_send_at_command/2,maybe_send_at_command/3]).
 
 %% gen_server callbacks
 -export([code_change/3, handle_call/3, handle_cast/2, handle_info/2, init/1, terminate/2]).
@@ -85,6 +86,10 @@ handle_cast({chan, nothing, Term}, #sm{module = Module} = SM) ->
 handle_cast({chan, MM, Term}, #sm{module = Module} = SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, MM#mm.role_id, Term}}}),
   handle_event(Module, MM, SM, Term);
+
+handle_cast({send_error, MM, Reason}, #sm{module = Module} = SM) ->
+  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {send_error, MM#mm.role_id, Reason}}}),
+  handle_event(Module, MM, SM, {send_error, Reason});
 
 handle_cast(final, SM) ->
   gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, final}}),
@@ -250,6 +255,17 @@ send_at_command(SM, AT) ->
   set_event(
     set_timeout(
       cast(SM, at, {send, AT}), ?ANSWER_TIMEOUT, answer_timeout), eps).
+
+maybe_send_at_command(SM, AT) ->
+  maybe_send_at_command(SM, AT, fun(_) -> SM end).
+
+maybe_send_at_command(SM, AT, Fun) ->
+  case fsm:check_timeout(SM, answer_timeout) of
+    true ->
+      Fun(SM);
+    _ ->
+      fsm:send_at_command(SM, AT)
+    end.
 
 broadcast(#sm{roles = Roles} = SM, Target_role, T) ->
   true = lists:all(fun(A) -> A == ok end, 

@@ -1,14 +1,8 @@
-*.beam
-*.o
-*.d
 /c_src/env.mk
 /.erlang.mk
 /ebin
 /deps
 /src/fsm.app.src
 /relx.config
-/priv/evo_serial
 /_rel
-*~
-tmp
-bugs
+/config/sys.config

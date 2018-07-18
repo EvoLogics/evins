@@ -27,6 +27,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 -module(fsm_move).
 -behaviour(fsm).
+-compile({parse_transform, pipeline}).
 
 -include("fsm.hrl").
 
@@ -127,7 +128,7 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       Yn = YO + R * math:sin(Phy1),
       Zn = ZO,
       broadcast_position(SM, [Xn,Yn,Zn]),
-      share:put(SM, circle, {circle, C, R, V, Tau, Phy1}),
+      share:put(SM, movement, {circle, C, R, V, Tau, Phy1}),
       fsm:set_event(SM, eps);
     brownian ->
       {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, X, Y, Z} = share:get(SM, movement),
@@ -135,11 +136,13 @@ handle_moving(_MM, #sm{event = Event} = SM, _Term) ->
       Yn = geometry:brownian_walk(YMin, YMax, Y),
       Zn = geometry:brownian_walk(ZMin, ZMax, Z),
       broadcast_position(SM, [Xn,Yn,Zn]),
-      share:put(SM, brownian, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xn, Yn, Zn}),
+      share:put(SM, movement, {brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax, Xn, Yn, Zn}),
       fsm:set_event(SM, eps);
     rocking ->
       {ahrs, [Yaw, Pitch, Roll]} = share:get(SM, ahrs),
-      fsm:broadcast(fsm:set_event(SM, eps), nmea, {send, {nmea, {tnthpr,Yaw,"N",Pitch,"N",Roll,"N"}}});
+      [fsm:broadcast(fsm:set_event(__, eps), nmea, {send, {nmea, {tnthpr,Yaw,"N",Pitch,"N",Roll,"N"}}}),
+       fsm:broadcast(fsm:set_event(__, eps), nmea, {send, {nmea, {smcs,Roll,Pitch,0.0}}}),
+       fsm:broadcast(fsm:set_event(__, eps), nmea, {send, {nmea, {hdt,Yaw}}})](SM);
     {nmea, _} ->
       SM;
     _ ->
@@ -167,8 +170,19 @@ hypot(X,Y) ->
 sign(A) when A < 0 -> -1;
 sign(_) -> 1.
 
-smod(X, M) -> X - round(X/M)*M.
-wrap_pi(A) -> smod(A, 2*math:pi()).
+-ifndef(floor_bif).
+floor(X) when X < 0 ->
+    T = trunc(X),
+    case X - T == 0 of
+        true -> T;
+        false -> T - 1
+    end;
+floor(X) ->
+    trunc(X).
+-endif.
+
+smod(X, M)  -> X - floor(X / M + 0.5) * M.
+wrap_pi(A) -> smod(A, -2*math:pi()).
 wrap_2pi(A) -> smod(A - math:pi(), 2*math:pi()) + math:pi().
 lp_wrap(New, Old, K) -> Old + K*(wrap_pi(New - Old)).
 
