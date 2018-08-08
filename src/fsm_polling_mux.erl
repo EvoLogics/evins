@@ -542,7 +542,8 @@ handle_polling(_MM, #sm{event = poll_next_addr} = SM, Term) ->
 
   case Answer_timeout of
     true ->
-      fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_im, STuple});
+      SM#sm{event = eps};
+      %% fsm:set_timeout(SM#sm{event = eps}, ?ANSWER_TIMEOUT, {retransmit_im, STuple});
     false when SendType == burst_exist ->
       ?TRACE(?ID, "handle_polling ~p ~p ~p~n", [Poll_flag_burst, Current_poll_addr, BroadcastExistMsg]),
       share:put(SM, wait_delivery_im_report, true),

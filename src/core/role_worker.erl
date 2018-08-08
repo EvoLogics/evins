@@ -548,12 +548,16 @@ process_bin(Bin, #ifstate{fsm_pids = [], tail = Tail} = State) ->
   %% TODO: role_worker should be aware of the number of connected FSMs
   {noreply, State#ifstate{tail = list_to_binary([Tail, Bin])}};
 process_bin(Bin, #ifstate{behaviour = B, fsm_pids = FSMs, cfg = Cfg, tail = Tail, mm = MM} = State) ->
-  [TermList, ErrorList, Raw, More, NewCfg] = B:to_term(Tail, Bin, Cfg),
-  Terms = if byte_size(Raw) > 0 -> TermList ++ ErrorList ++ [{raw, Raw}];
-             true -> TermList ++ ErrorList
-          end,
-  lists:foreach(fun(Term) -> conditional_cast(FSMs, Cfg, {chan, MM, Term}) end, Terms),
-  {noreply, State#ifstate{cfg = NewCfg, tail = More}}.
+  case B:to_term(Tail, Bin, Cfg) of
+    [TermList, ErrorList, Raw, More, NewCfg] ->
+      Terms = if byte_size(Raw) > 0 -> TermList ++ ErrorList ++ [{raw, Raw}];
+                 true -> TermList ++ ErrorList
+              end,
+      lists:foreach(fun(Term) -> conditional_cast(FSMs, Cfg, {chan, MM, Term}) end, Terms),
+      {noreply, State#ifstate{cfg = NewCfg, tail = More}};
+    _ ->
+      {noreply, State}
+  end.
 
 serial_send(Port, <<Chunk:253/binary, Rest/binary>>) ->
     Port ! {self(), {command, <<?SER_SEND:8, Chunk/binary>>}},

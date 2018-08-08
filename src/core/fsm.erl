@@ -257,14 +257,14 @@ send_at_command(SM, AT) ->
       cast(SM, at, {send, AT}), ?ANSWER_TIMEOUT, answer_timeout), eps).
 
 maybe_send_at_command(SM, AT) ->
-  maybe_send_at_command(SM, AT, fun(_) -> SM end).
+  maybe_send_at_command(SM, AT, fun(_,_) -> SM end).
 
 maybe_send_at_command(SM, AT, Fun) ->
   case fsm:check_timeout(SM, answer_timeout) of
     true ->
-      Fun(SM);
+      Fun(SM,blocked);
     _ ->
-      fsm:send_at_command(SM, AT)
+      Fun(fsm:send_at_command(SM, AT), ok)
     end.
 
 broadcast(#sm{roles = Roles} = SM, Target_role, T) ->

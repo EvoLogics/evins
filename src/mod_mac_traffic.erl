@@ -1,4 +1,4 @@
-%% Copyright (c) 2015, Oleksiy Kebkal <lesha@evologics.de>
+%% Copyright (c) 2018, Oleksiy Kebkal <lesha@evologics.de>
 %% 
 %% Redistribution and use in source and binary forms, with or without 
 %% modification, are permitted provided that the following conditions 
@@ -25,41 +25,22 @@
 %% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
 %% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF 
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
--module(fsm_scli).
--behaviour(fsm).
+-module(mod_mac_traffic).
+-behaviour(fsm_worker).
 
 -include("fsm.hrl").
 
--export([start_link/1, trans/0, final/0, init_event/0]).
--export([init/1,handle_event/3,stop/1]).
+-export([start/4, register_fsms/4]).
 
-%% states 
-%% idle | alarm
+start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) -> 
+  fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
-%% events:
-%% eps | rcv | internal
-
-start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> SM.
-trans()        -> [].
-final()        -> [].
-init_event()   -> eps.
-stop(_SM)      -> ok.
-
-%% SM1 = handle_event(MM, SM, Term)
-handle_event(_MM, SM, Term) ->
-  case Term of
-    B when is_binary(B) -> 
-      io:format("received: ~p~n", [B]),
-      _SM1 = fsm:cast(SM, scli, {send, {binary, B}}),
-      _SM2 = fsm:cast(SM, scli, {send, {prompt}});
-    {timeout, _} ->
-      SM;
-    {connected} ->
-      fsm:cast(SM, scli, {send, {prompt}});
-    _ ->
-      ?WARNING(?ID, "Unhandled answer ~p~n", [Term]),
-      SM
-  end.
-
+register_fsms(_Mod_ID, Role_IDs, Share, ArgS) ->
+  {A1,A2,A3} = os:timestamp(),
+  _Old = rand:seed(exsplus, { A1, A2, A3 }),
+  Rate = case [R || {rate,R} <- ArgS] of [] -> 0.1; [P] -> P end,
+  Packet_size = case [V || {packet_size,V} <- ArgS] of [] -> 16; [PS] -> PS end,
+  share:put(#sm{share = Share}, [{rate, Rate},{packet_size,Packet_size}]),
+  Roles = fsm_worker:role_info(Role_IDs, [at, scli]),
+  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_mac_traffic}].
 
