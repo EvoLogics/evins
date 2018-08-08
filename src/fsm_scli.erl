@@ -49,9 +49,9 @@ stop(_SM)      -> ok.
 %% SM1 = handle_event(MM, SM, Term)
 handle_event(_MM, SM, Term) ->
   case Term of
-    S when is_list(S) -> 
-      io:format("received: ~p~n", [S]),
-      _SM1 = fsm:cast(SM, scli, {send, {string, S}}),
+    B when is_binary(B) -> 
+      io:format("received: ~p~n", [B]),
+      _SM1 = fsm:cast(SM, scli, {send, {binary, B}}),
       _SM2 = fsm:cast(SM, scli, {send, {prompt}});
     {timeout, _} ->
       SM;
