@@ -3,7 +3,6 @@
 ## [Unrelased]
 
 ### Fixed
- - removed init:stop() from fsm_t_lohi
  - solved race condition of parallel fsm start up by 
    casting of additional {allowed} messages on fsm connection 
    to the role_worker 
@@ -16,6 +15,7 @@
  - in case, if role_at waits modem answer longer than a second,
    it doesn't produce at_sequenceError anymore and tries to send 
    to the modem
+ - rewritten t-lohi and csma-aloha implementation
  
 ### Added
  - position transmission via fsm_polling_mux, EVOSSB reception/generation

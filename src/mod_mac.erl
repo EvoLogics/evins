@@ -46,7 +46,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   Module =
   case P = parse_conf(ArgS, Share) of
     mac_burst  -> fsm_mac_burst;
-    csma_alh   -> fsm_csma_alh;
+    _ when P == csma_aloha; P == csma_alh -> fsm_csma_aloha;
     cut_lohi   -> fsm_tlohi;
     aut_lohi   -> fsm_tlohi;
     dacap      -> fsm_dacap;
@@ -80,7 +80,7 @@ parse_conf(ArgS, Share) ->
   {_Tmo_backoff_min, Tmo_backoff_max} = Tmo_backoff,
   Tmo_retransmit =
   case Protocol of
-    csma_alh ->
+    csma_aloha ->
       set_timeouts(Tmo_retransmit_set, {Tmo_backoff_max, 2 * Tmo_backoff_max + 1});
     _ ->
       set_timeouts(Tmo_retransmit_set, {TDect, 2 * TDect + 1})
