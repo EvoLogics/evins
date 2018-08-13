@@ -97,9 +97,9 @@ generate_report(SM) ->
     lists:flatten(
       [
        Status,
-       io_lib:format("address: ~150p, rate: ~150p, len: ~150p, generated: ~150p, transmitted: ~150p, triggered: ~150p, received: ~150p~n",
+       io_lib:format("address: ~150p, rate: ~150p, len: ~150p, generated: ~150p, transmitted: ~150p, triggered: ~150p, received: ~150p, duration: ~150p~n",
                      [LA, share:get(SM, rate), L, read_counter(SM, txgen), read_counter(SM, txcnt),
-                      RXEvents, lists:sum([RXCnt || [_,RXCnt] <- RXLst])]),
+                      RXEvents, lists:sum([RXCnt || [_,RXCnt] <- RXLst]), Dur]),
        [io_lib:format("RX: id: ~p, received: ~p~n",[ID,RXCnt]) || [ID,RXCnt] <- RXLst]
       ]),
   fsm:broadcast(SM,scli,{send, {string, Report}}),
