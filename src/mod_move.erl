@@ -78,12 +78,24 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   ShareID = #sm{share = Share},
   share:put(ShareID, lever_arm, Lever_arm),
 
+  Decim =
+  case lists:keyfind(decim, 1, ArgS) of
+      {decim, Dec} -> Dec;
+      _ -> 1
+  end,
+  share:put(ShareID, decim, Decim),
+  share:put(ShareID, pos_decim, 0),
+
   ?TRACE(Mod_ID, "Movements: ~140p~n", [Movements]),
   lists:map(fun({jitter, _, _, _} = Movement) ->
                 share:put(ShareID, jitter, Movement);
                ({tide, _Tau, _Pr, _Amp, _Phy, _Period} = Movement) ->
                 share:put(ShareID, tide, Movement);
                ({rocking, _Tau} = Movement) ->
+                share:put(ShareID, rocking, Movement);
+               ({rotate, _Tau} = Movement) ->
+                share:put(ShareID, rocking, Movement);
+               ({freeze, _Tau} = Movement) ->
                 share:put(ShareID, rocking, Movement);
                (_) ->
                 nothing
@@ -100,6 +112,8 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
        ({stationary, _, _, _} = Movement) ->
         Init_movement(Movement);
        ({circle, _C, _R, _V, _Tau, _Phy} = Movement) ->
+        Init_movement(Movement);
+       ({eight, _C, _R, _V, _Tau, _Phy} = Movement) ->
         Init_movement(Movement);
        ({brownian, Tau, XMin, YMin, ZMin, XMax, YMax, ZMax}) ->
         Xs = (rand:uniform() * (XMax - XMin)) + XMin,
