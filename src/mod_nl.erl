@@ -130,6 +130,12 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Neighbour_life_set= [Time || {neighbour_life, Time} <- ArgS],
   Tmo_dbl_wv_set    = [Time || {tmo_dbl_wv, Time} <- ArgS],
 
+  TTL_Set  = [C   || {ttl, C} <- ArgS],
+  Tmo_sensing  = [Time || {tmo_sensing, Time} <- ArgS],
+
+  Max_TTL        = set_params(TTL_Set, 8),
+  {Tmo_sensing_start, Tmo_sensing_end}    = set_timeouts(Tmo_sensing, {5, 10}),
+
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
   Pkg_life        = set_params(Pkg_life_Set, 180), % in sek
@@ -174,7 +180,9 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {rtt, RTT + RTT/2},
                       {send_wv_dbl_tmo, Tmo_dbl_wv},
                       {probability, Probability},
-                      {pkg_life, Pkg_life}
+                      {pkg_life, Pkg_life},
+                      {ttl, Max_TTL},
+                      {tmo_sensing, {Tmo_sensing_start, Tmo_sensing_end}}
                      ]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
@@ -210,7 +218,7 @@ conf_fsm(Protocol) ->
 conf_protocol(CurrentProtocol, Share, Protocol, Params, SMName) ->
   ShareID = #sm{share = Share},
   if (CurrentProtocol =:= Protocol) ->
-      share:put(ShareID, nlp, Protocol);
+      share:put(ShareID, protocol_name, Protocol);
     true -> nothing
   end,
   parse_pr_params(Share, Params, Protocol),

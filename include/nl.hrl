@@ -60,6 +60,7 @@
 -define(FLAG_MAX, 5).
 -define(TYPE_MSG_MAX, 5).
 -define(TTL, 3).
+-define(TRANSMISSION_QUEUE_SIZE, 30).
 -define(PKG_ID_MAX, 63).
 -define(ADDRESS_MAX, 63).
 -define(MAX_LEN_PATH, 63).
@@ -133,21 +134,21 @@
   end).
 
 -define(PROTOCOL_CONF, [
-      {staticr, [{stat, ry_only}, fsm_nl_flood]}, % Simple static routing
-      {staticrack, [{stat, ry_only, br_na, ack}, fsm_nl_flood]},  % Simple static routing with acknowledgement
-      {sncfloodr, [{ry_only}, fsm_nl_flood]}, % Sequence number controlled flooding
-      {sncfloodrack, [{ry_only, br_na, ack}, fsm_nl_flood]},  % Sequence number controlled flooding with acknowledgement
-      {dpfloodr, [{ry_only, prob},    fsm_nl_flood]}, % Dynamic Probabilistic Flooding
-      {dpfloodrack, [{ry_only, prob, br_na, ack},fsm_nl_flood]},  % Dynamic Probabilistic Flooding with acknowledgement
-      {icrpr, [{ry_only, pf, br_na, ack},  fsm_nl_flood]},  % Information Carrying Routing Protocol
-      {sncfloodpfr, [{pf, brp, br_na}, fsm_nl_flood]},  % Pathfind and relay, based on sequence number controlled flooding
-      {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_nl_flood]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
-      {dblfloodpfr, [{pf, dbl, br_na}, fsm_nl_flood]},  % Double flooding path finder
-      {dblfloodpfrack,[{pf, dbl, br_na, ack}, fsm_nl_flood]}, % Double flooding path finder with acknowledgement
-      {evoicrppfr, [{pf, br_na, lo, evo}, fsm_nl_flood]}, % Evologics Information Carrying routing protocol
-      {evoicrppfrack, [{pf, br_na, lo, evo, ack}, fsm_nl_flood]}, % Evologics Information Carrying routing protocol with acknowledgement
-      {loarpr, [{pf, br_na, lo, rm}, fsm_nl_flood]},  % Low overhead routing protocol
-      {loarprack, [{pf, br_na, lo, rm, ack}, fsm_nl_flood]} % Low overhead routing protocol with acknowledgement
+      {staticr, [{stat, ry_only}, fsm_opportunistic_flooding]}, % Simple static routing
+      {staticrack, [{stat, ry_only, br_na, ack}, fsm_opportunistic_flooding]},  % Simple static routing with acknowledgement
+      {sncfloodr, [{ry_only}, fsm_opportunistic_flooding]}, % Sequence number controlled flooding
+      {sncfloodrack, [{ry_only, br_na, ack}, fsm_opportunistic_flooding]},  % Sequence number controlled flooding with acknowledgement
+      {dpfloodr, [{ry_only, prob},    fsm_opportunistic_flooding]}, % Dynamic Probabilistic Flooding
+      {dpfloodrack, [{ry_only, prob, br_na, ack},fsm_opportunistic_flooding]},  % Dynamic Probabilistic Flooding with acknowledgement
+      {icrpr, [{ry_only, pf, br_na, ack},  fsm_opportunistic_flooding]},  % Information Carrying Routing Protocol
+      {sncfloodpfr, [{pf, brp, br_na}, fsm_opportunistic_flooding]},  % Pathfind and relay, based on sequence number controlled flooding
+      {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_opportunistic_flooding]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
+      {dblfloodpfr, [{pf, dbl, br_na}, fsm_opportunistic_flooding]},  % Double flooding path finder
+      {dblfloodpfrack,[{pf, dbl, br_na, ack}, fsm_opportunistic_flooding]}, % Double flooding path finder with acknowledgement
+      {evoicrppfr, [{pf, br_na, lo, evo}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol
+      {evoicrppfrack, [{pf, br_na, lo, evo, ack}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol with acknowledgement
+      {loarpr, [{pf, br_na, lo, rm}, fsm_opportunistic_flooding]},  % Low overhead routing protocol
+      {loarprack, [{pf, br_na, lo, rm, ack}, fsm_opportunistic_flooding]} % Low overhead routing protocol with acknowledgement
            ]).
 
 -define(PROTOCOL_DESCR, ["\n",
