@@ -40,9 +40,32 @@
 -export([mac2nl_address/1, num2flag/2]).
 -export([get_front_transmission_queue/1, check_received_queue/2, change_TTL_received_queue/2,
          delete_from_transmission_queue/2, decrease_TTL_transmission_queue/1, drop_TTL_transmission_queue/1]).
--export([init_dets/1, fill_dets/4]).
+-export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, crear_event_params/2]).
 % later do not needed to export
 -export([nl2mac_address/1, get_routing_address/3, nl2at/3, create_payload_nl_header/8, flag2num/1, queue_limited_push/4]).
+
+set_event_params(SM, Event_Parameter) ->
+  SM#sm{event_params = Event_Parameter}.
+
+get_event_params(SM, Event) ->
+  if SM#sm.event_params =:= [] ->
+       nothing;
+     true ->
+       EventP = hd(tuple_to_list(SM#sm.event_params)),
+       if EventP =:= Event -> SM#sm.event_params;
+        true -> nothing
+       end
+  end.
+
+crear_event_params(SM, Event) ->
+  if SM#sm.event_params =:= [] ->
+       SM;
+     true ->
+       EventP = hd(tuple_to_list(SM#sm.event_params)),
+       if EventP =:= Event -> SM#sm{event_params = []};
+        true -> SM
+       end
+  end.
 
 code_send_tuple(SM, NL_Send_Tuple) ->
   % TODO: change, usig also other protocols
@@ -51,7 +74,7 @@ code_send_tuple(SM, NL_Send_Tuple) ->
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Local_address = share:get(SM, local_address),
   {nl, send, Dst, Payload} = NL_Send_Tuple,
-  {SM1, PkgID} = increase_pkgid(SM, Local_address, Dst),
+  PkgID = increase_pkgid(SM, Local_address, Dst),
 
   Flag = data,
   Src = Local_address,
@@ -60,9 +83,9 @@ code_send_tuple(SM, NL_Send_Tuple) ->
               [Flag, PkgID, TTL, Src, Dst]),
 
   if (((Dst =:= ?ADDRESS_MAX) and Protocol_Config#pr_conf.br_na)) ->
-      {SM1, error};
+      error;
   true ->
-      {SM1, {Flag, PkgID, TTL, Src, Dst, Payload}}
+      {Flag, PkgID, TTL, Src, Dst, Payload}
   end.
 
 queue_limited_push(SM, Qname, Item, Max) ->
@@ -75,24 +98,21 @@ queue_limited_push(SM, Qname, Item, Max) ->
   end.
 
 fill_transmission_queue(SM, _, error) ->
-  {SM, error};
+  set_event_params(SM, {fill_tq, error});
 fill_transmission_queue(SM, Type, NL_Send_Tuple) ->
   Qname = transmission_queue,
   Q = share:get(SM, Qname),
-  TT =
+  ?INFO(?ID, "TRANSMISSION QUEUE ~p~n", [share:get(SM, Qname)]),
   case queue:len(Q) of
     Len when Len >= ?TRANSMISSION_QUEUE_SIZE ->
-      {SM, error};
+      set_event_params(SM, {fill_tq, error});
     _ when Type == filo ->
-      SM1 = share:put(SM, Qname, queue:in(NL_Send_Tuple, Q)),
-      {SM1, ok};
+      [share:put(__, Qname, queue:in(NL_Send_Tuple, Q)),
+      set_event_params(__, {fill_tq, ok})](SM);
     _ when Type == fifo ->
-      SM1 = share:put(SM, Qname, queue:in_r(NL_Send_Tuple, Q)),
-      {SM1, ok}
-  end,
-  ?INFO(?ID, "TRANSMISSION QUEUE ~p~n", [share:get(SM, Qname)]),
-
-  TT.
+      [share:put(__, Qname, queue:in_r(NL_Send_Tuple, Q)),
+      set_event_params(__, {fill_tq, ok})](SM)
+  end.
 
 get_front_transmission_queue(SM) ->
   Qname = transmission_queue,
@@ -498,9 +518,6 @@ increase_pkgid(SM, Src, Dst) ->
             Prev_ID when Prev_ID >= Max_Pkg_ID -> 0;
             (Prev_ID) -> Prev_ID + 1
           end,
-
-  ?TRACE(?ID, "Increase Pkg Id ~p~n", [PkgID]),
-  SM1 = share:put(SM, {packet_id, Src, Dst}, PkgID),
-  ?TRACE(?ID, "increase_pkgid LA ~p: packet_id ~p~n", [share:get(SM, local_address),
-              share:get(SM, {packet_id, Src, Dst})]),
-  {SM1, PkgID}.
+  ?TRACE(?ID, "Increase Pkg Id LA ~p: packet_id ~p~n", [share:get(SM, local_address), PkgID]),
+  share:put(SM, {packet_id, Src, Dst}, PkgID),
+  PkgID.

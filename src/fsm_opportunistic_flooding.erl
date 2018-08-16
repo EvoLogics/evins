@@ -124,27 +124,16 @@ handle_event(MM, SM, Term) ->
         fsm:run_event(MM, SM#sm{event = sensing_timeout}, {});
       {async, {pid, Pid}, Recv_Tuple} ->
         ?INFO(?ID, "My message: ~p~n", [Recv_Tuple]),
-        {SM1, Event, Cast_Tuple} = process_received_packet(SM, Recv_Tuple),
-        if Cast_Tuple =:= nothing -> nothing;
-        true -> fsm:cast(SM, nl_impl, {send, Cast_Tuple})
-        end,
-        fsm:run_event(MM, SM1#sm{event = Event}, {});
+        [process_received_packet(__, Recv_Tuple),
+        fsm:run_event(MM, __, {})](SM);
       {async, {pid, _Pid}, _Recv_Tuple} ->
         % TODO: add neighbours
         SM;
       {nl, send, Local_Address, _Payload} ->
         fsm:cast(SM, nl_impl, {send, {nl, send, error}});
       {nl, send, _IDst, _Payload} ->
-        {SM1, NL_Info} = process_nl_send(SM, Term),
-        case NL_Info of
-            {nl, error} ->
-                fsm:cast(SM, nl_impl, {send, {nl, send, error}});
-            _ ->
-                [fsm:cast(__, nl_impl, {send, {nl, send, 0}}),
-                 fsm:set_event(__, send),
-                 fsm:run_event(MM, __, NL_Info)
-                ] (SM1)
-        end;
+        [process_nl_send(__, Term),
+        fsm:run_event(MM, __, {})](SM);
       UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -167,8 +156,6 @@ init_flood(SM) ->
                  {received_queue, queue:new()},
                  {transmission_queue, queue:new()}]),
   nl_hf:init_dets(SM).
-  %nl_hf:init_nl_addrs(SM1).
-
 %%------------------------------------------ Handle functions -----------------------------------------------------
 handle_idle(_MM, SM, Term) ->
   ?INFO(?ID, "idle state ~120p~n", [Term]),
@@ -176,20 +163,15 @@ handle_idle(_MM, SM, Term) ->
 
 handle_transmit(_MM, SM, Term) ->
   ?INFO(?ID, "transmit state ~120p~n", [Term]),
-  {SM1, Event} = try_send_message(SM),
-  fsm:set_event(SM1, Event).
+  try_send_message(SM).
 
 handle_sensing(_MM, SM, _Term) ->
   ?INFO(?ID, "sensing state ~120p~n", [SM#sm.event]),
   case SM#sm.event of
     transmitted ->
-      {SM1, Event} = check_front_transmission_queue(SM),
-      fsm:set_event(SM1, Event);
+      check_front_transmission_queue(SM);
     relay ->
-      {SM1, Event} = handle_transmission_queue(SM),
-      % [nl_hf:drop_TTL_transmission_queue(__),
-      % handle_transmission_queue(__)](SM),
-      fsm:set_event(SM1, Event);
+      handle_transmission_queue(SM);
     _ ->
       fsm:set_event(SM, eps)
   end.
@@ -203,8 +185,7 @@ handle_collision(_MM, SM, _Term) ->
       % 3. check, if queue is empty -> idle
       % 4. check, if queue is not empty -> pick -> transmit the head of queue
       nl_hf:decrease_TTL_transmission_queue(SM),
-      {SM1, Event} = handle_transmission_queue(SM),
-      fsm:set_event(SM1, Event);
+      handle_transmission_queue(SM);
     _ ->
       fsm:set_event(SM, eps)
   end.
@@ -214,9 +195,21 @@ handle_alarm(_MM, SM, _Term) ->
   exit({alarm, SM#sm.module}).
 %%------------------------------------------ Helper functions -----------------------------------------------------
 process_nl_send(SM, NL_Send_Tuple) ->
-  {SM1, NL_Info} = nl_hf:code_send_tuple(SM, NL_Send_Tuple),
+  NL_Info = nl_hf:code_send_tuple(SM, NL_Send_Tuple),
   % Save message in the queue
-  nl_hf:fill_transmission_queue(SM1, filo, NL_Info).
+  nl_hf:fill_transmission_queue(SM, filo, NL_Info),
+  Fill_Transmiision_Queue = nl_hf:get_event_params(SM, fill_tq),
+  case Fill_Transmiision_Queue of
+    {fill_tq, error} ->
+      [fsm:cast(SM, nl_impl, {send, {nl, send, error}}),
+      nl_hf:crear_event_params(__, fill_tq),
+      fsm:set_event(__, eps)](SM);
+    _ ->
+      [fsm:cast(__, nl_impl, {send, {nl, send, 0}}),
+      nl_hf:crear_event_params(__, fill_tq),
+      fsm:set_event(__, send)
+      ] (SM)
+  end.
 
 try_send_message(SM) ->
   % take first meesage from the queue to transmit
@@ -232,41 +225,22 @@ try_send_message(SM) ->
       %fsm:send_at_command(LSM, Next)
   end,
   Rand_timeout = nl_mac_hf:rand_float(SM, tmo_sensing),
-  SM1 =
   [fsm:maybe_send_at_command(__, AT_Command, Handle_cache),
-   fsm:set_timeout(__, {ms, Rand_timeout}, {sensing_timeout, Front_Item})
-  ](SM),
-  {SM1, transmitted}.
+   fsm:set_timeout(__, {ms, Rand_timeout}, {sensing_timeout, Front_Item}),
+   fsm:set_event(__, transmitted)
+  ](SM).
 
 check_front_transmission_queue(SM) ->
   Result = nl_hf:get_front_transmission_queue(SM),
   check_front_transmission_queue(SM, Result).
 
 check_front_transmission_queue(SM, empty) ->
-  {SM, idle};
+  fsm:set_event(SM, idle);
 check_front_transmission_queue(SM, {value, Front_item = {dst_reached,_,_,_,_,_}}) ->
-  SM1 = nl_hf:delete_from_transmission_queue(SM, Front_item),
-  handle_transmission_queue(SM1);
+  [nl_hf:delete_from_transmission_queue(SM, Front_item),
+   handle_transmission_queue(__)](SM);
 check_front_transmission_queue(SM, {value, _Front_Item}) ->
-  {SM, eps}.
-
-  % case Front_item of
-  %   {dst_reached,_,_,_,_,_} ->
-  %     SM1 =
-  %     [nl_hf:delete_from_transmission_queue(__, Front_item),
-  %     fsm:maybe_send_at_command(__, AT_Command, Handle_cache)](SM),
-  %     Q = share:get(SM, transmission_queue),
-  %     case queue:is_empty(Q) of
-  %     true -> {SM1, idle};
-  %     false -> {SM1, transmitted}
-  %     end;
-  %   _ ->
-  %     SM1 =
-  %     [fsm:maybe_send_at_command(__, AT_Command, Handle_cache),
-  %      fsm:set_timeout(__, {ms, Rand_timeout}, {sensing_timeout, Front_item})
-  %     ](SM),
-  %     {SM1, transmitted}
-  % end.
+  fsm:set_event(SM, eps).
 
 process_received_packet(SM, Recv_Tuple) ->
   Blacklist = share:get(SM, blacklist),
@@ -280,13 +254,13 @@ process_received_packet(SM, Recv_Tuple) ->
     Is_In_Blacklist = lists:member(NL_Src, Blacklist),
     process_received_packet(SM, Is_In_Blacklist, {Src, Dst, Rssi, Integrity, Payload});
   _ ->
-    {SM, eps, nothing}
+    fsm:set_event(SM, eps)
 end.
 
 process_received_packet(SM, true, {Src, _Dst, _Rssi, _Integrity, _Payload}) ->
   Blacklist = share:get(SM, blacklist),
   ?INFO(?ID, "Source ~p is in the blacklist : ~w ~n", [Src, Blacklist]),
-  {SM, eps, nothing};
+  fsm:set_event(SM, eps);
 process_received_packet(SM, false, AT_Command) ->
   ?TRACE(?ID, "Recv AT command parameters ~p~n", [AT_Command]),
   {_Src, Dst, _Rssi, _Integrity, _Payload} = AT_Command,
@@ -296,7 +270,7 @@ process_received_packet(SM, false, AT_Command) ->
   process_received_packet_to_me(SM, Adressed_To_Me, AT_Command).
 
 process_received_packet_to_me(SM, false, _AT_Command) ->
-    {SM, eps, nothing};
+  fsm:set_event(SM, eps);
 process_received_packet_to_me(SM, true, AT_Command) ->
   Current_Pid = ?PROTOCOL_NL_PID(share:get(SM, protocol_name)),
   {_Src, _Dst, _Rssi, _Integrity, Payload} = AT_Command,
@@ -307,15 +281,14 @@ process_received_packet_to_me(SM, true, AT_Command) ->
   catch error: Reason ->
   % Got a message not for NL layer
   ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
-  {SM, eps, nothing}
+  fsm:set_event(SM, eps)
   end.
 
 process_received_packet_to_protocol(SM, false, AT_Command) ->
   ?TRACE(?ID, "Message is not applicable with current protocol ~p ~n", [AT_Command]),
-  {SM, eps, nothing};
+  fsm:set_event(SM, eps);
 process_received_packet_to_protocol(SM, true, AT_Command) ->
   ?INFO(?ID, "process_received_packet_to_protocol ~p ~n", [AT_Command]),
-  Local_Address = share:get(SM, local_address),
   Protocol_Name = share:get(SM, protocol_name),
   _Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   {Src, Dst, _Rssi, _Integrity, Payload} = AT_Command,
@@ -327,52 +300,57 @@ process_received_packet_to_protocol(SM, true, AT_Command) ->
       nl_hf:extract_payload_nl(SM, Payload),
 
   Flag = nl_hf:num2flag(Flag_Num, nl),
-
   NL_Recv_Tuple = {Flag, Pkg_ID, TTL, NL_Src, NL_Dst, Tail},
 
-  {SM1, If_Processed} = process_package(SM, Flag, NL_Recv_Tuple),
-  ?INFO(?ID, "Ret process_package ~p - ~p~n",[If_Processed, NL_Recv_Tuple]),
+  [process_package(__, Flag, NL_Recv_Tuple),
+   check_if_processed(__, NL_Recv_Tuple),
+   nl_hf:crear_event_params(__, if_processed)
+  ](SM).
 
-  % TODO: broadcast messages
+check_if_processed(SM, NL_Recv_Tuple) ->
+  Local_Address = share:get(SM, local_address),
+  {Flag, Pkg_ID, _TTL, NL_Src, NL_Dst, Tail} = NL_Recv_Tuple,
+  If_Processed = nl_hf:get_event_params(SM, if_processed),
+  ?INFO(?ID, "Ret process_package ~p - ~p~n",[If_Processed, NL_Recv_Tuple]),
   case If_Processed of
+      nothing -> fsm:set_event(SM, eps);
       _ when Flag =:= dst_reached ->
-        {SM1, relay, nothing};
-      not_processed when NL_Dst =:= Local_Address ->
+        fsm:set_event(SM, relay);
+      {if_processed, not_processed} when NL_Dst =:= Local_Address ->
         % add dst_reached message to the queue
         Dst_Reached_Tuple = {dst_reached, Pkg_ID, 0, NL_Dst, NL_Src, <<"d">>},
-        nl_hf:fill_transmission_queue(SM1, fifo, Dst_Reached_Tuple),
-        {SM1, relay, {nl, recv, NL_Src, NL_Dst, Tail}};
-      not_processed ->
-        nl_hf:fill_transmission_queue(SM1, fifo, NL_Recv_Tuple),
-        {SM1, relay, nothing};
+        Cast_Tuple = {nl, recv, NL_Src, NL_Dst, Tail},
+        [nl_hf:fill_transmission_queue(__, fifo, Dst_Reached_Tuple),
+        fsm:cast(__, nl_impl, {send, Cast_Tuple}),
+        fsm:set_event(__, relay)](SM);
+      {if_processed, not_processed} ->
+        [nl_hf:fill_transmission_queue(__, fifo, NL_Recv_Tuple),
+        fsm:set_event(__, relay)](SM);
       _ ->
-        {SM1, relay, nothing}
+        fsm:set_event(SM, relay)
   end.
 
 % check if same package was received from other src
+% delete message, if received dst_reached wiht same pkgID and reverse src, dst
 process_package(SM, dst_reached, NL_Recv_Tuple) ->
-  % delete message, if received dst_reached wiht same pkgID and reverse src, dst
-  SM1 = nl_hf:delete_from_transmission_queue(SM, NL_Recv_Tuple),
-  {SM1, nothing};
+  [nl_hf:delete_from_transmission_queue(__, NL_Recv_Tuple),
+   nl_hf:set_event_params(__, {if_processed, nothing})](SM);
 process_package(SM, _Flag, NL_Recv_Tuple) ->
   {_Flag_Num, _Pkg_ID, TTL, _NL_Src, _NL_Dst, _Payload} = NL_Recv_Tuple,
   {Exist, Stored_TTL} = nl_hf:check_received_queue(SM, NL_Recv_Tuple),
-
   ?TRACE(?ID, "process_package : Exist ~p  TTL ~p Stored_TTL ~p Recv Tuple ~p~n",
               [Exist, TTL, Stored_TTL, NL_Recv_Tuple]),
-
   case Exist of
       false ->
-        SM1 = nl_hf:queue_limited_push(SM, received_queue, NL_Recv_Tuple, 30),
-        {SM1, not_processed};
+        [nl_hf:queue_limited_push(__, received_queue, NL_Recv_Tuple, 30),
+         nl_hf:set_event_params(__, {if_processed, not_processed})](SM);
       true when TTL < Stored_TTL ->
-        SM1 =
         [nl_hf:delete_from_transmission_queue(__, NL_Recv_Tuple),
-         nl_hf:change_TTL_received_queue(__, NL_Recv_Tuple)](SM),
-        {SM1, not_processed};
+         nl_hf:change_TTL_received_queue(__, NL_Recv_Tuple),
+         nl_hf:set_event_params(__, {if_processed, not_processed})](SM);
       _ ->
-        SM1 = nl_hf:delete_from_transmission_queue(SM, NL_Recv_Tuple),
-        {SM1, processed}
+        [nl_hf:delete_from_transmission_queue(__, NL_Recv_Tuple),
+        nl_hf:set_event_params(__, {if_processed, processed})](SM)
   end.
 
 % 1. decreace TTL for every packet in the queue
@@ -383,6 +361,6 @@ handle_transmission_queue(SM) ->
   Qname = transmission_queue,
   Q = share:get(SM, Qname),
   case queue:is_empty(Q) of
-    true -> {SM, idle};
-    false -> {SM, pick}
+    true -> fsm:set_event(SM, idle);
+    false -> fsm:set_event(SM, pick)
   end.
