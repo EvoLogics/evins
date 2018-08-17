@@ -146,35 +146,35 @@ stop(_SM)      -> ok.
 
 %%--------------------------------------Helper functions------------------------
 init_backoff(SM)->
-  share:put(SM, current_step, 0). % 2 ^ 0
+  share:put(SM, backoff_factor, 0). % 2 ^ 0
 
-check_limit(SM, Current_Backoff, Current_Step) ->
+check_limit(SM, Current_Backoff, Backoff_Factor) ->
   case Current_Backoff of
     Current_Backoff when ((Current_Backoff =< 200) and (Current_Backoff >= 1)) ->
-      Current_Step;
+      Backoff_Factor;
     Current_Backoff when (Current_Backoff > 200) ->
-      Current_Step - 1;
+      Backoff_Factor - 1;
     Current_Backoff when (Current_Backoff < 1) ->
       init_backoff(SM)
   end.
 
 change_backoff(SM, Type) ->
-  Exp = share:get(SM, current_step),
-  Current_Step =
+  Exp = share:get(SM, backoff_factor),
+  Backoff_Factor =
     case Type of
       increment -> Exp + 1;
       decrement -> case ( Exp - 1 > 0 ) of true -> Exp - 1; false -> 0 end
     end,
-  Current_Backoff = math:pow(2, Current_Step),
-  NewStep = check_limit(SM, Current_Backoff, Current_Step),
-  share:put(SM, current_step, NewStep),
-  Val = math:pow(2, share:get(SM, current_step)),
+  Current_Backoff = math:pow(2, Backoff_Factor),
+  NewStep = check_limit(SM, Current_Backoff, Backoff_Factor),
+  share:put(SM, backoff_factor, NewStep),
+  Val = math:pow(2, share:get(SM, backoff_factor)),
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
   Val.
 
 process_async({sendstart, _, _, _, _}) -> sendstart;
 process_async({sendend, _, _, _, _}) -> sendend;
-process_async({recvstart, _, _, _, _}) -> recvstart;
+process_async({recvstart}) -> recvstart;
 process_async({recvend, _, _, _, _}) -> recvend;
 process_async(_) -> eps.
 
@@ -310,14 +310,16 @@ handle_sensing(_MM, SM, _) ->
       ] (SM)
   end.
 
-handle_backoff(_MM, #sm{event = E} = SM, _) when E == recvstart; E == sendstart ->
-  Backoff = change_backoff(SM, increment),
+handle_backoff(_MM, #sm{event = E} = SM, _) when E == recvstart ->
   Timeout_handler =
     fun(LSM) ->
         case fsm:check_timeout(SM, backoff_timeout) of
           true -> LSM;
-          %% _ -> fsm:set_timeout(LSM, {ms, round(500 * Backoff) + rand:uniform(round(1000 * Backoff))}, backoff_timeout)
-          _ -> fsm:set_timeout(LSM, {s, Backoff}, backoff_timeout)
+          _ ->
+            Backoff = change_backoff(SM, increment),
+            Timeout = rand:uniform(round(1000 * Backoff)),
+            io:format("Setting backoff: ~p ms~n", [Timeout]),
+            fsm:set_timeout(LSM, {ms, Timeout}, backoff_timeout)
         end
     end,
   [
@@ -339,7 +341,6 @@ handle_transmit(_MM, SM, _) ->
       ?TRACE(?ID, "MAC_AT_SEND ~p~n", [TX]),
       Transmittion_handler =
         fun(LSM, blocked) ->
-            io:format("trigger~n"),
             fsm:set_event(LSM, backoff_timeout); %% to trigger second attempt
            (LSM, ok) ->
             change_backoff(LSM, decrement),
