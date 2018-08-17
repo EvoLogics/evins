@@ -329,10 +329,17 @@ handle_event(MM, SM, Term) ->
 handle_alarm(_MM, SM, _Term) ->
   exit({alarm, SM#sm.module}).
 
-handle_idle(_MM, SM, _Term) ->
+handle_idle(_MM, #sm{event = E} = SM, _Term) ->
+  Event =
+    case share:get(SM, tx) of
+      nothing -> eps;
+      _ when E == frame_timeout; E == false_ctd; E == listen -> content;
+      %% TODO: maybe better to add small random timeout before trying to content
+      _ -> eps
+    end,
   [
    fsm:clear_timeouts(__, [frame_timeout, backoff_timeout, content_timeout, status_timeout]),
-   fsm:set_event(__, eps)
+   fsm:set_event(__, Event)
   ] (SM).
 
 handle_maybe_blocking(_MM, SM, _Term) ->

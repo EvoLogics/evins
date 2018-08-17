@@ -317,8 +317,8 @@ handle_backoff(_MM, #sm{event = E} = SM, _) when E == recvstart ->
           true -> LSM;
           _ ->
             Backoff = change_backoff(SM, increment),
-            Timeout = rand:uniform(round(1000 * Backoff)),
-            io:format("Setting backoff: ~p ms~n", [Timeout]),
+            Timeout = rand:uniform(round(2000 * Backoff)),
+            %% io:format("Setting backoff: ~p ms~n", [Timeout]),
             fsm:set_timeout(LSM, {ms, Timeout}, backoff_timeout)
         end
     end,
