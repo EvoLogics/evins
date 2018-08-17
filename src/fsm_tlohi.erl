@@ -230,7 +230,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, at_impl, {send, {async, {error, "ANSWER TIMEOUT"}}});
     {timeout, status_timeout} ->
       fsm:maybe_send_at_command(SM, {at, "?S", ""});
-    {timeout, E} when E == frame_timeout; E == content_timeout ->
+    {timeout, E} when E == frame_timeout; E == content_timeout; E == backoff_timeout ->
       run_hook_handler(MM, SM, Term, E);
     {connected} when MM#mm.role == at_impl ->
       case share:get(SM, pid) of
@@ -344,7 +344,7 @@ handle_blocking(_MM, SM, _Term) ->
       Frame = share:get(SM, cr_time),
       [
        fsm:set_event(__, eps),
-       fsm:clear_timeout(__, frame_timeout),
+       fsm:clear_timeouts(__, [frame_timeout, backoff_timeout]),
        fsm:set_timeout(__, {ms, Frame}, frame_timeout)
       ] (SM);
     _ ->
