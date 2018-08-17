@@ -35,14 +35,15 @@
 -include("fsm.hrl").
 -include("nl.hrl").
 
--export([fill_transmission_queue/3, increase_pkgid/3, code_send_tuple/2, create_nl_at_command/2]).
+-export([fill_transmission_queue/3, increase_pkgid/3, code_send_tuple/2, create_nl_at_command/2, get_params_spec_timeout/2]).
 -export([extract_payload_nl/2, extract_payload_nl_header/2]).
 -export([mac2nl_address/1, num2flag/2]).
 -export([get_front_transmission_queue/1, check_received_queue/2, change_TTL_received_queue/2,
-         delete_from_transmission_queue/2, decrease_TTL_transmission_queue/1, drop_TTL_transmission_queue/1]).
+         delete_from_transmission_queue/2, decrease_TTL_transmission_queue/1]).
 -export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, crear_event_params/2]).
 % later do not needed to export
 -export([nl2mac_address/1, get_routing_address/3, nl2at/3, create_payload_nl_header/8, flag2num/1, queue_limited_push/4]).
+-export([decrease_local_retries/2]).
 
 set_event_params(SM, Event_Parameter) ->
   SM#sm{event_params = Event_Parameter}.
@@ -67,6 +68,15 @@ crear_event_params(SM, Event) ->
        end
   end.
 
+get_params_spec_timeout(SM, Spec) ->
+  lists:filtermap(
+   fun({E, _TRef}) ->
+     case E of
+       {Spec, P} -> {true, P};
+       _  -> false
+     end
+  end, SM#sm.timeouts).
+
 code_send_tuple(SM, NL_Send_Tuple) ->
   % TODO: change, usig also other protocols
   Protocol_Name = share:get(SM, protocol_name),
@@ -90,11 +100,13 @@ code_send_tuple(SM, NL_Send_Tuple) ->
 
 queue_limited_push(SM, Qname, Item, Max) ->
   Q = share:get(SM, Qname),
+  Q_Member = queue:member(Item, Q),
   case queue:len(Q) of
-    Len when Len >= Max ->
+    Len when Len >= Max, not Q_Member ->
       share:put(SM, Qname, queue:in(Item, queue:drop(Q)));
-    _ ->
-      share:put(SM, Qname, queue:in(Item, Q))
+    _ when not Q_Member ->
+      share:put(SM, Qname, queue:in(Item, Q));
+    _ -> SM
   end.
 
 fill_transmission_queue(SM, _, error) ->
@@ -102,7 +114,6 @@ fill_transmission_queue(SM, _, error) ->
 fill_transmission_queue(SM, Type, NL_Send_Tuple) ->
   Qname = transmission_queue,
   Q = share:get(SM, Qname),
-  ?INFO(?ID, "TRANSMISSION QUEUE ~p~n", [share:get(SM, Qname)]),
   case queue:len(Q) of
     Len when Len >= ?TRANSMISSION_QUEUE_SIZE ->
       set_event_params(SM, {fill_tq, error});
@@ -117,34 +128,38 @@ fill_transmission_queue(SM, Type, NL_Send_Tuple) ->
 get_front_transmission_queue(SM) ->
   Qname = transmission_queue,
   Q = share:get(SM, Qname),
+  Front=
   case queue:is_empty(Q) of
     true ->  empty;
     false -> {Item, _} = queue:out(Q), Item
-  end.
+  end,
+  ?INFO(?ID, "GET FRONT ~p~n", [Front]),
+  Front.
 
 delete_from_transmission_queue(SM, Tuple) ->
   Qname = transmission_queue,
   Q = share:get(SM, Qname),
-  ?TRACE(?ID, "deleted Tuple ~p from  ~p~n",[Tuple, share:get(SM, Qname)]),
-  delete_from_tq_helper(SM, Tuple, Q, queue:new()).
-
-delete_from_tq_helper(SM, _Tuple, {[],[]}, NQ) ->
-  share:put(SM, transmission_queue, NQ);
-delete_from_tq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Q, NQ) ->
-  { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  case Q_Tuple of
-    {Flag, PkgID, _TTL, Src, Dst, Payload} ->
-      [clear_sensing_timeout(__, Q_Tuple),
-       delete_from_tq_helper(__, Tuple, Q_Tail, NQ)](SM);
-    {_Flag, PkgID, _TTL, Dst, Src, _Payload} ->
-      [clear_sensing_timeout(__, Q_Tuple),
-       delete_from_tq_helper(__, Tuple, Q_Tail, NQ)](SM);
-    _ ->
-      delete_from_tq_helper(SM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
+  {Flag, PkgID, _, Src, Dst, Payload} = Tuple,
+  Transmission_queue = get_front_transmission_queue(SM),
+  case Transmission_queue of
+    empty -> clear_sensing_timeout(SM, Tuple);
+    {value, {Flag, PkgID, _TTL, Src, Dst, Payload}} ->
+      { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
+      ?TRACE(?ID, "deleted Tuple ~p from  ~p~n",[Tuple, share:get(SM, Qname)]),
+      [delete_from_retries_queue(__, Q_Tuple),
+      clear_sensing_timeout(__, Q_Tuple),
+      share:put(__, transmission_queue, Q_Tail)](SM);
+    {value, {_Flag, PkgID, _TTL, Dst, Src, _Payload}} ->
+      { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
+      ?TRACE(?ID, "deleted Tuple ~p from  ~p~n",[Tuple, share:get(SM, Qname)]),
+      [delete_from_retries_queue(__, Q_Tuple),
+      clear_sensing_timeout(__, Q_Tuple),
+      share:put(__, transmission_queue, Q_Tail)](SM);
+    _ -> clear_sensing_timeout(SM, Tuple)
   end.
 
 clear_sensing_timeout(SM, Tuple) ->
-  ?TRACE(?ID, "Crear sensing timeout ~p~n",[Tuple]),
+  ?TRACE(?ID, "Clear sensing timeout ~p~n",[Tuple]),
   {Flag, PkgID, _, Src, Dst, Payload} = Tuple,
   TRefList = filter(
              fun({E, TRef}) ->
@@ -160,41 +175,68 @@ clear_sensing_timeout(SM, Tuple) ->
              end, SM#sm.timeouts),
   SM#sm{timeouts = TRefList}.
 
-drop_TTL_transmission_queue(SM) ->
-  Qname = transmission_queue,
+delete_from_retries_queue(SM, Tuple) ->
+  Qname = retries_queue,
   Q = share:get(SM, Qname),
-  drop_TTL_tq(SM, Q, queue:new()).
+  ?TRACE(?ID, "deleted Tuple ~p from retry queue ~p~n",[Tuple, share:get(SM, Qname)]),
+  delete_from_retq_helper(SM, Tuple, Q, queue:new()).
 
-drop_TTL_tq(SM, {[],[]}, NQ) ->
-  share:put(SM, transmission_queue, NQ);
-drop_TTL_tq(SM, Q, NQ) ->
+delete_from_retq_helper(SM, _Tuple, {[],[]}, NQ) ->
+  share:put(SM, retries_queue, NQ);
+delete_from_retq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Q, NQ) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
   case Q_Tuple of
-    {_Flag, _PkgID, TTL, _Src, _Dst, _Payload} when TTL =< 0 ->
-      ?INFO(?ID, "drop Tuple ~p from the queue, TTL ~p =< 0 ~n",[Q_Tuple, TTL]),
-      [clear_sensing_timeout(__, Q_Tuple),
-      drop_TTL_tq(__, Q_Tail, NQ)](SM);
+    {_Retries, {Flag, PkgID, _TTL, Src, Dst, Payload}} ->
+      delete_from_retq_helper(SM, Tuple, Q_Tail, NQ);
     _ ->
-      drop_TTL_tq(SM, Q_Tail, queue:in(Q_Tuple, NQ))
+      delete_from_retq_helper(SM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
+  end.
+
+decrease_local_retries(SM, Tuple) ->
+  Qname = retries_queue,
+  Q = share:get(SM, Qname),
+  ?TRACE(?ID, "Change local tries of packet ~p in retry queue ~p~n",[Tuple, Q]),
+  decrease_local_retq_helper(SM, Tuple, not_inside, Q, queue:new()).
+
+decrease_local_retq_helper(SM, Tuple, _, Q = {[],[]}, {[],[]}) ->
+  Local_Retries = share:get(SM, retries),
+  share:put(SM, retries_queue, queue:in({Local_Retries, Tuple}, Q));
+decrease_local_retq_helper(SM, Tuple, not_inside, {[],[]}, NQ) ->
+  Local_Retries = share:get(SM, retries),
+  share:put(SM, retries_queue, queue:in({Local_Retries, Tuple}, NQ));
+decrease_local_retq_helper(SM, _Tuple, inside, {[],[]}, NQ) ->
+  share:put(SM, retries_queue, NQ);
+decrease_local_retq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Inside, Q, NQ) ->
+  { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  case Q_Tuple of
+    {Retries, {Flag, PkgID, _TTL, Src, Dst, Payload}} when Retries =< 0 ->
+      ?TRACE(?ID, "drop Tuple ~p from  ~p, retries ~p ~n",[Q_Tuple, Q, Retries]),
+      [delete_from_transmission_queue(__, Tuple),
+      decrease_local_retq_helper(__, Tuple, inside, Q_Tail, NQ)](SM);
+    {Retries, {Flag, PkgID, _TTL, Src, Dst, Payload}} when Retries > 0 ->
+      ?TRACE(?ID, "change Tuple ~p in  ~p, retries ~p ~n",[Q_Tuple, Q, Retries - 1]),
+      decrease_local_retq_helper(SM, Tuple, inside, Q_Tail, queue:in({Retries - 1, Tuple}, NQ));
+    _ ->
+      decrease_local_retq_helper(SM, Tuple, Inside, Q_Tail, queue:in(Q_Tuple, NQ))
   end.
 
 decrease_TTL_transmission_queue(SM) ->
   Qname = transmission_queue,
   Q = share:get(SM, Qname),
-  decrease_TTL_tq(SM, Q, queue:new()),
   ?INFO(?ID, "decrease TTL for every packet in the queue ~p ~n",[share:get(SM, Qname)]),
-  SM.
+  decrease_TTL_tq(SM, Q, queue:new()).
 
 decrease_TTL_tq(SM, {[],[]}, NQ) ->
   share:put(SM, transmission_queue, NQ);
 decrease_TTL_tq(SM, Q, NQ) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
   case Q_Tuple of
-    {Flag, PkgID, TTL, Src, Dst, Payload} ->
+    {Flag, PkgID, TTL, Src, Dst, Payload} when Flag =/= dst_reached ->
       Decreased_TTL = TTL - 1,
       if Decreased_TTL =< 0 ->
         ?INFO(?ID, "decrease and drop ~p, TTL ~p =< 0 ~n",[Q_Tuple, TTL]),
-        decrease_TTL_tq(SM, Q_Tail, NQ);
+        [clear_sensing_timeout(__, Q_Tuple),
+         decrease_TTL_tq(__, Q_Tail, NQ)](SM);
       true ->
         Tuple = {Flag, PkgID, Decreased_TTL, Src, Dst, Payload},
         decrease_TTL_tq(SM, Q_Tail, queue:in(Tuple, NQ))

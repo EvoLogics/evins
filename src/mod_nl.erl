@@ -130,11 +130,13 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Neighbour_life_set= [Time || {neighbour_life, Time} <- ArgS],
   Tmo_dbl_wv_set    = [Time || {tmo_dbl_wv, Time} <- ArgS],
 
+  Local_Retries_Set  = [C   || {retries, C} <- ArgS],
   TTL_Set  = [C   || {ttl, C} <- ArgS],
   Tmo_sensing  = [Time || {tmo_sensing, Time} <- ArgS],
 
-  Max_TTL        = set_params(TTL_Set, 8),
-  {Tmo_sensing_start, Tmo_sensing_end}    = set_timeouts(Tmo_sensing, {5, 10}),
+  Max_TTL        = set_params(TTL_Set, 10),
+  Local_Retries  = set_params(Local_Retries_Set, 3),
+  {Tmo_sensing_start, Tmo_sensing_end}    = set_timeouts(Tmo_sensing, {10, 20}),
 
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
@@ -181,6 +183,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {send_wv_dbl_tmo, Tmo_dbl_wv},
                       {probability, Probability},
                       {pkg_life, Pkg_life},
+                      {retries, Local_Retries},
                       {ttl, Max_TTL},
                       {tmo_sensing, {Tmo_sensing_start, Tmo_sensing_end}}
                      ]),

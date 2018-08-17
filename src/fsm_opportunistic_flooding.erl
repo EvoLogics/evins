@@ -122,6 +122,8 @@ handle_event(MM, SM, Term) ->
       {timeout,{sensing_timeout, _Send_Tuple}} ->
         ?INFO(?ID, "St ~p Ev ~p ~n", [SM#sm.event, SM#sm.state]),
         fsm:run_event(MM, SM#sm{event = sensing_timeout}, {});
+      {timeout, relay} ->
+        fsm:run_event(MM, SM#sm{event = relay}, {});
       {async, {pid, Pid}, Recv_Tuple} ->
         ?INFO(?ID, "My message: ~p~n", [Recv_Tuple]),
         [process_received_packet(__, Recv_Tuple),
@@ -153,6 +155,7 @@ init_flood(SM) ->
                  {paths, queue:new()},
                  {st_neighbours, queue:new()},
                  {st_data, queue:new()},
+                 {retries_queue, queue:new()},
                  {received_queue, queue:new()},
                  {transmission_queue, queue:new()}]),
   nl_hf:init_dets(SM).
@@ -163,7 +166,8 @@ handle_idle(_MM, SM, Term) ->
 
 handle_transmit(_MM, SM, Term) ->
   ?INFO(?ID, "transmit state ~120p~n", [Term]),
-  try_send_message(SM).
+  Front_Item = nl_hf:get_front_transmission_queue(SM),
+  try_send_message(SM, Front_Item).
 
 handle_sensing(_MM, SM, _Term) ->
   ?INFO(?ID, "sensing state ~120p~n", [SM#sm.event]),
@@ -184,8 +188,8 @@ handle_collision(_MM, SM, _Term) ->
       % 2. delete packets withh TTL 0 or < 0
       % 3. check, if queue is empty -> idle
       % 4. check, if queue is not empty -> pick -> transmit the head of queue
-      nl_hf:decrease_TTL_transmission_queue(SM),
-      handle_transmission_queue(SM);
+      [nl_hf:decrease_TTL_transmission_queue(__),
+      handle_transmission_queue(__)](SM);
     _ ->
       fsm:set_event(SM, eps)
   end.
@@ -211,9 +215,10 @@ process_nl_send(SM, NL_Send_Tuple) ->
       ] (SM)
   end.
 
-try_send_message(SM) ->
+try_send_message(SM, empty) ->
+  fsm:set_event(SM, transmitted);
+try_send_message(SM, {value, Front_Item}) ->
   % take first meesage from the queue to transmit
-  {value, Front_Item} = nl_hf:get_front_transmission_queue(SM),
   ?INFO(?ID, "Try send message: front item ~p~n", [Front_Item]),
   AT_Command = nl_hf:create_nl_at_command(SM, Front_Item),
   Handle_cache =
@@ -225,7 +230,10 @@ try_send_message(SM) ->
       %fsm:send_at_command(LSM, Next)
   end,
   Rand_timeout = nl_mac_hf:rand_float(SM, tmo_sensing),
-  [fsm:maybe_send_at_command(__, AT_Command, Handle_cache),
+  [nl_hf:decrease_local_retries(__, Front_Item),
+   fsm:maybe_send_at_command(__, AT_Command, Handle_cache),
+   nl_hf:change_TTL_received_queue(__, Front_Item),
+   nl_hf:queue_limited_push(__, received_queue, Front_Item, 30),
    fsm:set_timeout(__, {ms, Rand_timeout}, {sensing_timeout, Front_Item}),
    fsm:set_event(__, transmitted)
   ](SM).
@@ -235,7 +243,8 @@ check_front_transmission_queue(SM) ->
   check_front_transmission_queue(SM, Result).
 
 check_front_transmission_queue(SM, empty) ->
-  fsm:set_event(SM, idle);
+  %fsm:set_event(SM, idle);
+  handle_transmission_queue(SM);
 check_front_transmission_queue(SM, {value, Front_item = {dst_reached,_,_,_,_,_}}) ->
   [nl_hf:delete_from_transmission_queue(SM, Front_item),
    handle_transmission_queue(__)](SM);
@@ -275,9 +284,9 @@ process_received_packet_to_me(SM, true, AT_Command) ->
   Current_Pid = ?PROTOCOL_NL_PID(share:get(SM, protocol_name)),
   {_Src, _Dst, _Rssi, _Integrity, Payload} = AT_Command,
   try
-      {Pid, _,  _,  _,  _,  _,  _} = nl_hf:extract_payload_nl_header(SM, Payload),
-      Adressed_To_Protocol = (Current_Pid =:= Pid),
-      process_received_packet_to_protocol(SM, Adressed_To_Protocol, AT_Command)
+    {Pid, _,  _,  _,  _,  _,  _} = nl_hf:extract_payload_nl_header(SM, Payload),
+    Adressed_To_Protocol = (Current_Pid =:= Pid),
+    process_received_packet_to_protocol(SM, Adressed_To_Protocol, AT_Command)
   catch error: Reason ->
   % Got a message not for NL layer
   ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
@@ -310,10 +319,21 @@ process_received_packet_to_protocol(SM, true, AT_Command) ->
 check_if_processed(SM, NL_Recv_Tuple) ->
   Local_Address = share:get(SM, local_address),
   {Flag, Pkg_ID, _TTL, NL_Src, NL_Dst, Tail} = NL_Recv_Tuple,
+
+  %Cast_Tuple = {nl, recv, NL_Src, NL_Dst, Tail},
+  %fsm:cast(SM, nl_impl, {send, Cast_Tuple}),
+
   If_Processed = nl_hf:get_event_params(SM, if_processed),
-  ?INFO(?ID, "Ret process_package ~p - ~p~n",[If_Processed, NL_Recv_Tuple]),
+  Sensing_timeout = nl_hf:get_params_spec_timeout(SM, sensing_timeout),
+  Event =
+  if Sensing_timeout =/= [] -> eps;
+  true -> relay
+  end,
+
+  ?INFO(?ID, "Ret process_package ~p - ~p: Sensing_timeout ~p~n",[If_Processed, NL_Recv_Tuple, Sensing_timeout]),
   case If_Processed of
       nothing -> fsm:set_event(SM, eps);
+      %_ when Sensing_timeout =/= [] -> fsm:set_event(SM, eps);
       _ when Flag =:= dst_reached ->
         fsm:set_event(SM, relay);
       {if_processed, not_processed} when NL_Dst =:= Local_Address ->
@@ -322,12 +342,12 @@ check_if_processed(SM, NL_Recv_Tuple) ->
         Cast_Tuple = {nl, recv, NL_Src, NL_Dst, Tail},
         [nl_hf:fill_transmission_queue(__, fifo, Dst_Reached_Tuple),
         fsm:cast(__, nl_impl, {send, Cast_Tuple}),
-        fsm:set_event(__, relay)](SM);
+        fsm:set_event(__, Event)](SM);
       {if_processed, not_processed} ->
         [nl_hf:fill_transmission_queue(__, fifo, NL_Recv_Tuple),
-        fsm:set_event(__, relay)](SM);
-      _ ->
-        fsm:set_event(SM, relay)
+        fsm:set_event(__, Event)](SM);
+      _  ->
+        fsm:set_event(SM, Event)
   end.
 
 % check if same package was received from other src
@@ -336,7 +356,8 @@ process_package(SM, dst_reached, NL_Recv_Tuple) ->
   [nl_hf:delete_from_transmission_queue(__, NL_Recv_Tuple),
    nl_hf:set_event_params(__, {if_processed, nothing})](SM);
 process_package(SM, _Flag, NL_Recv_Tuple) ->
-  {_Flag_Num, _Pkg_ID, TTL, _NL_Src, _NL_Dst, _Payload} = NL_Recv_Tuple,
+  Local_Address = share:get(SM, local_address),
+  {_Flag_Num, _Pkg_ID, TTL, NL_Src, NL_Dst, _Payload} = NL_Recv_Tuple,
   {Exist, Stored_TTL} = nl_hf:check_received_queue(SM, NL_Recv_Tuple),
   ?TRACE(?ID, "process_package : Exist ~p  TTL ~p Stored_TTL ~p Recv Tuple ~p~n",
               [Exist, TTL, Stored_TTL, NL_Recv_Tuple]),
@@ -344,7 +365,12 @@ process_package(SM, _Flag, NL_Recv_Tuple) ->
       false ->
         [nl_hf:queue_limited_push(__, received_queue, NL_Recv_Tuple, 30),
          nl_hf:set_event_params(__, {if_processed, not_processed})](SM);
+      true when NL_Src =:= Local_Address; NL_Dst =:= Local_Address ->
+        [nl_hf:delete_from_transmission_queue(__, NL_Recv_Tuple),
+         nl_hf:change_TTL_received_queue(__, NL_Recv_Tuple),
+         nl_hf:set_event_params(__, {if_processed, processed})](SM);
       true when TTL < Stored_TTL ->
+        % TODO: TTL processing
         [nl_hf:delete_from_transmission_queue(__, NL_Recv_Tuple),
          nl_hf:change_TTL_received_queue(__, NL_Recv_Tuple),
          nl_hf:set_event_params(__, {if_processed, not_processed})](SM);
@@ -360,7 +386,10 @@ process_package(SM, _Flag, NL_Recv_Tuple) ->
 handle_transmission_queue(SM) ->
   Qname = transmission_queue,
   Q = share:get(SM, Qname),
+  Sensing_timeout = nl_hf:get_params_spec_timeout(SM, sensing_timeout),
+
   case queue:is_empty(Q) of
-    true -> fsm:set_event(SM, idle);
+    true when Sensing_timeout =:= [] -> fsm:set_event(SM, idle);
+    true -> fsm:set_event(SM, eps);
     false -> fsm:set_event(SM, pick)
   end.
