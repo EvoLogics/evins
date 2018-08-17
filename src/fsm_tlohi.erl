@@ -37,7 +37,7 @@
 -export([init/1,handle_event/3,stop/1]).
 
 -export([handle_idle/3, handle_alarm/3]).
--export([handle_maybe_blocking/3, handle_blocking/3, handle_contention/3, handle_prepare_backoff/3, handle_backoff/3, handle_send/3, handle_wait_listen/3]).
+-export([handle_maybe_blocking/3, handle_blocking/3, handle_precontention/3, handle_contention/3, handle_prepare_backoff/3, handle_backoff/3, handle_send/3, handle_wait_listen/3]).
 
 %%  http://www.eecs.harvard.edu/~mdw/course/cs263/papers/t-lohi-infocom08.pdf
 %%  Comparison - http://www.isi.edu/~johnh/PAPERS/Syed08b.pdf
@@ -83,7 +83,7 @@
                 {idle
                 ,[
                   {recvstart, maybe_blocking},
-                  {content, contention},
+                  {content, precontention},
                   {busy, wait_listen},
                   {ctd, idle},
                   {false_ctd, idle},
@@ -108,6 +108,15 @@
                   {sendok, blocking},
                   {sendend, blocking},
                   {frame_timeout, idle}
+                 ]},
+                {precontention
+                ,[{precontent_timeout, contention},
+                  {recvstart, precontention},
+                  {busy, wait_listen},
+                  {ctd, prepare_backoff},
+                  {false_ctd, precontention},
+                  {sendok, precontention},
+                  {sendend, precontention}
                  ]},
                 {contention
                 ,[
@@ -137,7 +146,7 @@
                   {false_ctd, backoff},
                   {sendok, backoff},
                   {sendend, backoff},
-                  {backoff_timeout, contention}
+                  {backoff_timeout, precontention}
                  ]},
                 {send
                 ,[
@@ -230,7 +239,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, at_impl, {send, {async, {error, "ANSWER TIMEOUT"}}});
     {timeout, status_timeout} ->
       fsm:maybe_send_at_command(SM, {at, "?S", ""});
-    {timeout, E} when E == frame_timeout; E == content_timeout; E == backoff_timeout ->
+    {timeout, E} when E == frame_timeout; E == content_timeout; E == backoff_timeout; E == precontent_timeout ->
       run_hook_handler(MM, SM, Term, E);
     {connected} when MM#mm.role == at_impl ->
       case share:get(SM, pid) of
@@ -329,10 +338,17 @@ handle_event(MM, SM, Term) ->
 handle_alarm(_MM, SM, _Term) ->
   exit({alarm, SM#sm.module}).
 
-handle_idle(_MM, SM, _Term) ->
+handle_idle(_MM, #sm{event = E} = SM, _Term) ->
+  Event =
+    case share:get(SM, tx) of
+      nothing -> eps;
+      _ when E == frame_timeout; E == false_ctd; E == listen -> content;
+      %% TODO: maybe better to add small random timeout before trying to content
+      _ -> eps
+    end,
   [
-   fsm:clear_timeouts(__, [frame_timeout, backoff_timeout, content_timeout, status_timeout]),
-   fsm:set_event(__, eps)
+   fsm:clear_timeouts(__, [frame_timeout, backoff_timeout, content_timeout, status_timeout, precontent_timeout]),
+   fsm:set_event(__, Event)
   ] (SM).
 
 handle_maybe_blocking(_MM, SM, _Term) ->
@@ -351,9 +367,19 @@ handle_blocking(_MM, SM, _Term) ->
       fsm:set_event(SM, eps)
   end.
 
+handle_precontention(_MM, SM, _Term) ->
+  case fsm:check_timeout(SM, precontent_timeout) of
+    true -> fsm:set_event(SM, eps);
+    _ ->
+      [
+       fsm:set_event(__, eps),
+       fsm:set_timeout(__, {ms, 50}, precontent_timeout)
+      ] (SM)
+  end.
+       
 handle_contention(_MM, SM, _Term) ->
   case SM#sm.event of
-    E when E == content; E == backoff_timeout ->
+    E when E == content; E == backoff_timeout; E == precontent_timeout ->
       share:put(SM, ctc, 0),
       Pid = share:get(SM, pid),
       Hdr = <<0:5,(?FLAG2NUM(tone)):3>>, %% TODO: move to nl_mac_hf?
@@ -377,8 +403,11 @@ handle_contention(_MM, SM, _Term) ->
 handle_prepare_backoff(_MM, SM, _Term) ->
   case SM#sm.event of
     ctd ->
-      share:update_with(SM, ctc, fun(I) -> I + 1 end, 0),
-      fsm:set_event(SM, eps);
+      [
+       fsm:clear_timeout(__, precontent_timeout),
+       share:update_with(__, ctc, fun(I) -> I + 1 end, 0),
+       fsm:set_event(__, eps)
+      ] (SM);
     _ ->
       fsm:set_event(SM, eps)
   end.
@@ -418,6 +447,7 @@ handle_wait_listen(_MM, SM, _Term) ->
   case SM#sm.event of
     busy ->
       [
+       fsm:clear_timeout(__, precontent_timeout),
        fsm:maybe_send_at_command(__, {at, "?S", ""}),
        fsm:set_interval(__, {s, 1}, status_timeout),
        fsm:set_event(__, eps)
