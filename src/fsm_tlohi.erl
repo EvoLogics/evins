@@ -206,12 +206,7 @@ run_hook_handler(MM, SM, {sync, Cmd, _} = Term, Event) ->
           _ -> LSM
         end;
        (LSM) when Cmd == "*SENDIM" ->
-        case share:get(SM, cast_sync_sendim) of
-          true ->
-            share:put(SM, cast_sync_sendim, false),
-            fsm:cast(LSM, at_impl, {send, Term});
-          _ -> LSM
-        end;
+        LSM;
        (LSM) ->
         fsm:cast(LSM, at_impl, {send, Term})
     end,
@@ -230,17 +225,13 @@ run_hook_handler(MM, SM, Term, Event) ->
 
 handle_event(MM, SM, Term) ->
   Pid = share:get(SM, pid),
-  io:format("Pid: ~p~n", [Pid]),
   case Term of
     {timeout, answer_timeout} ->
       fsm:cast(SM, at_impl, {send, {async, {error, "ANSWER TIMEOUT"}}});
     {timeout, status_timeout} ->
       fsm:maybe_send_at_command(SM, {at, "?S", ""});
-    {timeout, E} when E == frame_timeout; E == content_timeout ->
-      [
-       fsm:set_event(__, E),
-       fsm:run_event(MM, __, Term)
-      ] (SM);
+    {timeout, E} when E == frame_timeout; E == content_timeout; E == backoff_timeout ->
+      run_hook_handler(MM, SM, Term, E);
     {connected} when MM#mm.role == at_impl ->
       case share:get(SM, pid) of
         nothing -> SM;
@@ -271,7 +262,7 @@ handle_event(MM, SM, Term) ->
         fun(LSM,blocked) ->
             case share:get(LSM, cached_command) of
               nothing -> share:put(LSM, cached_command, Term);
-              _ -> fsm:cast(LSM, at_impl,  {send, {sync, Cmd, {error, "SEQUENCE_ERROR"}}})
+              _ -> fsm:cast(LSM, at_impl,  {send, {async, {error, "SEQUENCE_ERROR"}}})
             end;
            (LSM, ok) -> LSM
         end,
@@ -281,11 +272,11 @@ handle_event(MM, SM, Term) ->
       end,
       fsm:maybe_send_at_command(SM, Term, Handle_cache);
     {at,{pid,P},"*SENDIM",Dst,noack,Bin} ->
+      %% TODO: check whether connected to at
       Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to nl_mac_hf?
       Tx = {at,{pid,P},"*SENDIM",Dst,noack,<<Hdr/binary,Bin/binary>>},
-      io:format("P: ~p~n", [P]),
-      share:put(SM, tx, Tx), 
-      share:put(SM, cast_sync_sendim, true),
+      share:put(SM, tx, Tx),
+      fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", "OK"}}),
       run_hook_handler(MM, SM, Term, content_actuator(SM, Term));
     %% TODO: add support of other message types
     {at,{pid,_},Cmd,_,_} ->
@@ -307,11 +298,9 @@ handle_event(MM, SM, Term) ->
       [_, Flag_code, Data, HLen] = nl_mac_hf:extract_payload_mac_flag(Bin),
       Flag = nl_mac_hf:num2flag(Flag_code, mac),
       Extracted = {recvim, Len - HLen, P1, P2, P3, P4, P5, P6, P7, Data},
-      io:format("Here: term: ~p, pid: ~p, flag: ~p~n", [Term, Pid,Flag]),
       case Flag of
         tone -> SM;
         data ->
-          io:format("-> ~p~n", [{async, {pid, Pid}, Extracted}]),
           fsm:cast(SM, at_impl, {send, {async, {pid, Pid}, Extracted}});
         _ -> ?ERROR(?ID, "Unsupported flag: ~p~n", [Flag]), SM
       end;
@@ -355,7 +344,7 @@ handle_blocking(_MM, SM, _Term) ->
       Frame = share:get(SM, cr_time),
       [
        fsm:set_event(__, eps),
-       fsm:clear_timeout(__, frame_timeout),
+       fsm:clear_timeouts(__, [frame_timeout, backoff_timeout]),
        fsm:set_timeout(__, {ms, Frame}, frame_timeout)
       ] (SM);
     _ ->
@@ -416,7 +405,9 @@ handle_send(_MM, SM, _Term) ->
     content_timeout ->
       Transmittion_handler =
         fun(LSM, blocked) -> fsm:set_event(LSM, busy);
-           (LSM, ok) -> fsm:set_event(LSM, eps)
+           (LSM, ok) ->
+            share:clean(SM, tx),
+            fsm:set_event(LSM, eps)
         end,
       fsm:maybe_send_at_command(SM, TX, Transmittion_handler);
     _ ->

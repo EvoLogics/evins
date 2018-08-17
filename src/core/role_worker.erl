@@ -342,6 +342,15 @@ handle_cast({_, {fsm, Pid, ok}}, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {fsm, Pid, ok}}}),
   process_bin(<<>>, cast_connected(Pid, State#ifstate{fsm_pids = [Pid | State#ifstate.fsm_pids]}));
 
+handle_cast({_, {ctrl, reconnect}}, #ifstate{type = client, proto = tcp, mm = MM, fsm_pids = FSMs, socket = Socket} = State) when Socket =/= nothing ->
+    ok = gen_tcp:close(Socket),
+    broadcast(FSMs, {chan_error, MM, disconnected}),
+    {ok, NewState} = connect(State),
+    {noreply, NewState};
+
+handle_cast({_, {ctrl, reconnect}}, State) ->
+    {noreply, State};
+
 handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, fsm_pids = FSMs, mm = MM, cfg = #{allow := Allow} = Cfg} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {ctrl, Term}}}),
   NewCfg = B:ctrl(Term, Cfg),
