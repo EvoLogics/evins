@@ -106,7 +106,8 @@
                   {recvend, idle},
                   {transmit, sensing},
                   {sendstart, backoff},
-                  {recvstart, backoff}
+                  {recvstart, backoff},
+                  {backoff_timeout, idle}
                  ]},
 
                 {sensing,
@@ -296,6 +297,13 @@ handle_idle(_MM, SM, _) ->
   case {SM#sm.event, share:get(SM, tx)} of
     {backoff_timeout, TX} when TX /= nothing ->
       fsm:set_event(SM, transmit);
+    {backoff_timeout, nothing} ->
+      Backoff = change_backoff(SM, decrement),
+      Timeout = rand:uniform(round(2000 * Backoff)),
+      [
+       fsm:set_event(__, eps),
+       fsm:set_timeout(__, {ms, Timeout}, backoff_timeout)
+      ] (SM);
     _ ->
       fsm:set_event(SM, eps)
   end.
@@ -318,7 +326,6 @@ handle_backoff(_MM, #sm{event = E} = SM, _) when E == recvstart ->
           _ ->
             Backoff = change_backoff(SM, increment),
             Timeout = rand:uniform(round(2000 * Backoff)),
-            %% io:format("Setting backoff: ~p ms~n", [Timeout]),
             fsm:set_timeout(LSM, {ms, Timeout}, backoff_timeout)
         end
     end,
