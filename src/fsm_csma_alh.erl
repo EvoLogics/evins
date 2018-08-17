@@ -1,4 +1,5 @@
-%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
+%% Copyright (c) 2018, Veronika Kebkal <veronika.kebkal@evologics.de>
+%%                     Oleksiy Kebkal <lesha@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -36,7 +37,7 @@
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1, handle_event/3, stop/1]).
 
--export([handle_idle/3, handle_alarm/3, handle_sp/3, handle_write_alh/3, handle_final/3]).
+-export([handle_idle/3, handle_alarm/3, handle_sensing/3, handle_transmit/3]).
 
 %%  CSMA-Aloha [1] (Carrier-Sense Multiple Access-Aloha) is an Aloha
 %%  enhancement whereby short random channel sensing periods precede
@@ -86,7 +87,7 @@
 %%  - If a node has data to transmit and it is in idle state, it transmits
 %%    and returns to idle state
 %%  - If a node has data to transmit and it is in sensing state, it answers "OK"
-%%    to upper layer and sets a backoff timeout (tries to sen later)
+%%    to upper layer and sets a backoff timeout (tries to send later)
 %%  - If a node has data to transmit, it is in sensing state and backoff
 %%    timeout left, it increases backoff timeout
 %%    and sets the backoff timeout again
@@ -100,10 +101,6 @@
 %%   modem is in “BUSY BACKOFF STATE”,
 %%   the mac layer doesn't do anything, just reports the application layer, that
 %%   the modem is in backoff state.
-%%
-%%  Abbreviation:
-%%  sp - sensing phase
-%%  ul - upper layer
 
 -define(TRANS, [
                 {idle,
@@ -111,23 +108,24 @@
                   {error, idle},
                   {sendend, idle},
                   {recvend, idle},
-                  {backoff_timeout, write_alh},
-                  {transmit_data, write_alh},
-                  {sendstart, sp},
-                  {recvstart, sp}
+                  {backoff_timeout, transmit},
+                  {transmit_data, transmit},
+                  {sendstart, sensing},
+                  {recvstart, sensing}
                  ]},
 
-                {write_alh,
-                 [{data_sent, sp},
+                {transmit,
+                 [{data_sent, sensing},
+                  {still_waiting, idle},
                   {internal, idle}
                  ]},
 
-                {sp,
-                 [{backoff_timeout, sp},
-                  {busy,  sp},
-                  {transmit_data,  sp},
-                  {sendstart, sp},
-                  {recvstart, sp},
+                {sensing,
+                 [{backoff_timeout, sensing},
+                  {busy,  sensing},
+                  {transmit_data,  sensing},
+                  {sendstart, sensing},
+                  {recvstart, sensing},
                   {sendend, idle},
                   {recvend, idle},
                   {error, idle}
@@ -135,9 +133,7 @@
 
                 {alarm,
                  [{final, alarm}
-                 ]},
-
-                {final, []}
+                 ]}
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
@@ -146,184 +142,6 @@ trans()        -> ?TRANS.
 final()        -> [alarm].
 init_event()   -> internal.
 stop(_SM)      -> ok.
-
-%%--------------------------------Handler functions-------------------------------
-handle_event(MM, SM, Term) ->
-  ?INFO(?ID, "HANDLE EVENT  ~150p~n~150p~n", [MM, SM]),
-  ?TRACE(?ID, "~p~n", [Term]),
-  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
-  case Term of
-    {timeout, answer_timeout} ->
-      fsm:cast(SM, at_impl, {send, {sync, "", {error, <<"ANSWER TIMEOUT">>} } }),
-      fsm:run_event(MM, SM, {});
-    {timeout, {retransmit, Msg}} ->
-      ?TRACE(?ID, "Retransmit Tuple ~p ~n ", [Msg]),
-      [SM1, P] = nl_mac_hf:process_retransmit(SM, Msg, eps),
-      [
-        fsm:set_event(__, transmit_data),
-        fsm:run_event(MM, __, P)
-      ] (SM1);
-    {timeout, Event} ->
-      fsm:run_event(MM, SM#sm{event = Event}, {});
-    {allowed} ->
-      Conf_pid = share:get(SM, {pid, MM}),
-      share:put(SM, pid, Conf_pid),
-      env:put(SM, connection, allowed);
-    {denied} ->
-      share:put(SM, pid, nothing),
-      if Answer_timeout ->
-          fsm:cast(SM, at_impl,  {send, {sync, "", {error, "DISCONNECTED"}}});
-         true ->
-          SM
-      end,
-      env:put(SM, connection, denied);
-    {connected} ->
-      ?INFO(?ID, "connected ~n", []),
-      SM;
-    {at, "Z", "1"} ->
-      fsm:send_at_command(SM, {send, {at, "Z", "1"}}),
-      fsm:clear_timeouts(SM#sm{state = idle});
-    {at, Cmd, Param} ->
-      fsm:send_at_command(SM, {at, Cmd, Param});
-    {at,{pid,_},"*SENDIM",_,_,_} when Answer_timeout ->
-      fsm:cast(SM, at_impl,  {send, {sync, "", {busy, "SEQUENCE ERROR"}}});
-    {at,{pid,_},"*SENDIM",_,_,_} ->
-      case env:get(SM, connection) of
-        allowed ->
-          share:put(SM, current_msg, Term),
-          fsm:cast(SM, at,  {send, {at, "?S", ""}});
-        _ ->
-          fsm:cast(SM, at_impl,  {send, {sync, "", {error, "DISCONNECTED"}}})
-      end;
-    {sync, "?S", Status} ->
-      case string:str(Status, "INITIATION LISTEN") of
-        false ->
-          [
-           fsm:clear_timeout(__, answer_timeout),
-           fsm:cast(__, at_impl,  {send, {sync, "", {busy, "BACKOFF"}}})
-          ] (SM);
-        _ ->
-          Msg = share:get(SM, current_msg),
-          [
-           fsm:clear_timeout(__, answer_timeout),
-           fsm:cast(__, at_impl,  {send, {sync, "", "OK"}}),
-           nl_mac_hf:clear_spec_timeout(__, retransmit),
-           nl_mac_hf:process_send_payload(__, Msg),
-           fsm:set_event(__, transmit_data),
-           fsm:run_event(MM, __, Msg)
-          ] (SM)
-      end;
-    {async, {recvims, _, _, _, _, _, _, _, _, _}} ->
-      fsm:run_event(MM, SM, {});
-    {async, {pid, NPid}, Tuple = {recvim, _, _, _, _, _, _, _, _, _}} ->
-      ?TRACE(?ID, "MAC_AT_RECV ~p~n", [Tuple]),
-      [H |_] = tuple_to_list(Tuple),
-      [SMN, ParsedRecv] = process_recv(SM, Tuple),
-      case ParsedRecv of
-        {_, _, STuple} ->
-          SMsg = list_to_tuple([H | tuple_to_list(STuple) ]),
-          fsm:cast(SMN, at_impl, {send, {async, {pid, NPid}, SMsg} }),
-          fsm:run_event(MM, SMN, {});
-        _ ->
-          ?ERROR(?ID, "Error: payload cannot be parsed in: ~p~n", [Term]),
-          fsm:cast(SM, at_impl, {send, Term})
-      end;
-    {async, _, _} ->
-      fsm:cast(SM, at_impl, {send, Term});
-    {async, Tuple} ->
-      [
-       fsm:cast(__, at_impl, {send, {async, Tuple} }),
-       fsm:set_event(__, process_async(__, Tuple)),
-       fsm:run_event(MM, __, {})
-      ] (SM);
-    {sync, "*SENDIM", "OK"} ->
-      [
-       fsm:clear_timeout(__, answer_timeout),
-       fsm:run_event(MM, __, {})
-      ] (SM);
-    {sync, _, {error, _}} ->
-      [
-       fsm:clear_timeout(__, answer_timeout),
-       fsm:set_event(__, error),
-       fsm:run_event(MM, __, {})
-      ] (SM);
-    {sync, _, {busy, _}} ->
-      Current_msg = share:get(SM, current_msg),
-      [
-       fsm:clear_timeout(__, answer_timeout),
-       fsm:set_event(__, busy),
-       fsm:run_event(MM, __, Current_msg)
-      ] (SM);
-    {sync, _Req, _Answer} ->
-      [
-       fsm:clear_timeout(__, answer_timeout),
-       fsm:cast(__, at_impl, {send, Term})
-      ] (SM);
-    UUg ->
-      ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
-      SM
-  end.
-
-handle_idle(_MM, SM, Term) ->
-  ?TRACE(?ID, "handle_idle ~120p~n", [Term]),
-  case SM#sm.event of
-    internal ->
-      init_backoff(SM);
-    _ -> nothing
-  end,
-  SM#sm{event = eps}.
-
-handle_sp(_MM, #sm{event = backoff_timeout} = SM, Term) ->
-  ?TRACE(?ID, "handle_sp ~120p~n", [Term]),
-  Backoff_tmp = change_backoff(SM, increment),
-  fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
-handle_sp(_MM, SM, Term = {at,{pid,_},"*SENDIM",_,_,_}) ->
-  ?TRACE(?ID, "handle_sp ~120p~n", [Term]),
-  Backoff_timeout = fsm:check_timeout(SM, backoff_timeout),
-  ?INFO(?ID, "handle_sp ~120p Backoff_timeout ~p ~n", [Term, Backoff_timeout]),
-  case Backoff_timeout of
-    true ->
-      SM#sm{event = eps};
-    false ->
-      Backoff_tmp = change_backoff(SM, increment),
-      fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout)
-  end;
-handle_sp(_MM, SM, Term) ->
-  ?TRACE(?ID, "handle_sp ~120p~n", [Term]),
-  SM#sm{event = eps}.
-
-handle_write_alh(_MM, #sm{event = backoff_timeout} = SM, Term) ->
-  ?TRACE(?ID, "handle_write_alh: ev backoff_timeout ~120p~n", [Term]),
-  SM1 = fsm:clear_timeout(SM, backoff_timeout),
-  change_backoff(SM1, decrement),
-  case share:get(SM1, current_msg) of
-    nothing ->
-      SM1#sm{event = internal};
-    Msg ->
-     ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Msg]),
-     share:clean(SM, current_msg),
-     [
-      nl_mac_hf:send_mac(__, at, data, Msg),
-      fsm:set_event(__, data_sent)
-     ] (SM)
-   end;
-handle_write_alh(_MM, SM, Term) ->
-  ?TRACE(?ID, "handle_write_alh ~120p~n", [Term]),
-  SM1 = fsm:clear_timeout(SM, backoff_timeout),
-  change_backoff(SM1, decrement),
-  ?TRACE(?ID, "MAC_AT_SEND ~p~n", [Term]),
-  share:clean(SM, current_msg),
-  [
-    nl_mac_hf:send_mac(__, at, data, Term),
-    fsm:set_event(__, data_sent)
-  ] (SM).
-
--spec handle_alarm(any(), any(), any()) -> no_return().
-handle_alarm(_MM, SM, _Term) ->
-  exit({alarm, SM#sm.module}).
-
-handle_final(_MM, SM, Term) ->
-  ?TRACE(?ID, "Final ~120p~n", [Term]).
 
 %%--------------------------------------Helper functions------------------------
 init_backoff(SM)->
@@ -353,30 +171,202 @@ change_backoff(SM, Type) ->
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
   Val.
 
-process_recv(SM, T) ->
-  ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [T]),
-  {recvim, Len, P1, P2, P3, P4, P5, P6, P7, Payl} = T,
-  [BPid, BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
-  CurrentPid = ?PROTOCOL_MAC_PID(share:get(SM, macp)),
-  if CurrentPid == BPid ->
-    Flag = nl_mac_hf:num2flag(BFlag, mac),
-    ShortTuple = {Len - LenAdd, P1, P2, P3, P4, P5, P6, P7, Data},
-    SM1 = nl_mac_hf:process_rcv_payload(SM, Data),
-    [SM1, {BPid, Flag, ShortTuple}];
-  true ->
-    [SM, nothing]
+process_async({sendstart, _, _, _, _}) -> sendstart;
+process_async({sendend, _, _, _, _}) -> sendend;
+process_async({recvstart, _, _, _, _}) -> recvstart;
+process_async({recvend, _, _, _, _}) -> recvend;
+process_async(_) -> eps.
+
+listen_detector({sync, "?S", Status}) ->
+  case string:str(Status, "INITIATION LISTEN") of
+    true -> transmit_data;
+    _ -> eps
+  end;
+listen_detector(_) ->
+  eps.
+
+run_hook_handler(MM, SM, {sync, Cmd, _} = Term, Event) ->
+  Handle_cache =
+    fun(LSM, nothing) -> LSM;
+       (LSM, Next) ->
+        [
+         share:put(__, cached_command, nothing),
+         fsm:send_at_command(__, Next)
+        ] (LSM)
+    end,
+  Handle_cast =
+    fun(LSM) when Cmd == "?S" ->
+        case share:get(LSM, cast_status) of
+          true ->
+            share:put(LSM, cast_status, false),
+            fsm:cast(LSM, at_impl, {send, Term});
+          _ -> LSM
+        end;
+       (LSM) when Cmd == "*SENDIM" ->
+        LSM;
+       (LSM) ->
+        fsm:cast(LSM, at_impl, {send, Term})
+    end,
+  [
+   Handle_cast(__),
+   fsm:clear_timeout(__, answer_timeout),
+   Handle_cache(__, share:get(SM, cached_command)),
+   fsm:set_event(__, Event),
+   fsm:run_event(MM, __, Term)
+  ] (SM);
+run_hook_handler(MM, SM, Term, Event) ->
+  [
+   fsm:set_event(__, Event),
+   fsm:run_event(MM, __, Term)
+  ] (SM).
+
+handle_specific_command(_, SM, "?S", _) -> share:put(SM, cast_status, true);
+handle_specific_command(MM, SM, "Z", "1") ->
+  [
+   fsm:clear_timeouts(__),
+   run_hook_handler(MM, __, nothing, idle)
+  ] (SM);
+handle_specific_command(_, SM, _, _) -> SM.
+
+%%--------------------------------Handler functions-------------------------------
+handle_event(MM, SM, Term) ->
+  ?INFO(?ID, "HANDLE EVENT  ~150p~n~150p~n", [MM, SM]),
+  ?TRACE(?ID, "~p~n", [Term]),
+  Answer_timeout = fsm:check_timeout(SM, answer_timeout),
+  case Term of
+    {timeout, answer_timeout} ->
+      fsm:cast(SM, at_impl, {send, {async, {error, <<"ANSWER TIMEOUT">>}}});
+    {timeout, Event} ->
+      run_hook_handler(MM, SM, Term, Event);
+    {allowed} ->
+      Conf_pid = share:get(SM, {pid, MM}),
+      fsm:broadcast(SM, at_impl, {ctrl, {pid, Conf_pid}}),
+      share:put(SM, pid, Conf_pid),
+      env:put(SM, connection, allowed);
+    {denied} ->
+      share:put(SM, pid, nothing),
+      if Answer_timeout ->
+          fsm:cast(SM, at_impl,  {send, {async, {error, "DISCONNECTED"}}});
+         true ->
+          SM
+      end,
+      env:put(SM, connection, denied);
+    {connected} when MM#mm.role == at_impl ->
+      case share:get(SM, pid) of
+        nothing -> SM;
+        Conf_pid ->
+          fsm:cast(SM, at_impl, {ctrl, {pid, Conf_pid}})
+      end;
+    {at, Cmd, Param} ->
+      Handle_cache =
+        fun(LSM,blocked) ->
+            case share:get(LSM, cached_command) of
+              nothing -> share:put(LSM, cached_command, Term);
+              _ -> fsm:cast(LSM, at_impl,  {send, {async, {error, "SEQUENCE_ERROR"}}})
+            end;
+           (LSM, ok) -> LSM
+        end,
+      [
+       handle_specific_command(MM, __, Cmd, Param),
+       fsm:maybe_send_at_command(__, Term, Handle_cache)
+      ] (SM);
+    {at,{pid,P},"*SENDIM",Dst,noack,Bin} ->
+      case env:get(SM, connection) of
+        allowed ->
+          Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to nl_mac_hf?
+          Tx = {at,{pid,P},"*SENDIM",Dst,noack,<<Hdr/binary,Bin/binary>>},
+          share:put(SM, tx, Tx), 
+          fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", "OK"}}),
+
+          %% FIXME: actually sense timeout
+          case fsm:check_timeout(SM, backoff_timeout) of
+            true ->
+              SM;
+            _ ->
+              %% short sensing phase before transmitting
+              fsm:set_timeout(SM, {ms, rand:uniform(50)}, backoff_timeout)
+          end;
+          %% run_hook_handler(MM, SM1, Tx, transmit_data);
+        _ ->
+          fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", {error, "DISCONNECTED"}}})
+      end;
+    {at,{pid,_},Cmd,_,_} ->
+      fsm:cast(SM, at_impl,  {send, {sync, Cmd, {error, "NOT SUPPORTED"}}});
+    {at,{pid,_},Cmd,_,_,_} ->
+      fsm:cast(SM, at_impl,  {send, {sync, Cmd, {error, "NOT SUPPORTED"}}});
+    {sync, "?S", Status} ->
+      run_hook_handler(MM, SM, Term, listen_detector(Status));
+    {sync, _, {error, _}} ->
+      run_hook_handler(MM, SM, Term, error);
+    {sync, _, {busy, _}} ->
+      run_hook_handler(MM, SM, Term, busy);
+    {sync, _Req, _Answer} ->
+      run_hook_handler(MM, SM, Term, transmit_data);
+    {async, {pid, Pid}, {recvim, Len, P1, P2, P3, P4, P5, P6, P7, Bin} = Tuple} ->
+      ?TRACE(?ID, "MAC_AT_RECV ~p~n", [Tuple]),
+      [_, Flag_code, Data, HLen] = nl_mac_hf:extract_payload_mac_flag(Bin),
+      Flag = nl_mac_hf:num2flag(Flag_code, mac),
+      Extracted = {recvim, Len - HLen, P1, P2, P3, P4, P5, P6, P7, Data},
+      case Flag of
+        data ->
+          fsm:cast(SM, at_impl, {send, {async, {pid, Pid}, Extracted}});
+        _ -> ?ERROR(?ID, "Unsupported flag: ~p~n", [Flag]), SM
+      end;
+    {async, _, _} ->
+      fsm:cast(SM, at_impl, {send, Term});
+    {async, Tuple} ->
+      fsm:cast(SM, at_impl, {send, Term}),
+      run_hook_handler(MM, SM, Term, process_async(Tuple));
+    UUg ->
+      ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
+      SM
   end.
 
-process_async(_SM, Tuple) ->
-  case Tuple of
-    {sendstart, _, _, _, _} ->
-      sendstart;
-    {sendend, _, _, _, _} ->
-      sendend;
-    {recvstart} ->
-      recvstart;
-    {recvend, _, _, _, _} ->
-      recvend;
-    _ ->
-      eps
+handle_idle(_MM, SM, _) ->
+  case SM#sm.event of
+    internal -> init_backoff(SM);
+    _ -> nothing
+  end,
+  fsm:set_event(SM, eps).
+
+handle_sensing(_MM, #sm{event = backoff_timeout} = SM, _) ->
+  Backoff_tmp = change_backoff(SM, increment),
+  fsm:set_timeout(SM#sm{event = eps}, {s, Backoff_tmp}, backoff_timeout);
+handle_sensing(_MM, SM, Term = {at,{pid,_},"*SENDIM",_,_,_}) ->
+  Backoff_timeout = fsm:check_timeout(SM, backoff_timeout),
+  ?INFO(?ID, "handle_sensing ~120p Backoff_timeout ~p ~n", [Term, Backoff_timeout]),
+  case Backoff_timeout of
+    true ->
+      fsm:set_event(SM, eps);
+    false ->
+      Backoff_tmp = change_backoff(SM, increment),
+      [
+       fsm:set_event(__, eps),
+       fsm:set_timeout(__, {s, Backoff_tmp}, backoff_timeout)
+      ] (SM)
+  end;
+handle_sensing(_MM, SM, _) ->
+  fsm:set_event(SM, eps).
+
+handle_transmit(_MM, SM, _) ->
+  case {fsm:check_timeout(SM, backoff_timeout), share:get(SM, tx)} of
+    {true, _} ->
+      fsm:set_event(SM, still_waiting);
+    {_, nothing} ->
+      fsm:set_event(SM, internal);      
+    {_, TX} ->
+      ?TRACE(?ID, "MAC_AT_SEND ~p~n", [TX]),
+      Transmittion_handler =
+        fun(LSM, blocked) ->
+            fsm:set_event(LSM, still_waiting); %% TODO: ask ?S
+           (LSM, ok) ->
+            change_backoff(LSM, decrement),
+            share:clean(LSM, tx),
+            fsm:set_event(LSM, data_sent)
+        end,
+      fsm:maybe_send_at_command(SM, TX, Transmittion_handler)
   end.
+
+-spec handle_alarm(any(), any(), any()) -> no_return().
+handle_alarm(_MM, SM, _Term) ->
+  exit({alarm, SM#sm.module}).
