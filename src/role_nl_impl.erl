@@ -229,10 +229,16 @@ from_term({nl,statistics,paths,Paths}, Cfg) ->
 from_term({nl,statistics,data,Data}, Cfg) ->
   EOL = Cfg#config.eol,
   DataLst =
-    lists:map(fun({Role,Hash,Len,Duration,State,Total,Dst,Hops}) ->
-                  lists:flatten([io_lib:format(" ~p data:0x~4.16.0b len:~B duration:~.1.0f state:~s total:~B dst:~B hops:~B",
-                                               [Role,Hash,Len,Duration,State,Total,Dst,Hops]),EOL])
-              end, Data),
+    lists:map(fun(Element) ->
+              case Element of
+                {Role,Hash,Len,Duration,State,Total,Dst,Hops} ->
+                    lists:flatten([io_lib:format(" ~p data:0x~4.16.0b len:~B duration:~.1.0f state:~s total:~B dst:~B hops:~B",
+                                                 [Role,Hash,Len,Duration,State,Total,Dst,Hops]),EOL]);
+                {Role,Hash,Send_Time,Recv_Time,Src,Dst,TTL} ->
+                    lists:flatten([io_lib:format(" ~p data:0x~4.16.0b send_time:~p recv_time:~p src:~B dst:~B last_ttl:~B",
+                                                 [Role,Hash,Send_Time,Recv_Time,Src,Dst,TTL]),EOL])
+              end
+            end, Data),
   [list_to_binary(["NL,statistics,data,",EOL,DataLst,EOL]), Cfg];
 %% NL,protocols,Protocol1,...,ProtocolN
 from_term({nl,protocols,Protocols}, Cfg) ->

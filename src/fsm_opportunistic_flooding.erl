@@ -128,17 +128,56 @@ handle_event(MM, SM, Term) ->
         ?INFO(?ID, "My message: ~p~n", [Recv_Tuple]),
         [process_received_packet(__, Recv_Tuple),
         fsm:run_event(MM, __, {})](SM);
-      {async, {pid, _Pid}, _Recv_Tuple} ->
-        % TODO: add neighbours
-        SM;
+      {async, {pid, _Pid}, Recv_Tuple} ->
+        ?INFO(?ID, "Overheard message: ~p~n", [Recv_Tuple]),
+        [process_overheared_packet(__, Recv_Tuple),
+        fsm:run_event(MM, __, {})](SM);
       {nl, send, Local_Address, _Payload} ->
         fsm:cast(SM, nl_impl, {send, {nl, send, error}});
       {nl, send, _IDst, _Payload} ->
         [process_nl_send(__, Term),
         fsm:run_event(MM, __, {})](SM);
+      {nl, error, _} ->
+        fsm:cast(SM, nl_impl, {send, {nl, error}});
+      {nl, reset, state} ->
+        fsm:cast(SM, at, {send, {at, "Z1", ""}}),
+        fsm:cast(SM, nl_impl, {send, {nl, state, ok}}),
+        SM#sm{state = idle};
+      {nl, clear, statistics, data} ->
+        share:clean(SM, st_data),
+        share:put(SM, st_data, queue:new()),
+        fsm:cast(SM, nl_impl, {send, {nl, statistics, data, empty}});
+      {nl, set, address, Address} ->
+        nl_hf:process_set_command(SM, {address, Address});
+      {nl, set, neighbours, Neighbours} ->
+        nl_hf:process_set_command(SM, {neighbours, Neighbours});
+      {nl, set, routing, Routing} ->
+        nl_hf:process_set_command(SM, {routing, Routing});
+      {nl, set, protocol, Protocol} ->
+        nl_hf:process_set_command(SM, {protocol, Protocol});
+      {nl, set, Command} ->
+        nl_hf:process_set_command(SM, Command);
+      {nl, get, protocol} ->
+        fsm:cast(SM, nl_impl, {send, {nl, protocol, Protocol_Name}});
+      {nl, get, help} ->
+        fsm:cast(SM, nl_impl, {send, {nl, help, ?HELP}});
+      {nl, get, version} ->
+        %% FIXME: define rules to generate version
+        fsm:cast(SM, nl_impl, {send, {nl, version, 0, 1, "emb"}});
+      {nl, get, time, monotonic} ->
+        Current_time = erlang:monotonic_time(milli_seconds) - share:get(SM, nl_start_time),
+        fsm:cast(SM, nl_impl, {send, {nl, time, monotonic, Current_time}});
+      {nl, get, statistics, Some_statistics} ->
+        nl_hf:process_get_command(SM, {statistics, Some_statistics});
+      {nl, get, protocolinfo, Some_protocol} ->
+        nl_hf:process_get_command(SM, {protocolinfo, Some_protocol});
+      {nl, get, Command} ->
+        nl_hf:process_get_command(SM, Command);
+      {nl, delete, neighbour, Address} ->
+        nl_hf:process_get_command(SM, {delete, neighbour, Address});
       UUg ->
-      ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
-      SM
+        ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
+        SM
     end.
 
 %%------------------------------------------ init -----------------------------------------------------
@@ -148,6 +187,7 @@ init_flood(SM) ->
   rand:seed(exsplus, {H + LA, M + LA, Ms + (H * LA + M * LA)}),
   share:put(SM, [{path_exists, false},
                  {list_current_wvp, []},
+                 {current_neighbours, []},
                  {s_total_sent, 1},
                  {r_total_sent, 1},
                  {last_states, queue:new()},
@@ -157,7 +197,8 @@ init_flood(SM) ->
                  {st_data, queue:new()},
                  {retries_queue, queue:new()},
                  {received_queue, queue:new()},
-                 {transmission_queue, queue:new()}]),
+                 {transmission_queue, queue:new()},
+                 {statistics_queue, queue:new()}]),
   nl_hf:init_dets(SM).
 %%------------------------------------------ Handle functions -----------------------------------------------------
 handle_idle(_MM, SM, Term) ->
@@ -206,11 +247,11 @@ process_nl_send(SM, NL_Send_Tuple) ->
   case Fill_Transmiision_Queue of
     {fill_tq, error} ->
       [fsm:cast(SM, nl_impl, {send, {nl, send, error}}),
-      nl_hf:crear_event_params(__, fill_tq),
+      nl_hf:clear_event_params(__, fill_tq),
       fsm:set_event(__, eps)](SM);
     _ ->
       [fsm:cast(__, nl_impl, {send, {nl, send, 0}}),
-      nl_hf:crear_event_params(__, fill_tq),
+      nl_hf:clear_event_params(__, fill_tq),
       fsm:set_event(__, send)
       ] (SM)
   end.
@@ -227,13 +268,13 @@ try_send_message(SM, {value, Front_Item}) ->
       % TODO: should be processed?
       ?INFO(?ID, "Handle_cache next ~p~n", [Next]),
       LSM
-      %fsm:send_at_command(LSM, Next)
   end,
   Rand_timeout = nl_mac_hf:rand_float(SM, tmo_sensing),
-  [nl_hf:decrease_local_retries(__, Front_Item),
-   fsm:maybe_send_at_command(__, AT_Command, Handle_cache),
+  [nl_hf:set_processing_time(__, transmitted, Front_Item),
+   nl_hf:decrease_local_retries(__, Front_Item),
    nl_hf:change_TTL_received_queue(__, Front_Item),
    nl_hf:queue_limited_push(__, received_queue, Front_Item, 30),
+   fsm:maybe_send_at_command(__, AT_Command, Handle_cache),
    fsm:set_timeout(__, {ms, Rand_timeout}, {sensing_timeout, Front_Item}),
    fsm:set_event(__, transmitted)
   ](SM).
@@ -250,6 +291,21 @@ check_front_transmission_queue(SM, {value, Front_item = {dst_reached,_,_,_,_,_}}
    handle_transmission_queue(__)](SM);
 check_front_transmission_queue(SM, {value, _Front_Item}) ->
   fsm:set_event(SM, eps).
+
+process_overheared_packet(SM, Recv_Tuple) ->
+  {Src, Rssi, Integrity} =
+  case Recv_Tuple of
+    {recvpbm,_,RSrc,_,_,  RRssi,RIntegrity,_,_} ->
+      {RSrc, RRssi, RIntegrity};
+    {Format,_,RSrc,_,_,_,RRssi,RIntegrity,_,_} when Format == recvim;
+                                                    Format == recvims;
+                                                    Format == recv ->
+      {RSrc, RRssi, RIntegrity}
+  end,
+
+  NL_AT_Src  = nl_hf:mac2nl_address(Src),
+  [nl_hf:update_statistics(__, overheared, NL_AT_Src, {nothing, nothing}),
+  nl_hf:add_neighbours(__, NL_AT_Src, {Rssi, Integrity})](SM).
 
 process_received_packet(SM, Recv_Tuple) ->
   Blacklist = share:get(SM, blacklist),
@@ -300,9 +356,9 @@ process_received_packet_to_protocol(SM, true, AT_Command) ->
   ?INFO(?ID, "process_received_packet_to_protocol ~p ~n", [AT_Command]),
   Protocol_Name = share:get(SM, protocol_name),
   _Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
-  {Src, Dst, _Rssi, _Integrity, Payload} = AT_Command,
+  {Src, Dst, Rssi, Integrity, Payload} = AT_Command,
 
-  _NL_AT_Src  = nl_hf:mac2nl_address(Src),
+  NL_AT_Src  = nl_hf:mac2nl_address(Src),
   _NL_AT_Dst  = nl_hf:mac2nl_address(Dst),
 
   {_Pid, Flag_Num, Pkg_ID, TTL, NL_Src, NL_Dst, Tail} =
@@ -313,7 +369,10 @@ process_received_packet_to_protocol(SM, true, AT_Command) ->
 
   [process_package(__, Flag, NL_Recv_Tuple),
    check_if_processed(__, NL_Recv_Tuple),
-   nl_hf:crear_event_params(__, if_processed)
+   nl_hf:set_processing_time(__, received, NL_Recv_Tuple),
+   nl_hf:update_statistics(__, st_neighbours, NL_AT_Src, {NL_Src, NL_Dst}),
+   nl_hf:add_neighbours(__, NL_AT_Src, {Rssi, Integrity}),
+   nl_hf:clear_event_params(__, if_processed)
   ](SM).
 
 check_if_processed(SM, NL_Recv_Tuple) ->
@@ -340,7 +399,8 @@ check_if_processed(SM, NL_Recv_Tuple) ->
         % add dst_reached message to the queue
         Dst_Reached_Tuple = {dst_reached, Pkg_ID, 0, NL_Dst, NL_Src, <<"d">>},
         Cast_Tuple = {nl, recv, NL_Src, NL_Dst, Tail},
-        [nl_hf:fill_transmission_queue(__, fifo, Dst_Reached_Tuple),
+        [nl_hf:fill_statistics_queue(__, NL_Recv_Tuple),
+        nl_hf:fill_transmission_queue(__, fifo, Dst_Reached_Tuple),
         fsm:cast(__, nl_impl, {send, Cast_Tuple}),
         fsm:set_event(__, Event)](SM);
       {if_processed, not_processed} ->
