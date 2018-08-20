@@ -1313,6 +1313,8 @@ check_TTL(SM, Ttl_table, BPid, Tuple = {Flag, CurrentTTL, PkgID, Src, Dst, Data}
       nothing
   end.
 
+process_retransmit(SM, nothing, _) ->
+  [SM, {}];
 process_retransmit(SM, Msg, Ev) ->
   Max_retransmit_count = share:get(SM, max_retransmit_count),
   {at, PID, Type, ATDst, FlagAck, Payload} = Msg,

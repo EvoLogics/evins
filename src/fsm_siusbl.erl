@@ -50,7 +50,8 @@ stop(_SM)      -> ok.
 
 handle_event(_MM, SM, Term) ->
   case Term of
-    {connected} ->
+    {allowed} ->
+      fsm:cast(SM, at, {send, {at, "?S", ""}}),
       fsm:send_at_command(SM, encode_sendim(SM));
     {disconnected, _} ->
       fsm:clear_timeouts(SM);

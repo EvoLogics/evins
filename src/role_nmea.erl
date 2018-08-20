@@ -1,30 +1,30 @@
 %% Copyright (c) 2015, Oleksiy Kebkal <lesha@evologics.de>
-%% 
-%% Redistribution and use in source and binary forms, with or without 
-%% modification, are permitted provided that the following conditions 
-%% are met: 
-%% 1. Redistributions of source code must retain the above copyright 
-%%    notice, this list of conditions and the following disclaimer. 
-%% 2. Redistributions in binary form must reproduce the above copyright 
-%%    notice, this list of conditions and the following disclaimer in the 
-%%    documentation and/or other materials provided with the distribution. 
-%% 3. The name of the author may not be used to endorse or promote products 
-%%    derived from this software without specific prior written permission. 
-%% 
-%% Alternatively, this software may be distributed under the terms of the 
-%% GNU General Public License ("GPL") version 2 as published by the Free 
-%% Software Foundation. 
-%% 
-%% THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR 
-%% IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES 
-%% OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. 
-%% IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, 
-%% INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT 
-%% NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
-%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY 
-%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
-%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF 
-%% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+%%
+%% Redistribution and use in source and binary forms, with or without
+%% modification, are permitted provided that the following conditions
+%% are met:
+%% 1. Redistributions of source code must retain the above copyright
+%%    notice, this list of conditions and the following disclaimer.
+%% 2. Redistributions in binary form must reproduce the above copyright
+%%    notice, this list of conditions and the following disclaimer in the
+%%    documentation and/or other materials provided with the distribution.
+%% 3. The name of the author may not be used to endorse or promote products
+%%    derived from this software without specific prior written permission.
+%%
+%% Alternatively, this software may be distributed under the terms of the
+%% GNU General Public License ("GPL") version 2 as published by the Free
+%% Software Foundation.
+%%
+%% THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+%% IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+%% OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+%% IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+%% INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+%% NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+%% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -module(role_nmea).
 -behaviour(role_worker).
 
@@ -53,19 +53,20 @@ start(Role_ID, Mod_ID, MM) ->
       false -> #{in => all}
     end,
   Cfg = maps:merge(Out,In),
-  role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
+  {ok, RParse} = re:compile("^\\\$((P|..)([^,]+),([^*]+))(\\\*(..)|)",[dotall]),
+  role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg#{re => RParse}).
 
 ctrl(_,Cfg) -> Cfg.
 
 to_term(Tail, Chunk, #{in := InRule} = Cfg) ->
-  [Terms | Rest] = 
+  [Terms | Rest] =
     role_worker:to_term(?MODULE, Tail, Chunk, Cfg),
 
   NewTerms =
     lists:filter(fun({nmea, Sentense}) ->
                      is_filtered(Sentense, InRule)
                  end, Terms),
-  
+
   [NewTerms | Rest].
 
 safe_binary_to_integer(B) -> try binary_to_integer(B) catch _:_ -> nothing end.
@@ -83,45 +84,19 @@ checksum(<<>>) -> 0;
 checksum([H|T]) -> H bxor checksum(T);
 checksum(<<H,T/binary>>) -> H bxor checksum(T).
 
-split(L, Cfg) ->
-  case re:split(L,"\r?\n",[{parts,2}]) of
+split(L, #{re := RParse} = Cfg) ->
+  case binary:split(L,[<<"\r\n">>, <<"\n">>]) of
     [Sentense,Rest] ->
       %% NMEA checksum might be optional
-      case re:run(Sentense,"^\\\$((P|..)([^,]+),([^*]+))(\\\*(..)|)",[dotall,{capture,[1,3,4,6],binary}]) of
+      case re:run(Sentense,RParse,[{capture,[1,3,4,6],binary}]) of
         {match, [Raw,Cmd,Params,XOR]} ->
           CS = checksum(Raw),
           Flag = case binary_to_list(XOR) of
                    [] -> true;
                    LCS -> CS == list_to_integer(LCS, 16)
                  end,
-          if Flag -> 
-              case Cmd of
-                <<"GGA">>    -> [extract_gga(Params)    | split(Rest, Cfg)];
-                <<"RMC">>    -> [extract_rmc(Params)    | split(Rest, Cfg)];
-                <<"ZDA">>    -> [extract_zda(Params)    | split(Rest, Cfg)];
-                <<"EVOLBL">> -> [extract_evolbl(Params) | split(Rest, Cfg)];
-                <<"EVOLBP">> -> [extract_evolbp(Params) | split(Rest, Cfg)];
-                <<"SIMSVT">> -> [extract_simsvt(Params) | split(Rest, Cfg)];
-                <<"HDG">>    -> [extract_hdg(Params)    | split(Rest, Cfg)];
-                <<"HDT">>    -> [extract_hdt(Params)    | split(Rest, Cfg)];
-                <<"XDR">>    -> [extract_xdr(Params)    | split(Rest, Cfg)];
-                <<"VTG">>    -> [extract_vtg(Params)    | split(Rest, Cfg)];
-                <<"TNTHPR">> -> [extract_tnthpr(Params) | split(Rest, Cfg)];
-                <<"DBS">>    -> [extract_dbs(Params)    | split(Rest, Cfg)];
-                <<"DBT">>    -> [extract_dbt(Params)    | split(Rest, Cfg)];
-                <<"EVO">>    -> [extract_evo(Params)    | split(Rest, Cfg)];
-                <<"EVOTAP">> -> [extract_evotap(Params) | split(Rest, Cfg)];
-                <<"EVOTPC">> -> [extract_evotpc(Params) | split(Rest, Cfg)];
-                <<"EVOTDP">> -> [extract_evotdp(Params) | split(Rest, Cfg)];
-                <<"EVORCP">> -> [extract_evorcp(Params) | split(Rest, Cfg)];
-                <<"EVORCT">> -> [extract_evorct(Params) | split(Rest, Cfg)];
-                <<"EVORCM">> -> [extract_evorcm(Params) | split(Rest, Cfg)];
-                <<"EVOSEQ">> -> [extract_evoseq(Params) | split(Rest, Cfg)];
-                <<"EVOSSB">> -> [extract_evossb(Params) | split(Rest, Cfg)];
-                <<"EVOSSA">> -> [extract_evossa(Params) | split(Rest, Cfg)];
-                <<"EVOCTL">> -> [extract_evoctl(Params) | split(Rest, Cfg)];
-                _ ->      [{error, {notsupported, Cmd}} | split(Rest, Cfg)]
-              end;
+          if Flag ->
+             [extract_nmea(Cmd, Params) | split(Rest, Cfg)];
              true -> [{error, {checksum, CS, XOR, Raw}} | split(Rest, Cfg)]
           end;
         _ -> [{error, {nomatch, L}} | split(Rest, Cfg)]
@@ -134,7 +109,7 @@ extract_utc(nothing) ->
   nothing;
 extract_utc(BUTC) ->
   <<BHH:2/binary,BMM:2/binary,BSS/binary>> = BUTC,
-  SS = case re:split(BSS,"\\\.") of
+  SS = case binary:split(BSS,<<".">>) of
          [_,_] -> binary_to_float(BSS);
          _ -> binary_to_integer(BSS)
        end,
@@ -145,7 +120,7 @@ safe_extract_geodata(BUTC, BLat, BN, BLon, BE) ->
   try extract_geodata(BUTC, BLat, BN, BLon, BE)
   catch _:_ -> [nothing, nothing, nothing]
   end.
-  
+
 extract_geodata(BUTC, BLat, BN, BLon, BE) ->
   <<BLatHH:2/binary,BLatMM/binary>> = BLat,
   <<BLonHH:3/binary,BLonMM/binary>> = BLon,
@@ -165,15 +140,15 @@ extract_geodata(BUTC, BLat, BN, BLon, BE) ->
 %% Lon     x.x       Longitude, degrees
 %% E or W  a_
 %% Speed   x.x       Speed of ground in knots
-%% Tangle  x.x       Track angle in degrees, True   
+%% Tangle  x.x       Track angle in degrees, True
 %% Date    ddmmyy    Date
 %% Magvar  x.x       Magnetic Variation
 %% E or W  a_
 %% Example: $GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
-extract_rmc(Params) ->
+extract_nmea(<<"RMC">>, Params) ->
   try
-    [BUTC,BStatus,BLat,BN,BLon,BE,BSpeed,BTangle,BDate,BMagvar,BME] = 
-      lists:sublist(re:split(Params, ","),11),
+    [BUTC,BStatus,BLat,BN,BLon,BE,BSpeed,BTangle,BDate,BMagvar,BME] =
+      lists:sublist(binary:split(Params,<<",">>,[global]),11),
     Status = case BStatus of <<"A">> -> active; _ -> void end,
     [UTC, Lat, Lon] = extract_geodata(BUTC, BLat, BN, BLon, BE),
     [Speed,Tangle,MagvarV] = [safe_binary_to_float(X) || X <- [BSpeed,BTangle,BMagvar]],
@@ -187,7 +162,7 @@ extract_rmc(Params) ->
     Date = {2000 + YY, MM, DD},
     {nmea,{rmc, UTC, Status, Lat, Lon, Speed, Tangle, Date, Magvar}}
   catch error:_ -> {error, {parseError, rmc, Params}}
-  end.
+  end;
 
 %% hhmmss.ss,llll.ll,a,yyyyy.yy,a,x,xx,x.x,x.x,M, x.x,M,x.x,xxxx
 %% 1    = UTC of Position
@@ -205,29 +180,29 @@ extract_rmc(Params) ->
 %% 12   = Meters  (Units of geoidal separation)
 %% 13   = Age in seconds since last update from diff. reference station
 %% 14   = Diff. reference station ID#
-extract_gga(Params) ->
+extract_nmea(<<"GGA">>, Params) ->
   try
-    [BUTC,BLat,BN,BLon,BE,BQ,BSat,BHDil,BAlt,<<"M">>,BGeoid,<<"M">>,BAge,BID] = re:split(Params, ","),
+    [BUTC,BLat,BN,BLon,BE,BQ,BSat,BHDil,BAlt,<<"M">>,BGeoid,<<"M">>,BAge,BID] = binary:split(Params,<<",">>,[global]),
     [UTC, Lat, Lon] = extract_geodata(BUTC, BLat, BN, BLon, BE),
     [Q,Sat,ID] = [safe_binary_to_integer(X) || X <- [BQ,BSat,BID]],
     [HDil,Alt,Geoid,Age] = [safe_binary_to_float(X) || X <- [BHDil,BAlt,BGeoid,BAge]],
     {nmea,{gga, UTC, Lat, Lon, Q, Sat, HDil, Alt, Geoid, Age, ID}}
   catch
     error:_ -> {error, {parseError, gga, Params}}
-  end.
+  end;
 
 %% $--ZDA,hhmmss.ss,xx,xx,xxxx,xx,xx
-%% hhmmss.ss = UTC 
-%% xx = Day, 01 to 31 
-%% xx = Month, 01 to 12 
-%% xxxx = Year 
-%% xx = Local zone description, 00 to +/- 13 hours 
+%% hhmmss.ss = UTC
+%% xx = Day, 01 to 31
+%% xx = Month, 01 to 12
+%% xxxx = Year
+%% xx = Local zone description, 00 to +/- 13 hours
 %% xx = Local zone minutes description (same sign as hours)
-extract_zda(Params) ->
+extract_nmea(<<"ZDA">>, Params) ->
   try
-    [BUTC,BD,BM,BY,BZD,BZM] = re:split(Params, ","),
+    [BUTC,BD,BM,BY,BZD,BZM] = binary:split(Params,<<",">>,[global]),
     <<BHH:2/binary,BMM:2/binary,BSS/binary>> = BUTC,
-    SS = case re:split(BSS,"\\\.") of
+    SS = case binary:split(BSS,<<".">>) of
            [_,_] -> binary_to_float(BSS);
            _ -> binary_to_integer(BSS)
          end,
@@ -236,7 +211,7 @@ extract_zda(Params) ->
     {nmea,{zda, UTC, D, M, Y, ZD, ZM}}
   catch
     error:_ -> {error, {parseError, zda, Params}}
-  end.
+  end;
 
 %% LBL location
 %% $-EVOLBL,Type,r,Loc_no,Ser_no,Lat,Lon,Alt,Pressure,,
@@ -246,16 +221,16 @@ extract_zda(Params) ->
 %% I - initialized georeferenced position
 %% C - calibrated georeferenced position
 %% D - undefined position
-extract_evolbl(Params) ->
+extract_nmea(<<"EVOLBL">>, Params) ->
   try
-    [BType,_,BLoc,BSer,BLat,BLon,BAlt,BPressure,_,_,_] = re:split(Params, ","),
+    [BType,_,BLoc,BSer,BLat,BLon,BAlt,BPressure,_,_,_] = binary:split(Params,<<",">>,[global]),
     Type = binary_to_list(BType),
     [Loc,Ser] = [safe_binary_to_integer(X) || X <- [BLoc,BSer]],
     [Lat,Lon,Alt,Pressure] = [safe_binary_to_float(X) || X <- [BLat,BLon,BAlt,BPressure]],
     {nmea,{evolbl, Type, Loc, Ser, Lat, Lon, Alt, Pressure}}
   catch
     error:_ -> {error, {parseError, evolbl, Params}}
-  end.
+  end;
 
 %% LBL position
 %% $-EVOLBP,Timestamp,Tp_array,Type,Status,Coordinates,Lat,Lon,Alt,Pressure,Major,Minor,Direction,SMean,Std
@@ -264,14 +239,14 @@ extract_evolbl(Params) ->
 %% Type a- %% R1 or T1 %% in our case just address
 %% Status A %% OK | or others
 %% Coordinates r (degrees, 7 digits)
-extract_evolbp(Params) ->
+extract_nmea(<<"EVOLBP">>, Params) ->
   try
-    [BUTC,BArray,BAddress,BStatus,_,BLat,BLon,BAlt,BPressure,_,_,_,Bsmean,Bstd] = re:split(Params, ","),
+    [BUTC,BArray,BAddress,BStatus,_,BLat,BLon,BAlt,BPressure,_,_,_,Bsmean,Bstd] = binary:split(Params,<<",">>,[global]),
     Basenodes = if BArray == <<>> -> [];
-                   true -> [binary_to_integer(Bnode) || Bnode <- re:split(BArray, ":")]
+                   true -> [binary_to_integer(Bnode) || Bnode <- binary:split(BArray, <<":">>, [global])]
                 end,
     <<BHH:2/binary,BMM:2/binary,BSS/binary>> = BUTC,
-    SS = case re:split(BSS,"\\\.") of
+    SS = case binary:split(BSS,<<".">>) of
            [_,_] -> binary_to_float(BSS);
            _ -> binary_to_integer(BSS)
          end,
@@ -283,7 +258,7 @@ extract_evolbp(Params) ->
     {nmea, {evolbp, UTC, Basenodes, Address, Status, Lat, Lon, Alt, Pressure, SMean, Std}}
   catch
     error:_ -> {error, {parseError, evolbp, Params}}
-  end.
+  end;
 
 %%
 %% $-SIMSVT,Description,TotalPoints,Index,Depth1,Sv1,Depth2,Sv2,Depth3,Sv3,Depth4,Sv4
@@ -293,9 +268,9 @@ extract_evolbp(Params) ->
 %% Index        x   The index for the first point in this telegram, a range from 0 to (TotalPoints -1)
 %% Depth[1-4]   x.x Depth for the next sound velocity [m].
 %% Sv[1-4]      x.x Sound velocity for the previous depth [m/s].
-extract_simsvt(Params) ->
+extract_nmea(<<"SIMSVT">>, Params) ->
   try
-    [<<"P">>,BTotal,BIdx,BD1,DS1,BD2,BS2,BD3,BS3,BD4,BS4] = re:split(Params, ","),
+    [<<"P">>,BTotal,BIdx,BD1,DS1,BD2,BS2,BD3,BS3,BD4,BS4] = binary:split(Params,<<",">>,[global]),
     [Total,Idx] = [binary_to_integer(X) || X <- [BTotal,BIdx]],
     Lst = foldl(fun({BD,BS},Acc) ->
                     case {safe_binary_to_float(BD),safe_binary_to_float(BS)} of
@@ -306,30 +281,180 @@ extract_simsvt(Params) ->
     {nmea, {simsvt, Total, Idx, Lst}}
   catch
     error:_ -> {error, {parseError, simsvt, Params}}
-  end.
+  end;
+
+%% $PSXN,23,Roll,Pitch,Heading,Heave
+%% 23      x         Message type (Roll, Pitch, Heading and Heave)
+%% Roll    x.x       Roll in degrees. Positive with port side up.
+%% Pitch   x.x       Pitch in degrees. Positive is bow up. (NED)
+%% Heading x.x       Heading in degrees true.
+%% Heave   x.x       Heave in meters. Positive is down.
+%% Example: $PSXN,23,0.02,-0.76,330.56,*0B
+extract_nmea(<<"SXN">>, Params) ->
+  try
+    [Type | Rest] = lists:sublist(binary:split(Params,<<",">>,[global]),5),
+    case Type of
+      <<"23">> ->
+        [Roll, Pitch, Heading, Heave] = [safe_binary_to_float(X) || X <- Rest],
+        {nmea, {sxn, 23, Roll, Pitch, Heading, Heave}};
+      _ -> {error, {parseError, sxn_23, Params}}
+    end
+  catch error:_ -> {error, {parseError, sxn_23, Params}}
+  end;
+
+%% $PSAT,HPR,TIME,HEADING,PITCH,ROLL,TYPE*CC<CR><LF>
+%% UTC     hhmmss.ss UTC of position
+%% Heading x.x       Heading in degrees true.
+%% Pitch   x.x       Pitch in degrees. Positive is bow up. (NED)
+%% Roll    x.x       Roll in degrees. Positive with port side up.
+%% Type    a_        Type N=gps or G=Gyro.
+extract_nmea(<<"SAT">>, Params) ->
+  try
+    [Type | Rest] = lists:sublist(binary:split(Params,<<",">>,[global]),6),
+    case Type of
+      <<"HPR">> ->
+        [BUTC,BHeading,BPitch,BRoll,BType] = Rest,
+        [Roll,Pitch,Heading] = [safe_binary_to_float(X) || X <- [BRoll,BPitch,BHeading]],
+        UTC = extract_utc(BUTC),
+        MType = case BType of <<"N">> -> gps; <<"G">> -> gyro; _ -> unknown end,
+        {nmea, {sat, hpr, UTC, Heading, Pitch, Roll, MType}};
+      _ -> {error, {parseError, sat_hpr, Params}}
+    end
+  catch error:_ -> {error, {parseError, sat_hpr, Params}}
+  end;
+
+%% format desc from:
+%%      https://github.com/rock-drivers/drivers-phins_ixsea/blob/master/src/PhinsStandardParser.cpp
+%%
+%% $PIXSE,ATITUD,Roll,Pitch
+%% Roll     x.x     Roll in degrees
+%% Pitch    x.x     Pitch in degrees
+%%
+%% $PIXSE,POSITI,Lat,Lon,Alt*71
+%% Lat     x.x     Latitude in degrees
+%% Lon     x.x     Longitude in degrees
+%% Alt     x.x     Altitude in meters
+%%
+%% $PIXSE,ATITUD,-1.641,-0.490*6D
+%% $PIXSE,POSITI,53.10245714,8.83994382,-0.115*71
+extract_nmea(<<"IXSE">>, Params) ->
+  try
+    [Type | Rest] = lists:sublist(binary:split(Params,<<",">>,[global]),4),
+    case Type of
+      <<"ATITUD">> ->
+        [BRoll,BPitch] = Rest,
+        [Roll,Pitch] = [safe_binary_to_float(X) || X <- [BRoll,BPitch]],
+        {nmea, {ixse, atitud, Roll, Pitch}};
+      <<"POSITI">> ->
+        [BLat,BLon,BAlt] = Rest,
+        [Lat,Lon,Alt] = [safe_binary_to_float(X) || X <- [BLat,BLon,BAlt]],
+        {nmea, {ixse, positi, Lat, Lon, Alt}};
+      _ -> {error, {parseError, ixse, Params}}
+    end
+  catch error:_ -> {error, {parseError, ixse, Params}}
+  end;
+
+%% $PASHR,hhmmss.ss,HHH.HH,T,RRR.RR,PPP.PP,---,rr.rrr,pp.ppp,hh.hhh,1,1*32
+%% hhmmss.ss    -- UTC-time
+%% HHH.HH       -- Heading (inertial azimuth from IMU gyros and SPAN filters)
+%% T            -- True heading is relative to true north
+%% RRR.RR       -- Roll. ± is always displayed
+%% PPP.PP       -- Pitch. ± is always displayed
+%% ---          -- Reserverd
+%% rr.rrr       -- Roll STD
+%% pp.ppp       -- Pitch STD
+%% hh.hhh       -- Heading STD
+%% 1            -- GPS quality (0 -- no pos, 1 -- non-rtk, 2 -- rtk)
+%% 1            -- INS status (0 -- All SPAN pre-alignment, 1 -- post-alignment)
+%%
+%% $PASHR,,,,,,,,,,0,0*74 (empty)
+%% $PASHR,200345.00,78.00,T,-3.00,+2.00,+0.00,1.000,1.000,1.000,1,1*32
+extract_nmea(<<"ASHR">>, Params) ->
+  try
+    [BUTC,BHeading,BTrue,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD,BGPSq,BINSq] = binary:split(Params,<<",">>,[global]),
+    UTC = extract_utc(BUTC),
+    [Heading,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD] = [safe_binary_to_float(X) || X <- [BHeading,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD]],
+    [GPSq,INSq] = [safe_binary_to_integer(X) || X <- [BGPSq,BINSq]],
+    True = case BTrue of <<"T">> -> true; _ -> false end,
+    {nmea, {ashr,UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq}}
+  catch
+    error:_ -> {error, {parseError, ashr, Params}}
+  end;
+
+%% $PRDID,PPP.PP,RRR.RR,xxx.xx
+%% PPP.PP  x.x       Pitch in degrees
+%% RRR.RR  x.x       Roll in degrees
+%% xxx.xx  x.x       Heading in degrees true.
+extract_nmea(<<"RDID">>, Params) ->
+  try
+    [Pitch,Roll,Heading] = [safe_binary_to_float(X) || X <- lists:sublist(binary:split(Params,<<",">>,[global]),3)],
+    {nmea, {rdid, Pitch, Roll, Heading}}
+  catch error:_ -> {error, {parseError, rdid, Params}}
+  end;
+
+%% $PHOCT,01,hhmmss.sss,G,AA,HHH.HHH,N,eRRR.RRR,L,ePP.PPP,K,eFF.FFF,M,eHH.HHH,eSS.SSS,eWW.WWW,eZZ.ZZZ,eYY.YYY,eXX.XXX,eQQQ.QQ
+%% 01       xx      Protovol version id
+%% hhmmss.sss   s   UTC-time
+%% G            c   UTC status (T -- valid, E -- invalid)
+%% AA           xx  INS latency (03)
+%% HHH.HHH      x.x Heading
+%% N            c   Heading status (T -- valid, E -- invalid, I -- initializing)
+%% eRRR.RRR     x.x Roll in deg (± always shown, positive -- port up)
+%% L            c   Roll status (T -- valid, E -- invalid, I -- initializing)
+%% ePPP.PPP     x.x Pitch in deg (± always shown, positive -- bow down)
+%% K            c   Pitch status (T -- valid, E -- invalid, I -- initializing)
+%% eFF.FFF      x.x Heave (primary lever-arms )in meters (± always shown, positive -- up)
+%% K            c   Heave,surge,sway,speed status (T -- valid, E -- invalid, I -- initializing)
+%% eHH.HHH      x.x Heave (chosen lever-arms) in meters (± always shown, positive -- up)
+%% eSS.SSS      x.x Surge (chosen lever-arms) in meters (± always shown)
+%% eWW.WWW      x.x Sway (chosen lever-arms) in meters (± always shown)
+%% eZZ.ZZZ      x.x Heave speed in meters (± always shown)
+%% eYY.YYY      x.x Surge speed in meters (± always shown)
+%% eXX.XXX      x.x Sway speed in meters (± always shown)
+%% eQQQQ.QQ     x.x Heading rate of turns in deg/min (± always shown)
+extract_nmea(<<"HOCT">>, Params) ->
+  S = fun(<<"T">>) -> valid; (<<"E">>) -> invalid; ("I") -> initialization; (_) -> unknown end,
+  try
+    [Ver | Rest] = lists:sublist(binary:split(Params,<<",">>,[global]),19),
+    case Ver of
+      <<"01">> ->
+        [BUTC,BTmS,BLt,BHd,BHdS,BRl,BRlS,BPt,BPtS,BHvI,BHvS,BHv,BSr,BSw,BHvR,BSrR,BSwR,BHdR] = Rest,
+        UTC = extract_utc(BUTC),
+        [Hd,Rl,Pt,HvI,Hv,Sr,Sw,HvR,SrR,SwR,HdR] = [safe_binary_to_float(X) || X <- [BHd,BRl,BPt,BHvI,BHv,BSr,BSw,BHvR,BSrR,BSwR,BHdR]],
+        Lt = safe_binary_to_integer(BLt),
+        TmS = S(BTmS),
+        HdS = S(BHdS),
+        RlS = S(BRlS),
+        PtS = S(BPtS),
+        HvS = S(BHvS),
+        {nmea, {hoct,1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR}};
+      _ -> {error, {parseError, hoct_01, Params}}
+    end
+  catch error:_ -> {error, {parseError, hoct_01, Params}}
+  end;
 
 %% $PEVO,Request
 %% Request c--c NMEA senstence request
-extract_evo(Params) ->
+extract_nmea(<<"EVO">>, Params) ->
   try
     BName = Params,
     {nmea, {'query', evo, binary_to_list(BName)}}
   catch
     error:_ -> {error, {parseError, evo, Params}}
-  end.
+  end;
 
 %% $-EVOTAP,Forward,Right,Down,Spare1,Spare2,Spare3
 %% Forward x.x forward offset in meters
 %% Right   x.x rights(starboard) offset in meters
 %% Down    x.x downwards offset in meters
-extract_evotap(Params) ->
+extract_nmea(<<"EVOTAP">>, Params) ->
   try
-    [BForward,BRight,BDown,_,_,_] = re:split(Params, ","),
+    [BForward,BRight,BDown,_,_,_] = binary:split(Params,<<",">>,[global]),
     [Forward,Right,Down] = [safe_binary_to_float(X) || X <- [BForward,BRight,BDown]],
     {nmea, {evotap,Forward,Right,Down}}
   catch
     error:_ -> {error, {parseError, evotap, Params}}
-  end.
+  end;
 
 %% $-EVOTDP,Transceiver,Max_range,Sequence,LAx,LAy,LAz,HL,Yaw,Pitch,Roll
 %% Transceiver x    Transceiver address
@@ -342,16 +467,16 @@ extract_evotap(Params) ->
 %% Yaw         x.x  NED reference frame adjustment, yaw in degrees   (Spare)
 %% Pitch       x.x  NED reference frame adjustment, pitch in degrees (Spare)
 %% Roll        x.x  NED reference frame adjustment, roll in degrees  (Spare)
-extract_evotdp(Params) ->
+extract_nmea(<<"EVOTDP">>, Params) ->
   try
-    [BTransceiver,BMax_range,BSequence,BLAx,BLAy,BLAz,BHL,BYaw,BPitch,BRoll] = re:split(Params,","),
+    [BTransceiver,BMax_range,BSequence,BLAx,BLAy,BLAz,BHL,BYaw,BPitch,BRoll] = binary:split(Params,<<",">>,[global]),
     [Transceiver,Max_range] = [safe_binary_to_integer(X) || X <- [BTransceiver,BMax_range]],
     [LAx,LAy,LAz,HL,Yaw,Pitch,Roll] = [safe_binary_to_float(X) || X <- [BLAx,BLAy,BLAz,BHL,BYaw,BPitch,BRoll]],
-    Sequence = [safe_binary_to_integer(X) || X <- re:split(BSequence,":")],
+    Sequence = [safe_binary_to_integer(X) || X <- binary:split(BSequence,<<":">>, [global])],
     {nmea, {evotdp, Transceiver, Max_range, Sequence, LAx,LAy,LAz,HL,Yaw,Pitch,Roll}}
-  catch 
+  catch
     error:_ -> {error, {parseError, evotdp, Params}}
-  end.
+  end;
 
 %% $-EVOTPC,Pair,Praw,Ptrans,PtransS,Yaw,Pitch,Roll,S_ahrs,HL
 %% Pair       x.x air pressure in dBar
@@ -363,9 +488,9 @@ extract_evotdp(Params) ->
 %% Roll       x.x NED reference frame, roll in degrees
 %% S_ahrs     a_  ''/'R'/'I'/'N' for undefined/raw/interpolated/ready
 %% HL         x.x housing arm from pressure sensor to transducer in meters (down is positive)
-extract_evotpc(Params) ->
+extract_nmea(<<"EVOTPC">>, Params) ->
   try
-    [BPair,BPraw,BPtrans,BTransS,BYaw,BPitch,BRoll,BAHRSS,BHL] = re:split(Params, ","),
+    [BPair,BPraw,BPtrans,BTransS,BYaw,BPitch,BRoll,BAHRSS,BHL] = binary:split(Params,<<",">>,[global]),
     [Pair,Praw,Ptrans,HL,Yaw,Pitch,Roll] = [safe_binary_to_float(X) || X <- [BPair,BPraw,BPtrans,BHL,BYaw,BPitch,BRoll]],
     Status = fun(<<"">>) -> undefined;
                 (<<$R>>) -> raw;
@@ -377,7 +502,7 @@ extract_evotpc(Params) ->
     {nmea, {evotpc,Pair,Praw,{Ptrans,PS},{Yaw,Pitch,Roll,AHRSS},HL}}
   catch
     error:_ -> {error, {parseError, evotpc, Params}}
-  end.
+  end;
 
 %% $-EVORCM,RX,RX_phy,Src,P_src,TS,A1:...:An,TS1:...:TSn,TD1:...TDn,TDOA1:...:TDOAn
 %% static or dynamic related to the transudcer, not to Src or A1:...:An
@@ -392,18 +517,18 @@ extract_evotpc(Params) ->
 %% TS1:...:TSn     x:x:...:x Propagation time to Ai, us, static
 %% TD1:...TDn      x:x:...:x Propagation time to Ai, us, dynamic
 %% TDOA1:...:TDOAn x:x:...:x Time difference of arrival between Src and Ai
-extract_evorcm(Params) ->
+extract_nmea(<<"EVORCM">>, Params) ->
   try
-    [BRX,BRXP,BSrc,BRSSI,BInt,BPSrc,BTS,BAS,BTSS,BTDS,BTDOAS] = re:split(Params, ","),
+    [BRX,BRXP,BSrc,BRSSI,BInt,BPSrc,BTS,BAS,BTSS,BTDS,BTDOAS] = binary:split(Params,<<",">>,[global]),
     RX_utc = extract_utc(BRX),
     [RX_phy,Src,TS,RSSI,Int] = [safe_binary_to_integer(X) || X <- [BRXP,BSrc,BTS,BRSSI,BInt]],
     PSrc = safe_binary_to_float(BPSrc),
-    [AS,TSS,TDS,TDOAS] = [[safe_binary_to_integer(X) || X <- re:split(Y,":")]
+    [AS,TSS,TDS,TDOAS] = [[safe_binary_to_integer(X) || X <- binary:split(Y,<<":">>, [global])]
                           || Y <- [BAS,BTSS,BTDS,BTDOAS]],
     {nmea, {evorcm,RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS}}
   catch
     error:_ -> {error, {parseError, evorcm, Params}}
-  end.
+  end;
 
 %% $-EVOSEQ,sid,total,maddr,range,seq
 %% sid - sequence id (0..total-1)
@@ -415,14 +540,14 @@ extract_evorcm(Params) ->
 %% $PEVOSEQ,1,2,8,6000,1:2:3:4:5:6
 %% reset existing sequences on reception of sid 0,
 %% store sequences on reception of total-1
-extract_evoseq(Params) ->
+extract_nmea(<<"EVOSEQ">>, Params) ->
   try
-    [BSID,BTotal,BMaddr,BRange,BSeq] = re:split(Params, ","),
+    [BSID,BTotal,BMaddr,BRange,BSeq] = binary:split(Params,<<",">>,[global]),
     [Sid,Total,MAddr,Range] = [safe_binary_to_integer(X) || X <- [BSID,BTotal,BMaddr,BRange]],
-    Seq = [safe_binary_to_integer(X) || X <- re:split(BSeq,":")],
+    Seq = [safe_binary_to_integer(X) || X <- binary:split(BSeq,<<":">>, [global])],
     {nmea, {evoseq,Sid,Total,MAddr,Range,Seq}}
   catch error:_ -> {error, {parseError, evoseq, Params}}
-  end.
+  end;
 
 %% $-EVORCT,TX,TX_phy,Lat,LatS,Lon,LonS,Alt,S_gps,Pressure,S_pressure,Yaw,Pitch,Roll,S_ahrs,LAx,LAy,LAz,HL
 %% TX         hhmmss.ss UTC of transmittion
@@ -433,7 +558,7 @@ extract_evoseq(Params) ->
 %% E or W     a_
 %% Alt        x.x       Antenna altitude above/below mean sea level (geoid)
 %% S_gps      a_        ''/'R'/'I'/'N' for undefined/raw/interpolated/ready
-%% Pressure   x.x       Pressure on transducer in dBar           
+%% Pressure   x.x       Pressure on transducer in dBar
 %% S_pressure a_        ''/'R'/'I'/'N' for undefined/raw/interpolated/ready
 %% Yaw        x.x       in degrees
 %% Pitch      x.x       in degrees
@@ -443,9 +568,9 @@ extract_evoseq(Params) ->
 %% LAy        x.x       lever_arm rights(starboard) offset in meters
 %% LAz        x.x       lever_arm downwards offset in meters
 %% HL         x.x       housing arm from pressure sensor to transducer in meters (down is positive)
-extract_evorct(Params) ->
+extract_nmea(<<"EVORCT">>, Params) ->
   try
-    [BTX,BTXP,BLat,BN,BLon,BE,BAlt,BGPSS,BP,BPS,BYaw,BPitch,BRoll,BAHRSS,BLx,BLy,BLz,BHL] = re:split(Params, ","),
+    [BTX,BTXP,BLat,BN,BLon,BE,BAlt,BGPSS,BP,BPS,BYaw,BPitch,BRoll,BAHRSS,BLx,BLy,BLz,BHL] = binary:split(Params,<<",">>,[global]),
     [TX_utc, Lat, Lon] = extract_geodata(BTX, BLat, BN, BLon, BE),
     Status = fun(<<"">>) -> undefined;
                 (<<$R>>) -> raw;
@@ -462,7 +587,7 @@ extract_evorct(Params) ->
     {nmea, {evorct,TX_utc,TX_phy,GPS,Pressure,AHRS,Lever_arm,HL}}
   catch
     error:_ -> {error, {parseError, evorct, Params}}
-  end.
+  end;
 
 %% $-EVORCP,Type,Status,Substatus,Int_interval,Mode,Cycles,Broadcast,Spare1,Spare2
 %% Type         a_   "S" indicates standard interogation loop
@@ -470,7 +595,7 @@ extract_evorct(Params) ->
 %%                   "Rn" remote interogation loop start
 %%                   "Cn" remote interogation loop start with calibrated basenode position transmission
 %% Status       a_   "A" indicates activate , "D" indicates deactivate,
-%%                   "U" undefined state (activation or deactivation failed) 
+%%                   "U" undefined state (activation or deactivation failed)
 %% Substatus    c__c Transciever status: "SWITCH" for "A"/"D" or some Message (to be defined)
 %%                   "SWITCH" indicates switch to activate/deactivate remote interogation
 %% Int_interval x.x  in "P" mode: interrogation interval [s], 0.0 indicates fast as possible
@@ -483,9 +608,9 @@ extract_evorct(Params) ->
 %% Example: $PEVORCP,G,A,,0.0,P,,,,
 %%          $PEVORCP,S,D,,,,,,
 %%          $PEVORCP,S,A,,0.0,P,,B,,
-extract_evorcp(Params) ->
+extract_nmea(<<"EVORCP">>, Params) ->
   try
-    [BType,BStatus,BSub,BInt,BMode,BCycles,BCast,_,_] = re:split(Params, ","),
+    [BType,BStatus,BSub,BInt,BMode,BCycles,BCast,_,_] = binary:split(Params,<<",">>,[global]),
     Type = case BType of
              <<"G">> -> georeference;
              <<"S">> -> standard;
@@ -511,7 +636,7 @@ extract_evorcp(Params) ->
                    V -> V
                  end,
         {nmea, {evorcp, Type, Status, Substatus, Interval, Mode, Cycles, Broadcast, nothing, nothing}};
-      <<"D">> -> 
+      <<"D">> ->
         Status = deactivate,
         {nmea, {evorcp, Type, Status, Substatus}};
       <<"U">> ->
@@ -519,11 +644,12 @@ extract_evorcp(Params) ->
     end
   catch
     error:_ -> {error, {parseError, evorcp, Params}}
-  end.
+  end;
 
-%% $PEVOSSB,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
+%% $PEVOSSB,UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
 %% UTC hhmmss.ss
 %% TID transponder ID
+%% DID transceiver ID
 %% S status OK/NOK
 %% Err error code cc_
 %% CS coordinate system: Local frame (LF)/ ENU / GEOD
@@ -532,12 +658,13 @@ extract_evorcp(Params) ->
 %% Acc accuracy in meters
 %% Pr pressure in dBar (blank, if not available)
 %% Vel velocity in m/s
-extract_evossb(Params) ->
+extract_nmea(<<"EVOSSB">>, Params) ->
   try
-    [BUTC,BTID,BS,BErr,BCS,BFS,BX,BY,BZ,BAcc,BPr,BVel] = 
-      lists:sublist(re:split(Params, ","),12),
+    [BUTC,BTID,BDID,BS,BErr,BCS,BFS,BX,BY,BZ,BAcc,BPr,BVel] =
+      lists:sublist(binary:split(Params,<<",">>,[global]),13),
     UTC = extract_utc(BUTC),
     TID = safe_binary_to_integer(BTID),
+    DID = safe_binary_to_integer(BDID),
     [X,Y,Z,Acc,Pr,Vel] = [safe_binary_to_float(V) || V <- [BX,BY,BZ,BAcc,BPr,BVel]],
     S = case BS of
           <<"OK">> -> ok;
@@ -554,14 +681,15 @@ extract_evossb(Params) ->
            <<"R">> -> reconstructed
          end,
     Err = binary_to_list(BErr),
-    {nmea, {evossb, UTC, TID, S, Err, CS, FS, X, Y, Z, Acc, Pr, Vel}}
+    {nmea, {evossb, UTC, TID, DID, S, Err, CS, FS, X, Y, Z, Acc, Pr, Vel}}
   catch
     error:_ -> {error, {parseError, evossb, Params}}
-  end.
+  end;
 
 %% $PEVOSSA,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel
 %% UTC hhmmss.ss
 %% TID transponder ID
+%% DID transceiver ID
 %% S status OK/NOK
 %% Err error code cc_
 %% CS coordinate system: Local frame (LF)/ ENU / GEOD
@@ -570,12 +698,13 @@ extract_evossb(Params) ->
 %% Acc accuracy in meters
 %% Pr pressure in dBar (blank, if not available)
 %% Vel velocity in m/s
-extract_evossa(Params) ->
+extract_nmea(<<"EVOSSA">>, Params) ->
   try
-    [BUTC,BTID,BS,BErr,BCS,BFS,BB,BE,BAcc,BPr,BVel] = 
-      lists:sublist(re:split(Params, ","),11),
+    [BUTC,BTID,BDID,BS,BErr,BCS,BFS,BB,BE,BAcc,BPr,BVel] =
+      lists:sublist(binary:split(Params,<<",">>,[global]),12),
     UTC = extract_utc(BUTC),
     TID = safe_binary_to_integer(BTID),
+    DID = safe_binary_to_integer(BDID),
     [B,E,Acc,Pr,Vel] = [safe_binary_to_float(V) || V <- [BB,BE,BAcc,BPr,BVel]],
     S = case BS of
           <<"OK">> -> ok;
@@ -592,10 +721,61 @@ extract_evossa(Params) ->
            <<"R">> -> reconstructed
          end,
     Err = binary_to_list(BErr),
-    {nmea, {evossa, UTC, TID, S, Err, CS, FS, B, E, Acc, Pr, Vel}}
+    {nmea, {evossa, UTC, TID, DID, S, Err, CS, FS, B, E, Acc, Pr, Vel}}
   catch
     error:_ -> {error, {parseError, evossb, Params}}
-  end.
+  end;
+
+%% $PEVOGPS,UTC,TID,DID,M,Lat,LatPole,Lon,LonPole,Alt
+%% UTC hhmmss.ss
+%% TID point ID (FTID)
+%% DID device ID
+%% M mode: M measured, C computed, F filtered
+%% Lat Latitude
+%% LatPole N or S
+%% Lon Longitude
+%% LonPole E or W
+%% Alt Altitude over Geoid
+extract_nmea(<<"EVOGPS">>, Params) ->
+  try
+    [BUTC,BTID,BDID,BM,BLat,BN,BLon,BE,BAlt] =
+      lists:sublist(binary:split(Params,<<",">>,[global]),9),
+    [UTC, Lat, Lon] = extract_geodata(BUTC, BLat, BN, BLon, BE),
+    TID = safe_binary_to_integer(BTID),
+    DID = safe_binary_to_integer(BDID),
+    Alt = safe_binary_to_float(BAlt),
+    Mode = case BM of
+           <<"M">> -> measured;
+           <<"F">> -> filtered;
+           <<"C">> -> computed
+         end,
+    {nmea, {evogps, UTC, TID, DID, Mode, Lat, Lon, Alt}}
+  catch
+    error:_ -> {error, {parseError, evossb, Params}}
+  end;
+
+%% $PEVORPY,UTC,TID,DID,M,Roll,Pitch,Yaw
+%% UTC hhmmss.ss
+%% TID point ID (FTID)
+%% DID device ID
+%% M mode: M measured, C computed, F filtered
+extract_nmea(<<"EVORPY">>, Params) ->
+  try
+    [BUTC,BTID,BDID,BM,BRoll,BPitch,BYaw] =
+      lists:sublist(binary:split(Params,<<",">>,[global]),7),
+    UTC = extract_utc(BUTC),
+    TID = safe_binary_to_integer(BTID),
+    DID = safe_binary_to_integer(BDID),
+    [Roll, Pitch, Yaw] = [safe_binary_to_float(X) || X <- [BRoll, BPitch, BYaw]],
+    Mode = case BM of
+           <<"M">> -> measured;
+           <<"F">> -> filtered;
+           <<"C">> -> computed
+         end,
+    {nmea, {evorpy, UTC, TID, DID, Mode, Roll, Pitch, Yaw}}
+  catch
+    error:_ -> {error, {parseError, evossb, Params}}
+  end;
 
 %% $PEVOCTL,BUSBL,...
 %% ID - configuration id (BUSBL/SBL...)
@@ -605,17 +785,17 @@ extract_evossa(Params) ->
 %% IT          x   interrogation period in us
 %% MP          x   max pressure id dBar (must be equal on all the modems)
 %% AD          x   answer delays in us
-extract_evoctl(<<"BUSBL,",Params/binary>>) ->
+extract_nmea(<<"EVOCTL">>, <<"BUSBL,",Params/binary>>) ->
   try
-    [BLat,BN,BLon,BE,BAlt,BMode,BIT,BMP,BAD] = 
-      lists:sublist(re:split(Params, ","),9),
+    [BLat,BN,BLon,BE,BAlt,BMode,BIT,BMP,BAD] =
+      lists:sublist(binary:split(Params,<<",">>,[global]),9),
     [_, Lat, Lon] = safe_extract_geodata(nothing, BLat, BN, BLon, BE),
     Alt = safe_binary_to_float(BAlt),
     Mode = case BMode of
              <<>> -> nothing;
              <<"S">> -> silent;
              <<"T">> -> transponder;
-             _ -> [binary_to_integer(BI) || BI <- re:split(BMode, ":")]
+             _ -> [binary_to_integer(BI) || BI <- binary:split(BMode, <<":">>, [global])]
            end,
     [IT, MP, AD] = [safe_binary_to_integer(X) || X <- [BIT, BMP, BAD]],
     {nmea, {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}}}
@@ -628,24 +808,41 @@ extract_evoctl(<<"BUSBL,",Params/binary>>) ->
 %% IT              x   interrogation timeout in us
 %% MP              x   max pressure id dBar (must be equal on all the modems)
 %% AD              x   answer delays in us
-extract_evoctl(<<"SBL,",Params/binary>>) ->
+extract_nmea(<<"EVOCTL">>, <<"SBL,",Params/binary>>) ->
   %% try
-    [BX,BY,BZ,BMode,BIT,BMP,BAD] = 
-      lists:sublist(re:split(Params, ","),9),
+    [BX,BY,BZ,BMode,BIT,BMP,BAD] =
+      lists:sublist(binary:split(Params,<<",">>,[global]),9),
     [X,Y,Z] = [safe_binary_to_float(BV) || BV <- [BX, BY, BZ]],
     Mode = case BMode of
              <<>> -> nothing;
              <<"S">> -> silent;
              <<"T">> -> transponder;
-             _ -> [binary_to_integer(BI) || BI <- re:split(BMode, ":")]
+             _ -> [binary_to_integer(BI) || BI <- binary:split(BMode, <<":">>, [global])]
            end,
     [IT, MP, AD] = [safe_binary_to_integer(Item) || Item <- [BIT, BMP, BAD]],
     {nmea, {evoctl, sbl, {X, Y, Z, Mode, IT, MP, AD}}};
   %% catch
   %%   error:_ ->{error, {parseError, evoctl, Params}}
   %% end;
-extract_evoctl(Params) ->
-  {error, {parseError, evoctl, Params}}.
+%% $PEVOCTL,SUSBL,Seq,MRange,SVel
+%% Seq             a   interrogation sequence (<I1>:...:<In>)
+%% MRange          x   max range in m
+%% SVel            x   sound velocity
+extract_nmea(<<"EVOCTL">>, <<"SUSBL,",Params/binary>>) ->
+  try
+    [BMRange, BSVel, BSeq] =
+      lists:sublist(binary:split(Params,<<",">>,[global]), 3),
+    [MRange,SVel] = [safe_binary_to_float(BV) || BV <- [BMRange, BSVel]],
+    Seq = case BSeq of
+            <<>> -> nothing;
+            _ -> [binary_to_integer(BI) || BI <- binary:split(BSeq, <<":">>, [global])]
+          end,
+    {nmea, {evoctl, susbl, {Seq, MRange, SVel}}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}
+  end;
+extract_nmea(<<"EVOCTL">>, Params) ->
+  {error, {parseError, evoctl, Params}};
 
 %% $--HDG,Heading,Devitaion,D_sign,Variation,V_sign
 %% Heading        x.x magnetic sensor heading in degrees
@@ -655,41 +852,41 @@ extract_evoctl(Params) ->
 %% V_sign         a   variation direction, E = Easterly, W = Westerly
 %%
 %% Example: $HCHDG,271.1,10.7,E,12.2,W*52
-extract_hdg(Params) ->
+extract_nmea(<<"HDG">>, Params) ->
   try
-    [BHeading,BDev,BDevS,BVar,BVarS] = re:split(Params, ","),
+    [BHeading,BDev,BDevS,BVar,BVarS] = binary:split(Params,<<",">>,[global]),
     [Heading,Dev,Var] = [safe_binary_to_float(X) || X <- [BHeading,BDev,BVar]],
     DevS = case BDevS of <<"E">> -> 1; _ -> -1 end,
     VarS = case BVarS of <<"E">> -> 1; _ -> -1 end,
     {nmea, {hdg, Heading, DevS * Dev, VarS * Var}}
   catch
     error:_ -> {error, {parseError, hdg, Params}}
-  end.      
+  end;
 
 %% $--HDT,Heading,T
 %% Heading        x.x heading in degrees, true
 %%
 %% Example: $HCHDT,86.2,T*15
-extract_hdt(Params) ->
+extract_nmea(<<"HDT">>, Params) ->
   try
-    [BHeading,<<"T">>] = re:split(Params, ","),
+    [BHeading,<<"T">>] = binary:split(Params,<<",">>,[global]),
     Heading = safe_binary_to_float(BHeading),
     {nmea, {hdt, Heading}}
   catch
     error:_ -> {error, {parseError, hdt, Params}}
-  end.      
+  end;
 
-%% $--XDR,a,x.x,a,c--c, ..... 
+%% $--XDR,a,x.x,a,c--c, .....
 %%  Type   a
-%%  Data   x.x 
+%%  Data   x.x
 %%  Units  a
 %%  Name   c--c
 %%  More of the same .....
 %%
 %% Example: $HCXDR,A,-0.8,D,PITCH,A,0.8,D,ROLL,G,122,,MAGX,G,1838,,MAGY,G,-667,,MAGZ,G,1959,,MAGT*11
-extract_xdr(Params) ->
+extract_nmea(<<"XDR">>, Params) ->
   try
-    BLst = re:split(Params, ","),
+    BLst = binary:split(Params,<<",">>,[global]),
     Lst = lists:map(fun(Idx) ->
                         [BType,BData,BUnits,BName] = lists:sublist(BLst, Idx, 4),
                         Data = safe_binary_to_float(BData),
@@ -698,7 +895,7 @@ extract_xdr(Params) ->
     {nmea, {xdr, Lst}}
   catch
     error:_ -> {error, {parseError, xdr, Params}}
-  end.      
+  end;
 
 %% $--VTG,<TMGT>,T,<TMGM>,M,<Knots>,N,<KPH>,[FAA,]K
 %% TMGT  x.x Track made good (degrees true), track made good is relative to true north
@@ -708,16 +905,16 @@ extract_xdr(Params) ->
 %% FAA mode is optional
 %%
 %% Example: $GPVTG,054.7,T,034.4,M,005.5,N,010.2,K*48
-extract_vtg(Params) ->
+extract_nmea(<<"VTG">>, Params) ->
   try
-    [BTMGT,<<"T">>,BTMGM,<<"M">>,BKnots,<<"N">>,BKPH,<<"K">>] = lists:sublist(re:split(Params, ","),8),
+    [BTMGT,<<"T">>,BTMGM,<<"M">>,BKnots,<<"N">>,BKPH,<<"K">>] = lists:sublist(binary:split(Params,<<",">>,[global]),8),
     %% optional FAA mode dropped
     %% KPH = Knots * 0.539956803456
     [TMGT,TMGM,Knots,_KPH] = [safe_binary_to_float(X) || X <- [BTMGT,BTMGM,BKnots,BKPH]],
     {nmea, {vtg, TMGT,TMGM,Knots}}
   catch
     error:_ -> {error, {parseError, vtg, Params}}
-  end.      
+  end;
 
 %% $-TNTHPR,Heading,HStatus,Pitch,PStatus,Roll,RStatus
 %% Heading x.x in degrees or mils
@@ -726,15 +923,15 @@ extract_vtg(Params) ->
 %% PStatus a   L/M/N/O/P/C
 %% Roll    x.x in degrees or mils
 %% RStatus a   L/M/N/O/P/C
-%% Status: L = low alarm,    M = low warning, N = normal, 
+%% Status: L = low alarm,    M = low warning, N = normal,
 %%         O = high warning, P = high alarm,  C = Tuning analog circuit
 %%
 %% Examples:
 %% $PTNTHPR,354.9,N,5.2,N,0.2,N*3A
 %% $PTNTHPR,90,N,29,N,15,N*1C
-extract_tnthpr(Params) ->
+extract_nmea(<<"TNTHPR">>, Params) ->
   try
-    [BHeading,BHStatus,BPitch,BPStatus,BRoll,BRStatus] = re:split(Params, ","),
+    [BHeading,BHStatus,BPitch,BPStatus,BRoll,BRStatus] = binary:split(Params,<<",">>,[global]),
     [Heading, Pitch, Roll] = [case binary:split(X, <<".">>) of
                                 [<<>>]  -> nothing;
                                 [_I]    -> binary_to_integer(X) * 360 / 64000;  %% NATO mils to degrees
@@ -745,47 +942,59 @@ extract_tnthpr(Params) ->
     {nmea, {tnthpr, Heading, HStatus, Pitch, PStatus, Roll, RStatus}}
   catch
     error:_ -> {error, {parseError, tnthpr, Params}}
-  end.      
+  end;
+
+extract_nmea(<<"SMCS">>, Params) ->
+  try
+    [BRoll,BPitch,BHeave] = binary:split(Params,<<",">>,[global]),
+    [Roll, Pitch, Heave] = [ safe_binary_to_float(X) || X <- [BRoll,BPitch,BHeave]],
+    {nmea, {smcs, Roll, Pitch, Heave}}
+  catch
+    error:_ -> {error, {parseError, tnthpr, Params}}
+  end;
 
 %% $--DBS,<Df>,f,<DM>,M,<DF>,F
 %% Depth below surface (pressure sensor)
-%% Df x.x Depth in feets  
-%% DM x.x Depth in meters 
+%% Df x.x Depth in feets
+%% DM x.x Depth in meters
 %% DF x.x Depth in fathoms
 %%
 %% Example: $SDDBS,2348.56,f,715.78,M,391.43,F*4B
-extract_dbs(Params) ->
+extract_nmea(<<"DBS">>, Params) ->
   try
-    [_BDf,<<"f">>,BDM,<<"M">>,_BDF,<<"F">>] = re:split(Params, ","),
+    [_BDf,<<"f">>,BDM,<<"M">>,_BDF,<<"F">>] = binary:split(Params,<<",">>,[global]),
     DM = safe_binary_to_float(BDM),
     {nmea, {dbs, DM}}
   catch
     error:_ -> {error, {parseError, dbs, Params}}
-  end.      
+  end;
 
 %% $--DBT,<Df>,f,<DM>,M,<DF>,F
 %% Depth Below Transducer (echolot)
 %% Water depth referenced to the transducer’s position. Depth value expressed in feet, metres and fathoms.
-%% Df x.x Depth in feets  
-%% DM x.x Depth in meters 
+%% Df x.x Depth in feets
+%% DM x.x Depth in meters
 %% DF x.x Depth in fathoms
 %%
 %% Example: $SDDBT,8.1,f,2.4,M,1.3,F*0B
-extract_dbt(Params) ->
+extract_nmea(<<"DBT">>, Params) ->
   try
-    [_BDf,<<"f">>,BDM,<<"M">>,_BDF,<<"F">>] = re:split(Params, ","),
+    [_BDf,<<"f">>,BDM,<<"M">>,_BDF,<<"F">>] = binary:split(Params,<<",">>,[global]),
     DM = safe_binary_to_float(BDM),
     {nmea, {dbt, DM}}
   catch
     error:_ -> {error, {parseError, dbt, Params}}
-  end.      
+  end;
+
+extract_nmea(Cmd, _) ->
+  {error, {notsupported, Cmd}}.
 
 safe_fmt(Fmts,Values) ->
   lists:map(fun({_,nothing}) -> "";
                ({Fmt,V}) ->
                 T = hd(lists:reverse(Fmt)),
                 Value = case T of $f -> float(V); _ -> V end,
-                flatten(io_lib:format(Fmt,[Value]))
+                (io_lib:format(Fmt,[Value]))
             end, lists:zip(Fmts,Values)).
 
 safe_fmt(Fmts, Values, Join) ->
@@ -794,7 +1003,7 @@ safe_fmt(Fmts, Values, Join) ->
                  ({Fmt,V},Acc)     ->
                   T = hd(lists:reverse(Fmt)),
                   Value = case T of $f -> float(V); _ -> V end,
-                  [Join, lists:flatten(io_lib:format(Fmt,[Value])) | Acc]
+                  [Join, (io_lib:format(Fmt,[Value])) | Acc]
               end, "", Z).
 
 
@@ -821,16 +1030,16 @@ lon_format(Lon) ->
   io_lib:format(",~3.10.0B~10.7.0f,~s",[LonHH,float(LonMM),E]).
 
 %% hhmmss.ss,xx,xx,xxxx,xx,xx
-%% hhmmss.ss = UTC 
-%% xx = Day, 01 to 31 
-%% xx = Month, 01 to 12 
-%% xxxx = Year 
-%% xx = Local zone description, 00 to +/- 13 hours 
+%% hhmmss.ss = UTC
+%% xx = Day, 01 to 31
+%% xx = Month, 01 to 12
+%% xxxx = Year
+%% xx = Local zone description, 00 to +/- 13 hours
 %% xx = Local zone minutes description (same sign as hours)
 build_zda(UTC,DD,MM,YY,Z1,Z2) ->
   SUTC = utc_format(UTC),
   SDate = io_lib:format(",~2.10.0B,~2.10.0B,~4.10.0B,~2.10.0B,~2.10.0B", [DD,MM,YY,Z1,Z2]),
-  flatten(["GPZDA", SUTC, SDate]).
+  (["GPZDA", SUTC, SDate]).
 
 %% Example: $GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
 build_rmc(UTC,Status,Lat,Lon,Speed,Tangle,Date,Magvar) ->
@@ -842,21 +1051,21 @@ build_rmc(UTC,Status,Lat,Lon,Speed,Tangle,Date,Magvar) ->
   SDate = io_lib:format("~2.10.0B~2.10.0B~2.10.0B",[DD,MM,YY rem 100]),
   ME = case Magvar < 0 of true -> "W"; _ -> "E" end,
   SRest = safe_fmt(["~5.1.0f","~5.1.0f","~s","~5.1.0f","~s"], [Speed,Tangle,SDate,abs(Magvar),ME], ","),
-  flatten(["GPRMC",SUTC,SStatus,SLat,SLon,SRest]).
+  (["GPRMC",SUTC,SStatus,SLat,SLon,SRest]).
 
 %% hhmmss.ss,llll.ll,a,yyyyy.yy,a,x,xx,x.x,x.x,M, x.x,M,x.x,xxxx
 build_gga(UTC,Lat,Lon,Q,Sat,HDil,Alt,Geoid,Age,ID) ->
   SUTC = utc_format(UTC),
   SLat = lat_format(Lat),
   SLon = lon_format(Lon),
-  SRest = safe_fmt(["~B","~2.10.0B","~.1.0f","~.1.0f","~s","~.1.0f","~s","~.1.0f","~4.4.0B"],
+  SRest = safe_fmt(["~B","~2.10.0B","~.1.0f","~.1.0f","~s","~.1.0f","~s","~.1.0f","~4.10.0B"],
                    [Q,Sat,HDil,Alt,"M",Geoid,"M",Age,ID],","),
-  flatten(["GPGGA",SUTC,SLat,SLon,SRest]).
+  (["GPGGA",SUTC,SLat,SLon,SRest]).
 
 build_evolbl(Type,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure) ->
   S = safe_fmt(["~s","~s","~B","~B","~.7.0f","~.7.0f","~.2.0f","~.2.0f"],
                [Type,"r",Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure],","),
-  flatten(["PEVOLBL",S,",,,"]).
+  (["PEVOLBL",S,",,,"]).
 
 build_evolbp(UTC, Basenodes, Address, Status, Lat_rad, Lon_rad, Alt, Pressure, SMean, Std) ->
   S = erlang:trunc(UTC),
@@ -872,20 +1081,77 @@ build_evolbp(UTC, Basenodes, Address, Status, Lat_rad, Lon_rad, Alt, Pressure, S
            end,
   SStd = case Std of
            nothing -> "";
-           _ -> lists:flatten(io_lib:format("~.3.0f",[float(Std)]))
+           _ -> (io_lib:format("~.3.0f",[float(Std)]))
          end,
   SRest = safe_fmt(["~B","~s","~s","~.7.0f","~.7.0f","~.2.0f","~.2.0f","~s","~s","~s","~.3.0f","~s"],
                    [Address,Status,"r",Lat_rad,Lon_rad,Alt,Pressure,"","","",SMean,SStd],","),
-  flatten(["PEVOLBP",SUTC,SNodes,SRest]).
+  (["PEVOLBP",SUTC,SNodes,SRest]).
 
 build_simsvt(Total, Idx, Lst) ->
   SPoints = lists:map(fun({D,S}) ->
                           safe_fmt(["~.2.0f","~.2.0f"], [D, S], ",")
                       end, Lst),
-  STail = lists:map(fun(_) -> ",," end, 
+  STail = lists:map(fun(_) -> ",," end,
                     try lists:seq(1,4-length(Lst)) catch _:_ -> [] end),
   SHead = io_lib:format(",~B,~B", [Total, Idx]),
-  flatten(["PSIMSVT,P",SHead,SPoints,STail]).
+  (["PSIMSVT,P",SHead,SPoints,STail]).
+
+%% Example: $PSXN,23,0.02,-0.76,330.56,*0B
+build_sxn(23,Roll,Pitch,Heading,Heave) ->
+  SRest = safe_fmt(["~.2f","~.2f","~.2f","~.2f"],
+                   [Roll,Pitch,Heading,Heave], ","),
+  (["PSXN,23",SRest]).
+
+%% $PSAT,HPR,TIME,HEADING,PITCH,ROLL,TYPE*CC<CR><LF>
+build_sat(hpr,UTC,Heading,Pitch,Roll,Type) ->
+  SUTC = utc_format(UTC),
+  SHPR = safe_fmt(["~.2f","~.2f","~.2f"], [Heading,Pitch,Roll], ","),
+  SType = case Type of gps -> ",N"; gyro -> ",G"; _ -> "," end,
+  % почему не ставится запятая перед SType? почему она ставится перед SUTC и SHPR?
+  (["PSAT,HPR",SUTC,SHPR,SType]).
+
+%% $PIXSE,ATITUD,-1.641,-0.490*6D
+build_ixse(atitud,Roll,Pitch) ->
+  SPR = safe_fmt(["~.3f","~.3f"], [Roll,Pitch], ","),
+  (["PIXSE,ATITUD",SPR]).
+
+%% $PIXSE,POSITI,53.10245714,8.83994382,-0.115*71
+build_ixse(positi,Lat,Lon,Alt) ->
+  SPR = safe_fmt(["~.8f","~.8f","~.3f"], [Lat,Lon,Alt], ","),
+  (["PIXSE,POSITI",SPR]).
+
+%% $PASHR,200345.00,78.00,T,-3.00,+2.00,+0.00,1.000,1.000,1.000,1,1*32
+build_ashr(UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq) ->
+  SUTC = utc_format(UTC),
+  STrue = case True of true -> ",T"; _ -> "," end,
+  SHeading = safe_fmt(["~.2f"], [Heading], ","),
+  % how to printf("%+.2f", Roll); with io:format()?
+  RollFmt = case Roll of N when N >= 0 -> "+~.2f"; _ -> "~.2f" end,
+  PitchFmt = case Pitch of M when M >= 0 -> "+~.2f"; _ -> "~.2f" end,
+  HeadingFmt = case Heading of K when K >= 0 -> "+~.2f"; _ -> "~.2f" end,
+  SRest = safe_fmt([RollFmt,PitchFmt,HeadingFmt,"~.3f","~.3f","~.3f","~B","~B"], [Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq], ","),
+  (["PASHR",SUTC,SHeading,STrue,SRest]).
+
+%% $PRDID,PPP.PP,RRR.RR,xxx.xx
+build_rdid(Pitch,Roll,Heading) ->
+  SPRH = safe_fmt(["~.2f","~.2f","~.2f"], [Pitch,Roll,Heading], ","),
+  (["PRDID",SPRH]).
+
+%% $PHOCT,01,hhmmss.sss,G,AA,HHH.HHH,N,eRRR.RRR,L,ePP.PPP,K,eFF.FFF,M,eHH.HHH,eSS.SSS,eWW.WWW,eZZ.ZZZ,eYY.YYY,eXX.XXX,eQQQ.QQ
+%% NOTE: UTC format has no microseconds (hhmmss.ss)
+build_hoct(1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR) ->
+  F = fun(Val, Fmt) when Val >= 0 -> "+" ++ Fmt; (_, Fmt) -> Fmt end,
+  S = fun(valid) -> ",T"; (invalid) -> ",E"; (initializing) -> ",I"; (_) -> "," end,
+
+  SUTC = utc_format(UTC),
+  SLt  = safe_fmt(["~2.10.0B"], [Lt], ","),
+  SHd  = safe_fmt([F(Hd ,"~6.3.0f")], [Hd], ","),
+  SRl  = safe_fmt([F(Rl ,"~6.3.0f")], [Rl], ","),
+  SPt  = safe_fmt([F(Pt ,"~6.3.0f")], [Pt], ","),
+  SHvI = safe_fmt([F(HvI,"~6.3.0f")], [HvI],","),
+  SRest = safe_fmt([F(Hv,"~6.3.0f"),F(Sr,"~6.3.0f"),F(Sw,"~6.3.0f"),F(HvR,"~6.3.0f"),F(SrR,"~6.3.0f"),F(SwR,"~6.3.0f"),F(HdR,"~7.2.0f")],
+                   [Hv,Sr,Sw,HvR,SrR,SwR,HdR], ","),
+  (["PHOCT,01",SUTC,S(TmS),SLt,SHd,S(HdS),SRl,S(RlS),SPt,S(PtS),SHvI,S(HvS),SRest]).
 
 build_evo(Request) ->
   "PEVO," ++ Request.
@@ -896,32 +1162,32 @@ build_evotdp(Transceiver,Max_range,Sequence,LAx,LAy,LAz,HL,Yaw,Pitch,Roll) ->
            lists:foldl(fun(V,[])  -> [integer_to_list(V)];
                           (V,Acc) -> [integer_to_list(V),":"|Acc]
                        end, "", Sequence)),
-  flatten(["PEVOTDP",
+  (["PEVOTDP",
            safe_fmt(["~B","~B","~s","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f"],
-                    [Transceiver,Max_range,flatten(SLst),LAx,LAy,LAz,HL,Yaw,Pitch,Roll],",")]).
+                    [Transceiver,Max_range,(SLst),LAx,LAy,LAz,HL,Yaw,Pitch,Roll],",")]).
 
 %% $-EVORCM,RX,RX_phy,Src,RSSI,Int,P_src,TS,A1:...:An,TS1:...:TSn,TD1:...TDn,TDOA1:...:TDOAn
 build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS) ->
   SFun = fun(nothing) -> "";
-            (Lst) -> lists:flatten(
+            (Lst) -> (
                        lists:reverse(
                          lists:foldl(fun(V,[])  -> [safe_fmt(["~B"],[V])];
                                         (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
                                      end, "", Lst))) end,
   SRX = utc_format(RX_utc),
-  flatten(["PEVORCM",SRX,
+  (["PEVORCM",SRX,
            safe_fmt(["~B","~B","~.2.0f","~B","~B","~B","~s","~s","~s","~s"],
                     [RX_phy,Src,PSrc,RSSI,Int,TS,SFun(AS),SFun(TSS),SFun(TDS),SFun(TDOAS)],",")]).
 
 %% $-EVOSEQ,sid,total,maddr,range,seq
 build_evoseq(Sid,Total,MAddr,Range,Seq) ->
   SFun = fun(nothing) -> "";
-            (Lst) -> lists:flatten(
+            (Lst) -> (
                        lists:reverse(
                          lists:foldl(fun(V,[])  -> [safe_fmt(["~B"],[V])];
                                         (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
                                      end, "", Lst))) end,
-  flatten(["PEVOSEQ",safe_fmt(["~B","~B","~B","~B","~s"],
+  (["PEVOSEQ",safe_fmt(["~B","~B","~B","~B","~s"],
                               [Sid,Total,MAddr,Range,SFun(Seq)],",")]).
 
 %% $-EVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
@@ -936,7 +1202,7 @@ build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}) ->
                         Acc ++ ":" ++ integer_to_list(Id)
                     end, integer_to_list(hd(Seq)), tl(Seq))
           end,
-  flatten(["PEVOCTL,BUSBL",SLat,SLon,
+  (["PEVOCTL,BUSBL",SLat,SLon,
            safe_fmt(["~.1.0f","~s","~B","~B","~B"],
                     [Alt,SMode,IT,MP,AD],",")]);
 %% $PEVOCTL,SBL,X,Y,Z,Mode,IT,MP,AD
@@ -950,9 +1216,17 @@ build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD}) ->
                     end, integer_to_list(hd(Seq)), tl(Seq));
             _ -> ""
           end,
-  flatten(["PEVOCTL,SBL",
+  (["PEVOCTL,SBL",
            safe_fmt(["~.3.0f","~.3.0f","~.3.0f","~s","~B","~B","~B"],
-                    [X,Y,Z,SMode,IT,MP,AD],",")]).
+                    [X,Y,Z,SMode,IT,MP,AD],",")]);
+%% $PEVOCTL,SUSBL,Seq,MRange,SVel
+build_evoctl(sbl, {Seq, MRange, SVel}) ->
+    SSeq = foldl(fun(Id,Acc) ->
+                         Acc ++ ":" ++ integer_to_list(Id)
+                 end, integer_to_list(hd(Seq)), tl(Seq)),
+  (["PEVOCTL,SUSBL",
+           safe_fmt(["~s","~.1.0f","~.1.0f"],
+                    [SSeq,MRange,SVel],",")]).
 
 %% $-EVORCT,TX,TX_phy,Lat,LatS,Lon,LonS,Alt,S_gps,Pressure,S_pressure,Yaw,Pitch,Roll,S_ahrs,LAx,LAy,LAz,HL
 build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,Ly,Lz},HL) ->
@@ -965,13 +1239,13 @@ build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,
   STX_phy = safe_fmt(["~B"],[TX_phy],","),
   SLat = lat_format(Lat),
   SLon = lon_format(Lon),
-  flatten(["PEVORCT",STX,STX_phy,SLat,SLon,
+  (["PEVORCT",STX,STX_phy,SLat,SLon,
            safe_fmt(["~.2.0f","~s","~.2.0f","~s","~.1.0f","~.1.0f","~.1.0f","~s","~.2.0f","~.2.0f","~.2.0f","~.2.0f"],
                     [Alt,SStatus(GPSS),P,SStatus(PS),Yaw,Pitch,Roll,SStatus(AHRSS),Lx,Ly,Lz,HL], ",")]).
 
 %% $-EVOTAP,Forward,Right,Down,Spare1,Spare2,Spare3
 build_evotap(Forward, Right, Down) ->
-  flatten(["PEVOTAP",
+  (["PEVOTAP",
            safe_fmt(["~.2.0f","~.2.0f","~.2.0f"], [Forward,Right,Down], ","),
            ",,,"]).
 
@@ -982,7 +1256,7 @@ build_evotpc(Pair,Praw,{Ptrans,S_trans},{Yaw,Pitch,Roll,S_ahrs},HL) ->
                (interpolated) -> "I";
                (ready)        -> "N"
             end,
-  flatten(["PEVOTPC",
+  (["PEVOTPC",
            safe_fmt(["~.2.0f","~.2.0f","~.2.0f","~s","~.2.0f","~.2.0f","~.2.0f","~s","~.2.0f"],
                     [Pair,Praw,Ptrans,SStatus(S_trans),Yaw,Pitch,Roll,SStatus(S_ahrs),HL], ",")]).
 
@@ -1013,12 +1287,12 @@ build_evorcp(Type, Status, Substatus, Interval, Mode, Cycles, Broadcast) ->
               inf -> nothing;
               _ -> Cycles
             end,
-  flatten(["PEVORCP",
+  (["PEVORCP",
            safe_fmt(["~s","~s","~s","~.2.0f","~s","~B","~s"], [SType, SStatus, Substatus, Interval, SMode, NCycles, SCast], ","),
            ",,"]).
 
-%% $PEVOSSB,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
-build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
+%% $PEVOSSB,UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel
+build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
   SUTC = utc_format(UTC),
   SS = case S of
          ok -> "OK";
@@ -1034,13 +1308,13 @@ build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel) ->
           filtered -> <<"F">>;
           reconstructed -> <<"R">>
         end,
-  flatten(["PEVOSSB",SUTC,
-           safe_fmt(["~B","~s","~s","~s","~s",Fmt,Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
-                    [TID, SS, Err, SCS, SFS, X, Y, Z, Acc, Pr, Vel], ",")
+  (["PEVOSSB",SUTC,
+           safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~s","~s",Fmt,Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
+                    [TID, DID, SS, Err, SCS, SFS, X, Y, Z, Acc, Pr, Vel], ",")
           ]).
 
-%% $PEVOSSA,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel
-build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
+%% $PEVOSSA,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel
+build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
   SUTC = utc_format(UTC),
   SS = case S of
          ok -> "OK";
@@ -1056,35 +1330,64 @@ build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
           filtered -> <<"F">>;
           reconstructed -> <<"R">>
         end,
-  flatten(["PEVOSSA",SUTC,
-           safe_fmt(["~B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
-                    [TID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
+  (["PEVOSSA",SUTC,
+           safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
+                    [TID, DID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
+          ]).
+
+build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt) ->
+  SUTC = utc_format(UTC),
+  SLat = lat_format(Lat),
+  SLon = lon_format(Lon),
+  SMode = case Mode of
+              measured -> ",M";
+              filtered -> ",F";
+              computed -> ",C"
+          end,
+  [STID, SDID, SAlt] = safe_fmt(["~3.10.0B","~3.10.0B","~.2.0f"],[TID, DID, Alt]),
+  (["PEVOGPS",SUTC,",",STID,",",SDID,SMode,SLat,SLon,",",SAlt]).
+
+build_evorpy(UTC,TID,DID,Mode,Roll,Pitch,Yaw) ->
+  SUTC = utc_format(UTC),
+  SMode = case Mode of
+              measured -> "M";
+              filtered -> "F";
+              computed -> "C"
+          end,
+  (["PEVORPY",SUTC,
+           safe_fmt(["~3.10.0B","~3.10.0B","~s","~.2.0f","~.2.0f","~.2.0f"],
+                    [TID, DID, SMode, Roll, Pitch, Yaw], ",")
           ]).
 
 build_hdg(Heading,Dev,Var) ->
   F = fun(V) -> case V < 0 of true -> {"W",-V}; _ -> {"E",V} end end,
   {DevS,DevA} = F(Dev),
   {VarS,VarA} = F(Var),
-  flatten(["HCHDG",safe_fmt(["~.1.0f","~.1.0f","~s","~.1.0f","~s"],[Heading,DevA,DevS,VarA,VarS],",")]).
+  (["HCHDG",safe_fmt(["~.1.0f","~.1.0f","~s","~.1.0f","~s"],[Heading,DevA,DevS,VarA,VarS],",")]).
 
 build_hdt(Heading) ->
-  flatten(["HCHDT", safe_fmt(["~.1.0f"],[Heading],","),",T"]).
+  (["HCHDT", safe_fmt(["~.1.0f"],[Heading],","),",T"]).
 
 build_xdr(Lst) ->
   F = fun(V) -> if is_integer(V) -> "~B"; true -> "~.1.0f" end end,
-  flatten(["HCXDR", lists:map(fun({Type,Data,Units,Name}) ->
+  (["HCXDR", lists:map(fun({Type,Data,Units,Name}) ->
                                   safe_fmt(["~s",F(Data),"~s","~s"],[Type,Data,Units,Name],",")
                               end, Lst)]).
 
 build_vtg(TMGT,TMGM,Knots) ->
   KMH = if is_number(Knots) -> Knots*0.539956803456; true -> nothing end,
   Fields = safe_fmt(["~5.1.0f","~5.1.0f","~5.1.0f","~5.1.0f"],[TMGT,TMGM,Knots,KMH]),
-  flatten(io_lib:format("GPVTG,~s,T,~s,M,~s,N,~s,K",Fields)).
+  (io_lib:format("GPVTG,~s,T,~s,M,~s,N,~s,K",Fields)).
 
 build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus) ->
-  flatten(["PTNTHPR",
+  (["PTNTHPR",
            safe_fmt(["~.1.0f","~s","~.1.0f","~s","~.1.0f","~s"],
                     [Heading,HStatus,Pitch,PStatus,Roll,RStatus], ",")]).
+
+build_smcs(Roll,Pitch,Heave) ->
+  (["PSMCS",
+           safe_fmt(["~.1.3f","~.1.3f","~.1.2f"],
+                    [Roll,Pitch,Heave], ",")]).
 
 build_dbs(Depth) ->
   Fmts = ["~.2.0f","~.2.0f","~.2.0f"],
@@ -1092,7 +1395,7 @@ build_dbs(Depth) ->
                             nothing -> [nothing, nothing, nothing];
                             _ -> [Depth * 3.2808399, Depth, Depth * 0.546806649]
                           end),
-  flatten(io_lib:format("SDDBS,~s,f,~s,M,~s,F",Fields)).
+  (io_lib:format("SDDBS,~s,f,~s,M,~s,F",Fields)).
 
 build_dbt(Depth) ->
   Fmts = ["~.2.0f","~.2.0f","~.2.0f"],
@@ -1100,7 +1403,30 @@ build_dbt(Depth) ->
                             nothing -> [nothing, nothing, nothing];
                             _ -> [Depth * 3.2808399, Depth, Depth * 0.546806649]
                           end),
-  flatten(io_lib:format("SDDBT,~s,f,~s,M,~s,F",Fields)).
+  (io_lib:format("SDDBT,~s,f,~s,M,~s,F",Fields)).
+
+%% $PSIMSSB,UTC,B01,A,,C,H,M,X,Y,Z,Acc,N,,
+build_simssb(UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2) ->
+  SUTC = utc_format(UTC),
+  SS = case S of
+         ok -> "A";
+         nok -> "V"
+       end,
+  {SCS,SHS,Fmt,Depth} = case CS of
+                lf -> {<<"C">>,<<"H">>,"~.2.0f",Z};
+                enu -> {<<"C">>,<<"E">>,"~.2.0f",Z};
+                ned -> {<<"C">>,<<"N">>,"~.2.0f",Z};
+                geod -> {<<"R">>,<<"G">>,"~.6.0f",-Z}
+        end,
+  SFS = case FS of
+          measured -> <<"M">>;
+          filtered -> <<"F">>;
+          reconstructed -> <<"R">>
+        end,
+  (["PSIMSSB",SUTC,
+           safe_fmt(["B~2.10.0B","~s","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~s","~.2.0f","~.2.0f"],
+                    [Addr, SS, Err, SCS, SHS, SFS, X, Y, Depth, Acc, AddT, Add1, Add2], ",")
+          ]).
 
 from_term_helper(Sentense) ->
   case Sentense of
@@ -1132,16 +1458,22 @@ from_term_helper(Sentense) ->
       build_evorct(TX_utc,TX_phy,GPS,Pressure,AHRS,Lever_arm,HL);
     {evorcm,RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS} ->
       build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS);
-    {evossb,UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel} ->
-      build_evossb(UTC,TID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
-    {evossa,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
-      build_evossa(UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
+    {evossb,UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel} ->
+      build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
+    {evossa,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
+      build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
+    {evogps,UTC,TID,DID,Mode,Lat,Lon,Alt} ->
+      build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt);
+    {evorpy,UTC,TID,DID,Mode,Roll,Pitch,Yaw} ->
+      build_evorpy(UTC,TID,DID,Mode,Roll,Pitch,Yaw);
     {evoseq,Sid,Total,MAddr,Range,Seq} ->
       build_evoseq(Sid,Total,MAddr,Range,Seq);
     {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}} ->
       build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD});
     {evoctl, sbl, {X, Y, Z, Mode, IT, MP, AD}} ->
       build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD});
+    {evoctl, susbl, Args} ->
+      build_evoctl(susbl, Args);
     {hdg,Heading,Dev,Var} ->
       build_hdg(Heading,Dev,Var);
     {hdt,Heading} ->
@@ -1152,10 +1484,28 @@ from_term_helper(Sentense) ->
       build_vtg(TMGT,TMGM,Knots);
     {tnthpr, Heading, HStatus, Pitch, PStatus, Roll, RStatus} ->
       build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus);
+    {smcs, Roll, Pitch, Heave} ->
+      build_smcs(Roll, Pitch, Heave);
+    {sxn,23,Roll,Pitch,Heading,Heave} ->
+      build_sxn(23,Roll,Pitch,Heading,Heave);
+    {sat,hpr,UTC,Heading,Pitch,Roll,Type} ->
+      build_sat(hpr,UTC,Heading,Pitch,Roll,Type);
     {dbs,Depth} ->
       build_dbs(Depth);
     {dbt,Depth} ->
       build_dbt(Depth);
+    {ixse, atitud, Roll, Pitch} ->
+      build_ixse(atitud,Roll,Pitch);
+    {ixse, positi, Lat, Lon, Alt} ->
+      build_ixse(positi,Lat,Lon,Alt);
+    {ashr,UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq} ->
+      build_ashr(UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq);
+    {rdid, Pitch, Roll, Heading} ->
+      build_rdid(Pitch,Roll,Heading);
+    {hoct,1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR} ->
+      build_hoct(1,UTC,TmS,Lt,Hd,HdS,Rl,RlS,Pt,PtS,HvI,HvS,Hv,Sr,Sw,HvR,SrR,SwR,HdR);
+    {simssb, UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2} ->
+      build_simssb(UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2);
     _ -> ""
   end.
 
@@ -1163,14 +1513,14 @@ from_term_helper(Sentense) ->
 from_term({nmea, Sentense}, Cfg) ->
   #{out := OutRule} = Cfg,
   Flag = is_filtered(Sentense, OutRule),
-  Body = if Flag -> from_term_helper(Sentense);
+  Body = if Flag -> flatten(from_term_helper(Sentense));
             true -> ""
          end,
   case length(Body) of
     0 -> [<<>>, Cfg];
     _ ->
       CS = checksum(Body),
-      [list_to_binary(flatten(["$",Body,"*",io_lib:format("~2.16.0B",[CS]),"\r\n"])), Cfg]
+      [list_to_binary((["$",Body,"*",io_lib:format("~2.16.0B",[CS]),"\r\n"])), Cfg]
   end;
 from_term(_, Cfg) -> [<<>>, Cfg].
 
@@ -1186,4 +1536,4 @@ is_filtered(Sentense, Rule) ->
         lists:member(F, Lst)
         orelse (F == is_atom('query') and lists:member(S, Lst)))
   end.
-  
+

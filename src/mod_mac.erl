@@ -46,9 +46,9 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   Module =
   case P = parse_conf(ArgS, Share) of
     mac_burst  -> fsm_mac_burst;
-    csma_alh   -> fsm_csma_alh;
-    cut_lohi   -> fsm_t_lohi;
-    aut_lohi   -> fsm_t_lohi;
+    _ when P == csma_aloha; P == csma_alh -> fsm_csma_aloha;
+    cut_lohi   -> fsm_tlohi;
+    aut_lohi   -> fsm_tlohi;
     dacap      -> fsm_dacap;
     _          -> io:format("!!! ERROR, no MAC protocol with the name ~p~n", [P]),
                   error
@@ -72,7 +72,7 @@ parse_conf(ArgS, Share) ->
   Max_rc_set         = [Retry_count    || {max_retransmit_count, Retry_count} <- ArgS],
 
   PMax        = set_params(PMaxSet, 500), %ms
-  TDect       = set_params(TDectSet, 5),  %ms
+  TDect       = set_params(TDectSet, 200),  %ms
   Sound_speed = set_params(SoundSpeedSet, 1500),  %m
   U           = set_params(DistSet, 3000),  %m
   Tmo_backoff = set_timeouts(Tmo_backoff_set, {1,3}), %s
@@ -80,7 +80,7 @@ parse_conf(ArgS, Share) ->
   {_Tmo_backoff_min, Tmo_backoff_max} = Tmo_backoff,
   Tmo_retransmit =
   case Protocol of
-    csma_alh ->
+    csma_aloha ->
       set_timeouts(Tmo_retransmit_set, {Tmo_backoff_max, 2 * Tmo_backoff_max + 1});
     _ ->
       set_timeouts(Tmo_retransmit_set, {TDect, 2 * TDect + 1})

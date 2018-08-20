@@ -41,7 +41,8 @@ start(Role_ID, Mod_ID, MM) ->
   Cfg = #{filter => net, mode => command, eol => EOL, pid => 0},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
-ctrl(_, Cfg) -> Cfg.
+ctrl({pid, P}, Cfg) -> Cfg#{pid => P};
+ctrl(_,Cfg) -> Cfg.
 
 to_term(Tail, Chunk, Cfg) ->
   role_worker:to_term(?MODULE, Tail, Chunk, Cfg).
@@ -120,7 +121,7 @@ parse_send_payload(Type, Rest, BLen, BPID, Custom, L, Cfg) ->
         end,
       [Tuple | split(Tail, Cfg)];
     _ when Len + 1 =< PLLen ->
-      throw(parse_error);
+      [{raw, L}];
     _ ->
       [{more, L}]
   end.  
