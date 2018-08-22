@@ -369,32 +369,21 @@ handle_blocking(_MM, SM, _Term) ->
       fsm:set_event(SM, eps)
   end.
 
-handle_precontention(_MM, SM, _Term) ->
+handle_precontention(_MM, #sm{event = Event} = SM, _Term) ->
   CR = share:get(SM, cr_time),
-  Event = SM#sm.event,
-  case fsm:check_timeout(SM, precontent_timeout) of
-    true when Event == content; Event == backoff_timeout ->
-      [
-       fsm:set_event(__, eps),
-       fsm:clear_timeout(__, content_timeout),
-       fsm:set_timeout(__, {ms, CR}, content_timeout)
-      ] (SM);
-    false when Event == content; Event == backoff_timeout ->
-      [
-       fsm:set_event(__, eps),
-       fsm:clear_timeout(__, content_timeout),
-       fsm:clear_timeout(__, precontent_timeout),
-       fsm:set_timeout(__, {ms, CR}, content_timeout),
-       fsm:set_timeout(__, {ms, 50}, precontent_timeout)
-      ] (SM);
-    true ->
-      fsm:set_event(SM, eps);
-    _ ->
-      [
-       fsm:set_event(__, eps),
-       fsm:set_timeout(__, {ms, 50}, precontent_timeout)
-      ] (SM)
-  end.
+  Contention_handler =
+    fun(LSM) when Event == content; Event == backoff_timeout ->
+        [
+         fsm:clear_timeout(__, content_timeout),
+         fsm:set_timeout(__, {ms, CR}, content_timeout)
+        ] (LSM);
+       (LSM) -> LSM
+    end,
+  [
+   Contention_handler(__),
+   fsm:maybe_set_timeout(__, {ms, 50}, precontent_timeout),
+   fsm:set_event(__, eps)
+  ] (SM).
        
 handle_contention(_MM, SM, _Term) ->
   case SM#sm.event of
