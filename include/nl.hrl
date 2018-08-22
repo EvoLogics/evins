@@ -223,6 +223,9 @@
        \t\t\tAnswer:
        \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
        "\n\n\n",
+       "========================= Time commands ========================\n",
+       "NL,get,time,monotonic\t\t\t\t-Get monotonic time, time in milliseconds from the start\n"
+       "\n\n\n",
        "========================= Clear commands ========================\n",
        "NL,delete,neighbour,<Addr>\t\t\t-Remove a neighbour from the current neighbour list and updates the routing table\n",
        "NL,clear,statistics,data\t\t\t-Clear the data statistics\n"
