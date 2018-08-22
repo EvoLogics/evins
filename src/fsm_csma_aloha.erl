@@ -37,7 +37,7 @@
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1, handle_event/3, stop/1]).
 
--export([handle_idle/3, handle_alarm/3, handle_sensing/3, handle_backoff/3, handle_transmit/3]).
+-export([handle_idle/3, handle_alarm/3, handle_sensing/3, handle_backoff/3, handle_transmit/3, handle_wait_transmittion/3]).
 
 %%  CSMA-Aloha [1] (Carrier-Sense Multiple Access-Aloha) is an Aloha
 %%  enhancement whereby short random channel sensing periods precede
@@ -89,7 +89,6 @@
 %%  - If sensing phase passed without sendstart/recvstart, it is switched to
 %%    transmit phase, otherwise it switches to backoff
 %%  - After backoff timeout it returns to idle
-%%  - If a node sent data, it decreases the backoff timeout
 %% 3. Sensing phase is a state, where a node senses the channel  if there are
 %%   some activities:
 %%   “BUSY” time between:
@@ -105,39 +104,46 @@
                  [{sendend, idle},
                   {recvend, idle},
                   {transmit, sensing},
-                  {sendstart, backoff},
-                  {recvstart, backoff},
+                  {sendstart, idle},
+                  {recvstart, idle},
                   {backoff_timeout, idle}
                  ]},
 
                 {sensing,
-                 [{sendend, sensing},
-                  {recvend, sensing},
+                 [
                   {transmit, sensing},
-                  {sensing_timeout, transmit},
-                  {recvstart, backoff},
-                  {sendstart, backoff}
-                 ]},
-
-                {transmit,
-                 [{data_sent, idle},
-                  {backoff_timeout, idle}
+                  {backoff_timeout, transmit},
+                  {backoff, backoff},
+                  {sendstart, backoff},
+                  {recvstart, backoff}
                  ]},
 
                 {backoff,
-                 [{backoff_timeout, idle},
-                  {recvstart, backoff},
-                  {sendstart, backoff},
+                 [{backoff_timeout, transmit},
                   {transmit, backoff},
-                  {recvend, backoff},
-                  {sendend, backoff}
+                  {sendstart, backoff},
+                  {recvstart, backoff}
                  ]},
                   
+                {transmit,
+                 [{data_sent, idle},
+                  {transmit, sensing}
+                 ]},
+
+                {wait_transmittion,
+                 [
+                  {sendstart, idle},
+                  {recvstart, backoff},
+                  {transmit, wait_transmittion}
+                 ]},
+
                 {alarm, []}
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> init_backoff(SM).
+init(SM)       ->
+  init_backoff(SM),
+  env:put(SM, channel_state, idle).
 trans()        -> ?TRANS.
 final()        -> [alarm].
 init_event()   -> eps.
@@ -163,6 +169,7 @@ change_backoff(SM, Type) ->
   Exp = share:get(SM, backoff_factor),
   Backoff_Factor =
     case Type of
+      keep -> Exp;
       increment -> Exp + 1;
       decrement -> case ( Exp - 1 > 0 ) of true -> Exp - 1; false -> 0 end
     end,
@@ -287,58 +294,49 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, at_impl, {send, Term});
     {async, Tuple} ->
       fsm:cast(SM, at_impl, {send, Term}),
-      run_hook_handler(MM, SM, Term, process_async(Tuple));
+      NSM =
+        case process_async(Tuple) of
+          E when E == sendstart; E == recvstart ->
+            [
+             fsm:set_event(__, E),
+             env:put(__, channel_state, busy)
+            ] (SM);
+          E when E == sendend; E == recvend ->
+            env:put(SM, channel_state, idle);
+          _ ->
+            SM
+        end,
+      run_hook_handler(MM, NSM, Term, SM#sm.event);
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
   end.
 
 handle_idle(_MM, SM, _) ->
-  case {SM#sm.event, share:get(SM, tx)} of
-    {backoff_timeout, TX} when TX /= nothing ->
-      fsm:set_event(SM, transmit);
-    {backoff_timeout, nothing} ->
-      Backoff = change_backoff(SM, decrement),
-      Timeout = rand:uniform(round(2000 * Backoff)),
-      [
-       fsm:set_event(__, eps),
-       fsm:set_timeout(__, {ms, Timeout}, backoff_timeout)
-      ] (SM);
-    _ ->
-      fsm:set_event(SM, eps)
-  end.
+  fsm:set_event(SM, eps).
 
-handle_sensing(_MM, SM, _) ->
-  case fsm:check_timeout(SM, sensing_timeout) of
-    true -> fsm:set_event(SM, eps);
-    _ ->
-      [
-       fsm:set_timeout(__, {ms, rand:uniform(50)}, sensing_timeout),
-       fsm:set_event(__, eps)
-      ] (SM)
-  end.
-
-handle_backoff(_MM, #sm{event = E} = SM, _) when E == recvstart ->
-  Timeout_handler =
-    fun(LSM) ->
-        case fsm:check_timeout(SM, backoff_timeout) of
-          true -> LSM;
-          _ ->
-            Backoff = change_backoff(SM, increment),
-            Timeout = rand:uniform(round(2000 * Backoff)),
-            fsm:set_timeout(LSM, {ms, Timeout}, backoff_timeout)
-        end
-    end,
+handle_sensing(_MM, #sm{env = #{channel_state := busy}} = SM, _) ->
+  init_backoff(SM),
+  fsm:set_event(SM, backoff);
+handle_sensing(_MM, #sm{env = #{channel_state := idle}} = SM, _) ->
+  init_backoff(SM),
   [
-   Timeout_handler(__),
-   fsm:clear_timeout(__, sensing_timeout),
+   fsm:set_event(__, eps),
+   fsm:maybe_set_timeout(__, {ms, rand:uniform(50)}, backoff_timeout)
+  ] (SM).
+
+handle_backoff(_MM, #sm{event = backoff} = SM, _) ->
+  Backoff = change_backoff(SM, increment),
+  %% Slot time to be function of packet duration?
+  Timeout = rand:uniform(round(2000 * Backoff)),
+  io:format("Set timeout ~p~n", [Timeout]),
+  [
+   fsm:clear_timeout(__, backoff_timeout),
+   fsm:set_timeout(__, {ms, Timeout}, backoff_timeout),
    fsm:set_event(__, eps)
   ] (SM);
 handle_backoff(_MM, SM, _) ->
-  [
-   fsm:clear_timeout(__, sensing_timeout),
-   fsm:set_event(__, eps)
-  ] (SM).
+  fsm:set_event(SM, eps).
 
 handle_transmit(_MM, SM, _) ->
   case share:get(SM, tx) of
@@ -348,15 +346,17 @@ handle_transmit(_MM, SM, _) ->
       ?TRACE(?ID, "MAC_AT_SEND ~p~n", [TX]),
       Transmittion_handler =
         fun(LSM, blocked) ->
-            fsm:set_event(LSM, backoff_timeout); %% to trigger second attempt
+            fsm:set_event(LSM, transmit); %% to trigger second attempt
            (LSM, ok) ->
-            change_backoff(LSM, decrement),
             share:clean(LSM, tx),
             fsm:set_event(LSM, data_sent)
         end,
       fsm:maybe_send_at_command(SM, TX, Transmittion_handler)
   end.
-  
+
+handle_wait_transmittion(_MM, SM, _) ->
+  fsm:set_event(SM, eps).
+
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
   exit({alarm, SM#sm.module}).

@@ -233,6 +233,8 @@ run_hook_handler(MM, SM, Term, Event) ->
   ] (SM).
 
 handle_event(MM, SM, Term) ->
+  ?INFO(?ID, "HANDLE EVENT  ~150p~n~150p~n", [MM, SM]),
+  ?TRACE(?ID, "~p~n", [Term]),
   Pid = share:get(SM, pid),
   case Term of
     {timeout, answer_timeout} ->
@@ -367,15 +369,21 @@ handle_blocking(_MM, SM, _Term) ->
       fsm:set_event(SM, eps)
   end.
 
-handle_precontention(_MM, SM, _Term) ->
-  case fsm:check_timeout(SM, precontent_timeout) of
-    true -> fsm:set_event(SM, eps);
-    _ ->
-      [
-       fsm:set_event(__, eps),
-       fsm:set_timeout(__, {ms, 50}, precontent_timeout)
-      ] (SM)
-  end.
+handle_precontention(_MM, #sm{event = Event} = SM, _Term) ->
+  CR = share:get(SM, cr_time),
+  Contention_handler =
+    fun(LSM) when Event == content; Event == backoff_timeout ->
+        [
+         fsm:clear_timeout(__, content_timeout),
+         fsm:set_timeout(__, {ms, CR}, content_timeout)
+        ] (LSM);
+       (LSM) -> LSM
+    end,
+  [
+   Contention_handler(__),
+   fsm:maybe_set_timeout(__, {ms, 50}, precontent_timeout),
+   fsm:set_event(__, eps)
+  ] (SM).
        
 handle_contention(_MM, SM, _Term) ->
   case SM#sm.event of
@@ -388,12 +396,7 @@ handle_contention(_MM, SM, _Term) ->
       Transmittion_handler =
         fun(LSM, blocked) -> fsm:set_event(LSM, busy);
            (LSM, ok) ->
-            CR = share:get(SM, cr_time),
-            [
-             fsm:clear_timeout(__, content_timeout),
-             fsm:set_timeout(__, {ms, CR}, content_timeout),
-             fsm:set_event(__, eps)
-            ] (LSM)
+           fsm:set_event(LSM, eps)
         end,
       fsm:maybe_send_at_command(SM, Term, Transmittion_handler);
     _ ->
