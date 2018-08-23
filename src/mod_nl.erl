@@ -135,8 +135,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Tmo_sensing  = [Time || {tmo_sensing, Time} <- ArgS],
 
   Max_TTL        = set_params(TTL_Set, 10),
-  Local_Retries  = set_params(Local_Retries_Set, 3),
-  {Tmo_sensing_start, Tmo_sensing_end}    = set_timeouts(Tmo_sensing, {10, 20}),
+  Local_Retries  = set_params(Local_Retries_Set, 3), % optimal 3
+  {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 1}), % optimal {0,1}
 
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),

@@ -119,6 +119,13 @@ nl_extract_subject(<<"set">>, <<"neighbours,", Params/binary>>) ->
       [4] -> [list_to_tuple([binary_to_integer(I) || I <- Item]) || Item <- Lst]
     end,
   {nl, set, neighbours, Neighbours};
+nl_extract_subject(<<"set">>, <<"debug,", Params/binary>>) ->
+  Flag = case Params of
+         <<"on">> -> on;
+         <<"off">> -> off
+       end,
+  {nl,set,debug,Flag};
+
 %% NL,set,polling,[Addr1,...,AddrN]
 %% NL,set,polling,empty
 nl_extract_subject(<<"set">>, <<"polling,empty">>) ->
