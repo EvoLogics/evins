@@ -261,7 +261,7 @@ pop_tq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Q, NQ) ->
       [Pop_handler(__),
        pop_tq_helper(__, Tuple, Q_Tail, NQ)
       ](SM);
-    {_Flag, PkgID, _TTL, Dst, Src, _Payload} ->
+    {dst_reached, PkgID, _TTL, Dst, Src, _Payload} ->
       [Pop_handler(__),
        pop_tq_helper(__, Tuple, Q_Tail, NQ)
       ](SM);
@@ -341,14 +341,14 @@ decrease_TTL_tq(SM, Q, NQ) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
   case Q_Tuple of
     {Flag, PkgID, TTL, Src, Dst, Payload} when Flag =/= dst_reached ->
-      Decreased_TTL = TTL - 1,
-      if Decreased_TTL =< 0 ->
+      NTTL = TTL - 1,
+      if NTTL =< 0 ->
         ?INFO(?ID, "decrease and drop ~p, TTL ~p =< 0 ~n",[Q_Tuple, TTL]),
         [clear_sensing_timeout(__, Q_Tuple),
          decrease_TTL_tq(__, Q_Tail, NQ)
         ](SM);
       true ->
-        Tuple = {Flag, PkgID, Decreased_TTL, Src, Dst, Payload},
+        Tuple = {Flag, PkgID, NTTL, Src, Dst, Payload},
         decrease_TTL_tq(SM, Q_Tail, queue:in(Tuple, NQ))
       end;
     _ ->
@@ -367,7 +367,7 @@ exists_rq_reached(SM, Tuple, {[],[]}) ->
 exists_rq_reached(SM, Tuple = {_, PkgID, _, Src, Dst, _}, Q) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
   case Q_Tuple of
-    {_Flag, PkgID, _QTTL, Dst, Src, _Payload} ->
+    {dst_reached, PkgID, _QTTL, Dst, Src, _Payload} ->
       exists_rq_reached({true, dst_reached});
     _ ->
       exists_rq_reached(SM, Tuple, Q_Tail)
@@ -455,11 +455,11 @@ create_nl_at_command(SM, NL) ->
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Local_address = share:get(SM, local_address),
 
-  {Flag, PkgID, TTL, Src, Dst, Original_Payload} = NL,
+  {Flag, PkgID, TTL, Src, Dst, NL_Payload} = NL,
 
   % TODO: Additional_Info, different protocols have difeferent Header
-  Transmit_Len = byte_size(Original_Payload),
-  Payload = fill_protocol_info_header(Flag, {Transmit_Len, Original_Payload}),
+  Transmit_Len = byte_size(NL_Payload),
+  Payload = fill_protocol_info_header(Flag, {Transmit_Len, NL_Payload}),
 
   NL_Info = {Flag, PkgID, TTL, Src, Dst, Payload},
 
@@ -678,7 +678,7 @@ increase_pkgid(SM, Src, Dst) ->
   Max_Pkg_ID = share:get(SM, max_pkg_id),
   PkgID =
   case share:get(SM, {packet_id, Src, Dst}) of
-    nothing -> 0;
+    nothing -> rand:uniform(Max_Pkg_ID);
     Prev_ID when Prev_ID >= Max_Pkg_ID -> 0;
     (Prev_ID) -> Prev_ID + 1
   end,
