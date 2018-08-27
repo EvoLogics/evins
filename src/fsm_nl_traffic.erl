@@ -272,8 +272,13 @@ stats_to_bin(SM) ->
   Total_recv = share:get(SM, total_recv),
   Total_tx = share:get(SM, total_tx),
 
+  Total_handler =
+  fun() when Total_tx == 0; Total_recv == 0 -> 0.00;
+     () -> Total_tx / Total_recv
+  end,
+
   Total = lists:flatten([io_lib:format("        Total recv:~B / tx:~B -> Energy:~.2f",
-                        [Total_recv, Total_tx, Total_tx / Total_recv]),EOL]),
+                        [Total_recv, Total_tx, Total_handler()]),EOL]),
 
   list_to_binary([Lst, EOL, Tx, EOL, Total, EOL]).
 
@@ -369,7 +374,7 @@ create_payload_data(SM, Src, Dst, Time) ->
   BSrc = <<Src:CBitsAddr>>,
   BDst = <<Dst:CBitsAddr>>,
   BPkgID = <<PkgID:CPkgID>>,
-  Data = integer_to_binary(Time),
+  Data = list_to_binary([integer_to_binary(Src), "->", integer_to_binary(Dst), ":" ,integer_to_binary(Time)]),
   TmpData = <<BSrc/bitstring, BDst/bitstring, BPkgID/bitstring, Data/binary>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
   if Data_bin =:= false ->
