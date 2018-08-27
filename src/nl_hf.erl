@@ -36,15 +36,15 @@
 -include("nl.hrl").
 
 -export([fill_transmission/3, increase_pkgid/3, code_send_tuple/2, create_nl_at_command/2, get_params_timeout/2]).
--export([extract_payload_nl/2, extract_payload_nl_header/2]).
+-export([extract_payload_nl/2, extract_payload_nl_header/2, clear_spec_timeout/2]).
 -export([mac2nl_address/1, num2flag/2, add_neighbours/3]).
 -export([head_transmission/1, exists_received/2, update_received_TTL/2,
          pop_transmission/3, pop_transmission/2, decrease_TTL/1]).
 -export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, clear_event_params/2]).
 % later do not needed to export
 -export([nl2mac_address/1, get_routing_address/3, nl2at/3, create_payload_nl_header/8, flag2num/1, queue_push/4]).
--export([decrease_retries/2, rand_float/2]).
--export([process_set_command/2, process_get_command/2, update_statistics/4, set_processing_time/3,fill_statistics/2]).
+-export([decrease_retries/2, rand_float/2, update_states/1]).
+-export([process_set_command/2, process_get_command/2, set_processing_time/3,fill_statistics/2, fill_statistics/3]).
 
 set_event_params(SM, Event_Parameter) ->
   SM#sm{event_params = Event_Parameter}.
@@ -58,6 +58,17 @@ get_event_params(SM, Event) ->
         true -> nothing
        end
   end.
+
+clear_spec_timeout(SM, Spec) ->
+  TRefList = filter(
+               fun({E, TRef}) ->
+                   case E of
+                     {Spec, _} -> timer:cancel(TRef), false;
+                     Spec -> timer:cancel(TRef), false;
+                     _  -> true
+                   end
+               end, SM#sm.timeouts),
+  SM#sm{timeouts = TRefList}.
 
 clear_event_params(SM, Event) ->
   if SM#sm.event_params =:= [] ->
@@ -78,13 +89,13 @@ get_params_timeout(SM, Spec) ->
      end
   end, SM#sm.timeouts).
 
-code_send_tuple(SM, NL_Send_Tuple) ->
+code_send_tuple(SM, Tuple) ->
   % TODO: change, usig also other protocols
   Protocol_Name = share:get(SM, protocol_name),
   TTL = share:get(SM, ttl),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Local_address = share:get(SM, local_address),
-  {nl, send, Dst, Payload} = NL_Send_Tuple,
+  {nl, send, Dst, Payload} = Tuple,
   PkgID = increase_pkgid(SM, Local_address, Dst),
 
   Flag = data,
@@ -136,6 +147,24 @@ fill_transmission(SM, Type, Tuple) ->
       set_event_params(__, {fill_tq, ok})](SM)
   end.
 
+fill_statistics(SM, _Type, Src) ->
+  Q = share:get(SM, statistics_neighbours),
+  Time = erlang:monotonic_time(milli_seconds),
+
+  Counter_handler =
+  fun (LSM, true) ->
+        Tuple = {Src, Time, 1},
+        [share:put(__, statistics_neighbours, queue:in(Tuple, Q)),
+         share:put(__, neighbours_counter, 1)
+        ](LSM);
+      (LSM, false) ->
+        Total = share:get(SM, neighbours_counter),
+        [share:put(__, neighbours_counter, Total + 1),
+         fill_sq_helper(__, Src, not_inside, Q, queue:new())
+        ](LSM)
+  end,
+  Counter_handler(SM, queue:is_empty(Q)).
+
 fill_statistics(SM, {dst_reached, _, _, _, _, _}) ->
   SM;
 fill_statistics(SM, Tuple) ->
@@ -145,7 +174,7 @@ fill_statistics(SM, Tuple) ->
 
   Role_handler =
   fun (A) when Src == A -> source;
-      (A) when Dst == A -> destination;
+      (A) when Dst == A; Dst == ?ADDRESS_MAX -> destination;
       (_A) -> relay
   end,
 
@@ -153,6 +182,22 @@ fill_statistics(SM, Tuple) ->
   Role = Role_handler(Local_Address),
   fill_sq_helper(SM, Role, Tuple, not_inside, Q, queue:new()).
 
+fill_sq_helper(SM, Src, not_inside, {[],[]}, NQ) ->
+  Time = erlang:monotonic_time(milli_seconds),
+  share:put(SM, statistics_neighbours, queue:in({Src, Time, 1}, NQ));
+fill_sq_helper(SM, _Src, inside, {[],[]}, NQ) ->
+  share:put(SM, statistics_neighbours, NQ);
+fill_sq_helper(SM, Src, Inside, Q, NQ) ->
+  Time = erlang:monotonic_time(milli_seconds),
+  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  case Q_Tuple of
+    {Src, _, Count} ->
+      PQ = queue:in({Src, Time, Count + 1}, NQ),
+      fill_sq_helper(SM, Src, inside, Q_Tail, PQ);
+    _ ->
+      PQ = queue:in(Q_Tuple, NQ),
+      fill_sq_helper(SM, Src, Inside, Q_Tail, PQ)
+  end.
 fill_sq_helper(SM, _Role, _Tuple, inside, {[],[]}, NQ) ->
   share:put(SM, statistics_queue, NQ);
 fill_sq_helper(SM, Role, Tuple, not_inside, {[],[]}, NQ) ->
@@ -185,21 +230,21 @@ set_pt_helper(SM, Type, Tuple, Q, NQ) ->
       {Stored_Flag, PkgID, TTL, Dst, Src, Stored_Payload}} when Type == transmitted,
                                                                 Flag == dst_reached ->
       NL_Recv_Tuple = {Stored_Flag, PkgID, TTL, Src, Dst, Stored_Payload},
-      Statistics_Tuple = {Current_Time, Recv_Time, destination, NL_Recv_Tuple},
-      Processed_Q = queue_push(NQ, Statistics_Tuple, ?Q_STATISTICS_SIZE),
-      set_pt_helper(SM, Type, Tuple, Q_Tail, Processed_Q);
+      Statistic = {Current_Time, Recv_Time, destination, NL_Recv_Tuple},
+      PQ = queue_push(NQ, Statistic, ?Q_STATISTICS_SIZE),
+      set_pt_helper(SM, Type, Tuple, Q_Tail, PQ);
     {_Send_Time, Recv_Time, Role, {Flag, PkgID, _TTL, Src, Dst, Payload}} when Type == transmitted ->
-      Statistics_Tuple = {Current_Time, Recv_Time, Role, Tuple},
-      Processed_Q = queue_push(NQ, Statistics_Tuple, ?Q_STATISTICS_SIZE),
-      set_pt_helper(SM, Type, Tuple, Q_Tail, Processed_Q);
+      Statistic = {Current_Time, Recv_Time, Role, Tuple},
+      PQ = queue_push(NQ, Statistic, ?Q_STATISTICS_SIZE),
+      set_pt_helper(SM, Type, Tuple, Q_Tail, PQ);
     {Send_Time, _Recv_Time, Role, {Flag, PkgID, _TTL, Src, Dst, Payload}} when Type == received,
                                                                                Flag =/= dst_reached ->
-      Statistics_Tuple = {Send_Time, Current_Time, Role, Tuple},
-      Processed_Q = queue_push(NQ, Statistics_Tuple, ?Q_STATISTICS_SIZE),
-      set_pt_helper(SM, Type, Tuple, Q_Tail, Processed_Q);
+      Statistic = {Send_Time, Current_Time, Role, Tuple},
+      PQ = queue_push(NQ, Statistic, ?Q_STATISTICS_SIZE),
+      set_pt_helper(SM, Type, Tuple, Q_Tail, PQ);
     _ ->
-      Processed_Q = queue_push(NQ, Q_Tuple, ?Q_STATISTICS_SIZE),
-      set_pt_helper(SM, Type, Tuple, Q_Tail, Processed_Q)
+      PQ = queue_push(NQ, Q_Tuple, ?Q_STATISTICS_SIZE),
+      set_pt_helper(SM, Type, Tuple, Q_Tail, PQ)
   end.
 
 head_transmission(SM) ->
@@ -406,7 +451,9 @@ update_TTL_rq_helper(SM, Tuple = {Flag, PkgID, TTL, Src, Dst, Payload}, Q, NQ) -
 %%----------------------------Converting NL -------------------------------
 %TOD0:!!!!
 % return no_address, if no info
+nl2mac_address(?ADDRESS_MAX) -> 255;
 nl2mac_address(Address) -> Address.
+mac2nl_address(255) -> ?ADDRESS_MAX;
 mac2nl_address(Address) -> Address.
 
 flag2num(Flag) when is_atom(Flag)->
@@ -714,6 +761,18 @@ add_neighbours(SM, Src, {Rssi, Integrity}) ->
   end.
 
 %%--------------------------------------------------  command functions -------------------------------------------
+update_states(SM) ->
+  Q = share:get(SM, last_states),
+  Max = 50,
+  QP =
+  case queue:len(Q) of
+    Len when Len >= Max ->
+      queue:in({SM#sm.state, SM#sm.event}, queue:drop(Q));
+    _ ->
+      queue:in({SM#sm.state, SM#sm.event}, Q)
+  end,
+  share:put(SM, last_states, QP).
+
 process_set_command(SM, Command) ->
   Protocol_Name = share:get(SM, protocol_name),
   Cast =
@@ -721,6 +780,8 @@ process_set_command(SM, Command) ->
     {address, Address} when is_integer(Address) ->
       share:put(SM, local_address, Address),
       {nl, address, Address};
+    {address, _Address} ->
+      {nl, address, error};
     {protocol, Name} ->
       case lists:member(Name, ?LIST_ALL_PROTOCOLS) of
         true ->
@@ -768,30 +829,32 @@ process_set_command(SM, Command) ->
 process_get_command(SM, Command) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol = share:get(SM, protocol_config, Protocol_Name),
-  Neighbours_Channel = share:get(SM, neighbours_channel),
-  Statistics_Queue = share:get(SM, statistics_queue),
-  Statistics_Queue_Empty = queue:is_empty(Statistics_Queue),
+  N_Channel = share:get(SM, neighbours_channel),
+  Statistics = share:get(SM, statistics_queue),
+  Statistics_Empty = queue:is_empty(Statistics),
+
   Cast =
   case Command of
     protocols ->
       {nl, Command, ?LIST_ALL_PROTOCOLS};
     states ->
-      Last_states = share:get(SM, last_states),
-      {nl, states, queue:to_list(Last_states)};
+      States = queue:to_list(share:get(SM, last_states)),
+      {nl, states, States};
     state ->
       {nl, state, {SM#sm.state, SM#sm.event}};
     address ->
       {nl, address, share:get(SM, local_address)};
-    neighbours when Neighbours_Channel == nothing;
-                    Neighbours_Channel == [] ->
+    neighbours when N_Channel == nothing;
+                    N_Channel == [] ->
       {nl, neighbours, empty};
     neighbours ->
-      {nl, neighbours, Neighbours_Channel};
+      {nl, neighbours, N_Channel};
     routing ->
       {nl, routing, routing_to_list(SM)};
     {protocolinfo, Name} ->
       {nl, protocolinfo, Name, get_protocol_info(SM, Name)};
     {statistics, paths} when Protocol#pr_conf.pf ->
+      %TODO, implement protocols pf
       Paths =
         lists:map(fun({{Role, Path}, Duration, Count, TS}) ->
                       {Role, Path, Duration, Count, TS}
@@ -801,13 +864,16 @@ process_get_command(SM, Command) ->
     {statistics, paths} ->
       {nl, statistics, paths, error};
     {statistics, neighbours} ->
+      Total = share:get(SM, neighbours_counter),
       Neighbours =
-        lists:map(fun({{Role, Address}, _Time, Count, TS}) ->
-                      {Role, Address, Count, TS}
-                  end, queue:to_list(share:get(SM, nothing, st_neighbours, empty))),
+        lists:map(fun({Address, Time, Count}) ->
+                    Duration = from_start(SM, Time),
+                    {Address,Duration,Count,Total}
+                  end, queue:to_list(share:get(SM, nothing, statistics_neighbours, empty))),
       Answer = case Neighbours of []  -> empty; _ -> Neighbours end,
       {nl, statistics, neighbours, Answer};
     {statistics, data} when Protocol#pr_conf.ack ->
+      %TODO, other format with propogation time
       Data =
         lists:map(fun({{Role, Payload}, Time, Length, State, TS, Dst, Hops}) ->
                       TRole = case Role of source -> source; _ -> relay end,
@@ -816,34 +882,30 @@ process_get_command(SM, Command) ->
                   end, queue:to_list(share:get(SM, nothing, st_data, empty))),
       Answer = case Data of []  -> empty; _ -> Data end,
       {nl, statistics, data, Answer};
-    {statistics, data} when not Statistics_Queue_Empty ->
+    {statistics, data} when not Statistics_Empty ->
       Data =
-        lists:map(fun({Send_Timestamp, Recv_Timestamp, Role, Tuple}) ->
+        lists:map(fun({STimestamp, RTimestamp, Role, Tuple}) ->
                       {_Flag, _PkgID, TTL, Src, Dst, Payload} = Tuple,
-
-                      Time_handler =
-                      fun(Time) when Time == empty -> 0;
-                         (Time) -> Time - share:get(SM, nl_start_time)
-                      end,
-
-                      Send_Time = Time_handler(Send_Timestamp),
-                      Recv_Time = Time_handler(Recv_Timestamp),
+                      Send_Time = from_start(SM, STimestamp),
+                      Recv_Time = from_start(SM, RTimestamp),
 
                       <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
                       {Role, Hash, Send_Time, Recv_Time, Src, Dst, TTL}
-                  end, queue:to_list(Statistics_Queue)),
+                  end, queue:to_list(Statistics)),
       Answer = case Data of []  -> empty; _ -> Data end,
       {nl, statistics, data, Answer};
     {statistics, data} ->
       {nl, statistics, data, empty};
     {delete, neighbour, Address} ->
-      Current_Neighbours = share:get(SM, current_neighbours),
-      delete_neighbour(SM, Address, Current_Neighbours),
+      delete_neighbour(SM, Address),
       {nl, neighbour, ok};
     _ ->
       {nl, error}
   end,
   fsm:cast(SM, nl_impl, {send, Cast}).
+
+from_start(_SM, Time) when Time == empty -> 0;
+from_start(SM, Time) -> Time - share:get(SM, nl_start_time).
 
 get_protocol_info(SM, Name) ->
   Conf = share:get(SM, protocol_config, Name),
@@ -862,9 +924,44 @@ get_protocol_info(SM, Name) ->
                 end, [], ?LIST_ALL_PARAMS),
   lists:reverse(Prop_list).
 
-delete_neighbour(SM, _Address, _Neighbours) ->
-  %TODO
-  SM.
+delete_neighbour(SM, Address) ->
+  Neighbours = share:get(SM, current_neighbours),
+  N_Channel = share:get(SM, neighbours_channel),
+  Routing_handler =
+    fun (LSM, ?ADDRESS_MAX) -> LSM;
+        (LSM, Routing_table) ->
+          NRouting_table =
+          lists:filtermap(fun(X) ->
+                case X of
+                  {_, Address} -> false;
+                  Address -> false;
+                  _ -> {true, X}
+          end end, Routing_table),
+          share:put(LSM, routing_table, NRouting_table)
+    end,
+
+  Channel_handler =
+    fun(LSM, false) ->
+        PN_Channel = lists:delete(Address, N_Channel),
+        share:put(LSM, neighbours_channel, PN_Channel);
+       (LSM, Element) ->
+        PN_Channel = lists:delete(Element, N_Channel),
+        share:put(LSM, neighbours_channel, PN_Channel)
+    end,
+
+  Neighbour_handler =
+    fun(LSM, true) ->
+        PNeighbours = lists:delete(Address, Neighbours),
+
+        [share:put(__, current_neighbours, PNeighbours),
+         Routing_handler(__, share:get(SM, routing_table)),
+         Channel_handler(__, lists:keyfind(Address, 1, N_Channel))
+        ] (LSM);
+       (LSM, false) ->
+        LSM
+    end,
+
+  Neighbour_handler(SM, lists:member(Address, Neighbours)).
 
 routing_to_list(SM) ->
   Routing_table = share:get(SM, routing_table),
@@ -878,16 +975,3 @@ routing_to_list(SM) ->
                          (To) -> {true, {default, To}}
                       end, Routing_table)
   end.
-
-update_statistics(SM, _Type, _Src, S={Real_Src, Real_Dst}) ->
-  ?INFO(?ID, "update_statistics STATS ~p~n", [S]),
-  %{Time, Role, TSC, _Addrs} =
-  get_statistics_time(SM, Real_Src, Real_Dst),
-  SM.
-
-get_statistics_time(SM, _Src, _Dst) ->
-  Q = share:get(SM, statistics_queue),
-  ?INFO(?ID, "!!!!!!!!! STATS ~p~n", [Q]),
-  SM.
-
-

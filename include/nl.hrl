@@ -213,17 +213,22 @@
        "======================== Statistics commands for protocols of all types ========================\n",
        "NL,get,statistics,neighbours\t\t\t- Get statistics of all neighbours from start of program till the current time
        \t\t\tAnswer:
-       \t\t\t<Role : relay or source><Neighbours><Duration find path><Count found this path><Total count try findpath>\n"
+       \t\t\tneighbour:<Neighbour>nast update:<Time>count:<Count>Total count:<Total count>\n"
        "\n",
        "================== Statistics commands only for protocols of path finding type ==================\n",
        "NL,get,statistics,paths\t\t\t\t- Get statistics of all paths from start of program till the current time
        \t\t\tAnswer:
        \t\t\t<Role : relay or source><Path><Duration find path><Count found this path><Total count try findpath>\n"
        "\n",
+       "========================= Statistics commands only for protocols without ack ========================\n",
+       "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time
+       \t\t\tAnswer:
+       \t\t\t<relay/source/destination><Data> send_time:<Time> recv_time:<Time> src:<Address> dst:<Address> last_ttl:<TTL>"
+       "\n\n\n",
        "========================= Statistics commands only for protocols with ack ========================\n",
        "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time
        \t\t\tAnswer:
-       \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
+       \t\t\t<relay or source> data:<Data> len:<Len> duration:<Time between data transmission and getting ack> state:<Delivered/Failed> total:<Tries> dst:<Adderss> hops:<Hops>"
        "\n\n\n",
        "========================= Time commands ========================\n",
        "NL,get,time,monotonic\t\t\t\t-Get monotonic time, time in milliseconds from the start\n"

@@ -72,7 +72,7 @@ parse_conf(ArgS, Share) ->
   Max_rc_set         = [Retry_count    || {max_retransmit_count, Retry_count} <- ArgS],
 
   PMax        = set_params(PMaxSet, 500), %ms
-  TDect       = set_params(TDectSet, 200),  %ms
+  TDect       = set_params(TDectSet, 5),  %ms
   Sound_speed = set_params(SoundSpeedSet, 1500),  %m
   U           = set_params(DistSet, 3000),  %m
   Tmo_backoff = set_timeouts(Tmo_backoff_set, {1,3}), %s

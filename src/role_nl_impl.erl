@@ -93,7 +93,8 @@ nl_send_extract(L, Cfg) ->
           end,
         [Tuple | split(Tail, Cfg)];
       _ when Len + 1 =< PLLen ->
-        [{nl, error, {parseError, L}}];
+        %[{nl, error, {parseError, L}}];
+        [{nl, send, error}];
       _ ->
         [{more, L}]
     end
@@ -186,6 +187,9 @@ from_term({nl, neighbours, Neighbours}, Cfg) when is_list(Neighbours) ->
 from_term({nl, state, {State, Event}}, Cfg) ->
   [list_to_binary(["NL,state,",atom_to_list(State),$(,atom_to_list(Event),$),Cfg#config.eol]), Cfg];
 %% NL,states,<EOL>State1(Event1)<EOL>...StateN(EventN)<EOL><EOL>
+from_term({nl, states, []}, Cfg) ->
+  EOL = Cfg#config.eol,
+  [list_to_binary(["NL,states,empty",EOL]), Cfg];
 from_term({nl, states, Transitions}, Cfg) ->
   EOL = Cfg#config.eol,
   TransitionsLst =
@@ -212,8 +216,8 @@ from_term({nl,statistics,Type,Report}, Cfg) when is_atom(Type), is_atom(Report) 
 from_term({nl,statistics,neighbours,Neighbours}, Cfg) ->
   EOL = Cfg#config.eol,
   NeighboursLst =
-    lists:map(fun({Role,Neighbour,Count,Total}) ->
-                  lists:flatten([io_lib:format(" ~p neighbour:~B count:~B total:~B",[Role,Neighbour,Count,Total]),EOL])
+    lists:map(fun({Neighbour,Time,Count,Total}) ->
+                  lists:flatten([io_lib:format("neighbour:~p last update:~B count:~B total:~B",[Neighbour,Time,Count,Total]),EOL])
               end, Neighbours),
   [list_to_binary(["NL,statistics,neighbours,",EOL,NeighboursLst,EOL]), Cfg];
 %% NL,statistics,paths,<EOL> <relay or source> path:<path> duration:<duration> count:<count> total:<total><EOL>...<EOL><EOL>

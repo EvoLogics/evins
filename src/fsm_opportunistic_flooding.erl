@@ -69,11 +69,13 @@
 -define(TRANS, [
                 {idle,
                  [{relay, transmit},
-                 {send, transmit}
+                 {send, transmit},
+                 {reset, idle}
                  ]},
 
                 {transmit,
-                 [{transmitted, sensing}
+                 [{transmitted, sensing},
+                 {reset, idle}
                  ]},
 
                 {sensing,
@@ -81,14 +83,16 @@
                   {send, sensing},
                   {sensing_timeout, collision},
                   {pick, transmit},
-                  {idle, idle}
+                  {idle, idle},
+                  {reset, idle}
                  ]},
 
                 {collision,
                  [{relay, collision},
                   {send, collision},
                   {pick, transmit},
-                  {idle, idle}
+                  {idle, idle},
+                  {reset, idle}
                  ]},
 
                 {alarm, []}
@@ -137,18 +141,23 @@ handle_event(MM, SM, Term) ->
         process_async(SM, Notification);
       {nl, send, Local_Address, _Payload} ->
         fsm:cast(SM, nl_impl, {send, {nl, send, error}});
+      {nl, send, error} ->
+        fsm:cast(SM, nl_impl, {send, {nl, send, error}});
       {nl, send, _IDst, _Payload} ->
         [process_nl_send(__, Term),
         fsm:run_event(MM, __, {})](SM);
       {nl, error, _} ->
         fsm:cast(SM, nl_impl, {send, {nl, error}});
       {nl, reset, state} ->
-        fsm:cast(SM, at, {send, {at, "Z1", ""}}),
-        fsm:cast(SM, nl_impl, {send, {nl, state, ok}}),
-        SM#sm{state = idle};
+        [nl_hf:clear_spec_timeout(__, sensing_timeout),
+         nl_hf:clear_spec_timeout(__, relay),
+         fsm:cast(__, nl_impl, {send, {nl, state, ok}}),
+         fsm:set_event(__, reset),
+         fsm:run_event(MM, __, {})
+        ](SM);
       {nl, clear, statistics, data} ->
-        share:clean(SM, st_data),
-        share:put(SM, st_data, queue:new()),
+        share:put(SM, statistics_queue, queue:new()),
+        share:put(SM, statistics_neighbours, queue:new()),
         fsm:cast(SM, nl_impl, {send, {nl, statistics, data, empty}});
       {nl, set, debug, ON} ->
         share:put(SM, debug, ON),
@@ -181,6 +190,14 @@ handle_event(MM, SM, Term) ->
         nl_hf:process_get_command(SM, Command);
       {nl, delete, neighbour, Address} ->
         nl_hf:process_get_command(SM, {delete, neighbour, Address});
+      UUg when MM#mm.role == nl_impl ->
+      case tuple_to_list(Term) of
+        [nl | _] ->
+          fsm:cast(SM, nl_impl, {send, {nl, error}});
+        _ ->
+          ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
+          SM
+      end;
       UUg ->
         ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
         SM
@@ -194,30 +211,34 @@ init_flood(SM) ->
   share:put(SM, [{path_exists, false},
                  {list_current_wvp, []},
                  {current_neighbours, []},
+                 {neighbours_channel, []},
                  {s_total_sent, 1},
                  {r_total_sent, 1},
                  {last_states, queue:new()},
                  {pr_states, queue:new()},
                  {paths, queue:new()},
-                 {st_neighbours, queue:new()},
                  {st_data, queue:new()},
                  {retries_queue, queue:new()},
                  {received_queue, queue:new()},
                  {transmission_queue, queue:new()},
+                 {statistics_neighbours, queue:new()},
                  {statistics_queue, queue:new()}]),
   nl_hf:init_dets(SM).
 %%------------------------------------------ Handle functions -----------------------------------------------------
 handle_idle(_MM, SM, Term) ->
   ?INFO(?ID, "idle state ~120p~n", [Term]),
+  nl_hf:update_states(SM),
   fsm:set_event(SM, eps).
 
 handle_transmit(_MM, SM, Term) ->
   ?INFO(?ID, "transmit state ~120p~n", [Term]),
+  nl_hf:update_states(SM),
   Head = nl_hf:head_transmission(SM),
   try_transmit(SM, Head).
 
 handle_sensing(_MM, SM, _Term) ->
   ?INFO(?ID, "sensing state ~120p~n", [SM#sm.event]),
+  nl_hf:update_states(SM),
   case SM#sm.event of
     transmitted ->
       maybe_transmit_next(SM);
@@ -229,6 +250,7 @@ handle_sensing(_MM, SM, _Term) ->
 
 handle_collision(_MM, SM, _Term) ->
   ?INFO(?ID, "collision state ~p~n", [SM#sm.event]),
+  nl_hf:update_states(SM),
   case SM#sm.event of
     sensing_timeout ->
       % 1. decreace TTL for every packet in the queue
@@ -316,9 +338,9 @@ process_overheared_packet(SM, Tuple) ->
       {RSrc, RRssi, RIntegrity}
   end,
 
-  AT_Src  = nl_hf:mac2nl_address(Src),
-  [nl_hf:update_statistics(__, overheared, AT_Src, {nothing, nothing}),
-   nl_hf:add_neighbours(__, AT_Src, {Rssi, Integrity})
+  NL_Src  = nl_hf:mac2nl_address(Src),
+  [nl_hf:fill_statistics(__, overheared, NL_Src),
+   nl_hf:add_neighbours(__, NL_Src, {Rssi, Integrity})
   ](SM).
 
 process_received_packet(SM, Tuple) ->
@@ -327,11 +349,15 @@ process_received_packet(SM, Tuple) ->
   {recv, _, Src, Dst, _, _, Rssi, Integrity, _, Payload} ->
     NL_Src  = nl_hf:mac2nl_address(Src),
     In_Blacklist = lists:member(NL_Src, Blacklist),
-    process_received_packet(SM, In_Blacklist, {Src, Dst, Rssi, Integrity, Payload});
+    [nl_hf:fill_statistics(__, neighbours, NL_Src),
+     process_received_packet(__, In_Blacklist, {Src, Dst, Rssi, Integrity, Payload})
+    ](SM);
   {recvim, _, Src, Dst, _, _, Rssi, Integrity, _, Payload} ->
     NL_Src  = nl_hf:mac2nl_address(Src),
     In_Blacklist = lists:member(NL_Src, Blacklist),
-    process_received_packet(SM, In_Blacklist, {Src, Dst, Rssi, Integrity, Payload});
+    [nl_hf:fill_statistics(__, neighbours, NL_Src),
+     process_received_packet(__, In_Blacklist, {Src, Dst, Rssi, Integrity, Payload})
+    ](SM);
   _ ->
     fsm:set_event(SM, eps)
 end.
@@ -380,12 +406,13 @@ packet_handler(SM, true, {Src, _Dst, Rssi, Integrity, Payload}) ->
   [process_package(__, Flag, Tuple),
    check_if_processed(__, NL_AT_Src, Tuple),
    nl_hf:set_processing_time(__, received, Tuple),
-   nl_hf:update_statistics(__, st_neighbours, NL_AT_Src, {NL_Src, NL_Dst}),
    nl_hf:add_neighbours(__, NL_AT_Src, {Rssi, Integrity}),
    nl_hf:clear_event_params(__, if_processed)
   ](SM).
 
 check_if_processed(SM, _NL_AT_Src, Tuple) ->
+  Protocol_Name = share:get(SM, protocol_name),
+  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Local_Address = share:get(SM, local_address),
   {_Flag, Pkg_ID, _TTL, NL_Src, NL_Dst, Tail} = Tuple,
 
@@ -409,6 +436,13 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
 
   ?INFO(?ID, "Ret process_package ~p - ~p: Sensing_Timeout ~p~n",[If_Processed, Tuple, Sensing]),
   case If_Processed of
+      {if_processed, not_processed} when NL_Dst =:= ?ADDRESS_MAX,
+                                         not Protocol_Config#pr_conf.br_na ->
+        [nl_hf:fill_statistics(__, Tuple),
+         nl_hf:fill_transmission(__, fifo, Tuple),
+         fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, ?ADDRESS_MAX, Tail}}),
+         Relay_handler(__)
+        ](SM);
       {if_processed, not_processed} when NL_Dst =:= Local_Address ->
         Dst_Tuple = {dst_reached, Pkg_ID, 0, NL_Dst, NL_Src, <<"d">>},
         [nl_hf:fill_statistics(__, Tuple),
