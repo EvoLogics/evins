@@ -485,12 +485,15 @@ handle_poller_transmit(_MM, #sm{event = next_packet} = SM, Term) ->
   {send, {_, Dst}} = Send_params,
   [NTail, Type, LocalPC, Payload] = create_polled_data(SM, Tail, <<"CDB">>),
   PC = share:get(SM, pc),
-  PCS = share:get(SM, poller_async_pcs),
+  PCS = share:get(SM, nothing, poller_async_pcs, []),
   PC_handler =
   fun (LSM, true) -> LSM;
-      (LSM, _) -> share:put(LSM, poller_async_pcs, [PC | PCS])
+      (LSM, _) ->
+        L = [PC | PCS],
+        ?INFO(?ID, "next packet PC ~w add to ~w list ~w ~n", [PC, PCS, L]),
+        share:put(LSM, poller_async_pcs, [PC | PCS])
   end,
-  ?INFO(?ID, "next packet PC ~p add to ~p~n", [PC, PCS]),
+
   Poller_handler =
     fun (LSM) when Payload == nothing ->
           [PC_handler(__, lists:member(PC, PCS)),
@@ -558,12 +561,14 @@ handle_polled_transmit(_MM, #sm{event = next_packet} = SM, Term) ->
   [NTail, Type, LocalPC, Payload] = create_polled_data(SM, Tail, <<"V">>),
   ?INFO(?ID, "create_polled_data ~p ~p ~p ~p~n", [NTail, Type, LocalPC, Payload]),
   PC = share:get(SM, pc),
-  PCS = share:get(SM, polled_async_pcs),
+  PCS = share:get(SM, nothing, polled_async_pcs, []),
   PC_handler =
   fun (LSM, true) -> LSM;
-      (LSM, _) -> share:put(LSM, polled_async_pcs, [PC | PCS])
+      (LSM, _) ->
+        ?INFO(?ID, "next packet PC ~w add to ~w~n", [PC, PCS]),
+        share:put(LSM, polled_async_pcs, [PC | PCS])
   end,
-  ?INFO(?ID, "next packet PC ~p add to ~p~n", [PC, PCS]),
+
   Polled_handler =
     fun (LSM) when Payload == nothing ->
           [PC_handler(__, lists:member(PC, PCS)),
@@ -690,19 +695,18 @@ get_current_polled(SM) ->
 process_asyncs(SM, PC) ->
   Polled_PCS = share:get(SM, nothing, polled_async_pcs, []),
   Poller_PCS = share:get(SM, nothing, poller_async_pcs, []),
-  ?INFO(?ID, ">>> delete PC ~p from ~p ~p~n", [PC, Polled_PCS, Poller_PCS]),
+  ?INFO(?ID, ">>> delete PC ~w from ~w ~w~n", [PC, Polled_PCS, Poller_PCS]),
   [share:put(__, poller_async_pcs, lists:delete(PC, Poller_PCS)),
    share:put(__, polled_async_pcs, lists:delete(PC, Polled_PCS))
   ](SM).
-%process_pc(#sm{state = wait_async} = SM, _) ->
-%  SM;
+
 process_pc(SM, LPC) ->
   PC = list_to_integer(LPC),
   Send_params = nl_hf:find_event_params(SM, send_params),
   case Send_params of
-    {send_params, {_, Tuple, _}} ->
+    {send_params, {_, Tuple, _}} when SM#sm.state =/= wait_async->
       [init_pc(__, PC),
-       change_status(__, PC, Tuple),
+       bind_pc(__, PC, Tuple),
        fsm:set_event(__, next_packet)
       ](SM);
     _ ->
@@ -877,9 +881,8 @@ push_poller_queue(SM, {nl, send, broadcast, Dst, Payload}) ->
   ](SM);
 push_poller_queue(SM, {nl, send, Type, Dst, Payload}) ->
   LocalPC = share:get(SM, local_pc),
-  Time = erlang:monotonic_time(micro_seconds),
   Len = byte_size(Payload),
-  Tuple = {unknown, LocalPC, not_delivered, Time, Type, Len, Payload},
+  Tuple = {unknown, LocalPC, Type, Len, Payload},
 
   Qname = share_name(Dst, Type),
   Q = share:get(SM, nothing, Qname, queue:new()),
@@ -903,9 +906,7 @@ share_name(Dst, Name) ->
 
 create_polled_data(_SM, L, Header) ->
   case L of
-    nothing ->
-      [nothing, nothing, nothing, nothing];
-    [] ->
+    _ when L == nothing; L == [] ->
       [nothing, nothing, nothing, nothing];
     _ ->
       [{Type, LocalPC, _, Data} | Tail] = L,
@@ -1119,9 +1120,8 @@ get_list(nothing, _) ->
 get_list(Q, Dst) ->
  L = queue:to_list(Q),
  F = fun(X) ->
-    {_, _, XStatus, _, XMsgType, _, Payload} = X,
-    %<<Hash:16, _/binary>> = crypto:hash(md5,Payload),
-    {Payload, XStatus, Dst, XMsgType}
+    {_PC, _LPC, Type, _Len, Payload} = X,
+    {Payload, Dst, Type}
   end,
   [ F(X) || X <- L].
 
@@ -1146,7 +1146,7 @@ pop_delivered(SM, Type, PC, Dst) ->
   NL =
   lists:filtermap(fun(X) ->
   case X of
-    {PC, _, _, _, _, _, _} -> false;
+    {PC, _LocalPC, _Type, _Len, _Payload} -> false;
     _ -> {true, X}
   end end, QL),
   NQ = queue:from_list(NL),
@@ -1167,17 +1167,16 @@ failed_pc(SM, Type, PC, Dst) ->
           ?INFO(?ID, "failed_pc ~p~n", [Item]),
           nl_hf:queue_push(Q, Item, Max)
     end,
-    {_, XPC, XStatus, XTime, XMsgType, XTransmitLen, _} = X,
-    case X of
-      {PC, _, _, _, Type, _, Payload} ->
-        Item = {unknown, XPC, XStatus, XTime, XMsgType, XTransmitLen, Payload},
-        Queue_handler(Type, Item);
-      _ -> Queue_handler(Type, X)
-    end
+    Item_handler =
+    fun ({XPC, XLocalPC, XType, XLen, XPayload}) when XPC == PC, XType == Type ->
+        Queue_handler(Type, {unknown, XLocalPC, XType, XLen, XPayload});
+        (Item) -> Queue_handler(Type, Item)
+    end,
+    Item_handler(X)
   end, queue:new(), QL),
   share:put(SM, Qname, NQ).
 
-change_status(SM, PC, {Type, LocalPC, AT}) ->
+bind_pc(SM, PC, {Type, LocalPC, AT}) ->
   {at, {pid, _}, "*SEND", Dst, Data} = AT,
   Max = share:get(SM, max_sensitive_queue),
   Qname = share_name(Dst, Type),
@@ -1194,13 +1193,13 @@ change_status(SM, PC, {Type, LocalPC, AT}) ->
           ?INFO(?ID, "add sensitive ~p~n", [Item]),
           nl_hf:queue_push(Q, Item, Max)
     end,
-    {_, XPC, XStatus, XTime, XMsgType, XTransmitLen, _} = X,
-    case X of
-      {unknown, LocalPC, _, _, Type, _, Payload} ->
-        Item = {PC, XPC, XStatus, XTime, XMsgType, XTransmitLen, Payload},
-        Queue_handler(Type, Item);
-      _ -> Queue_handler(Type, X)
-    end
+
+    Item_handler =
+    fun ({unknown, XLocalPC, XType, XLen, _XPaylaod}) when LocalPC == XLocalPC, Type == XType ->
+        Queue_handler(Type, {PC, XLocalPC, XType, XLen, Payload});
+        (Item) -> Queue_handler(Type, Item)
+    end,
+    Item_handler(X)
   end, queue:new(), QL),
   share:put(SM, Qname, NQ).
 
@@ -1246,7 +1245,7 @@ prepare_data(SM, Dst) ->
   NL = Data_handler(QTolerant, QSensitive),
   lists:foldr(
   fun(X, A) ->
-    {_PC, LocalPC, _Status, _Time, Type, _Len, Data} = X,
+    {_PC, LocalPC, Type, _Len, Data} = X,
     [{Type, LocalPC, Dst, Data} | A]
   end, [], NL).
 

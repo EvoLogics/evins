@@ -267,9 +267,9 @@ from_term({nl, buffer, []}, Cfg) ->
   [list_to_binary(["NL,buffer,",atom_to_list(empty),EOL,EOL]), Cfg];
 from_term({nl, buffer, Buffer}, Cfg) when is_list(Buffer) ->
   EOL = Cfg#config.eol,
-  BufferLst = lists:map(fun({Payload, XStatus, Dst, XMsgType}) ->
-                  lists:flatten([io_lib:format("data:~p state:~s dst:~B type:~s",
-                  [Payload, XStatus, Dst, XMsgType]), EOL])
+  BufferLst = lists:map(fun({Payload, Dst, XMsgType}) ->
+                  lists:flatten([io_lib:format("data:~p dst:~B type:~s",
+                  [Payload, Dst, XMsgType]), EOL])
               end, Buffer),
   [list_to_binary(["NL,buffer,",EOL, BufferLst, EOL]), Cfg];
 
