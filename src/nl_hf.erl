@@ -37,17 +37,57 @@
 
 -export([fill_transmission/3, increase_pkgid/3, code_send_tuple/2, create_nl_at_command/2, get_params_timeout/2]).
 -export([extract_payload_nl/2, extract_payload_nl_header/2, clear_spec_timeout/2]).
--export([mac2nl_address/1, num2flag/2, add_neighbours/3]).
+-export([mac2nl_address/1, num2flag/2, add_neighbours/3, list_push/4]).
 -export([head_transmission/1, exists_received/2, update_received_TTL/2,
          pop_transmission/3, pop_transmission/2, decrease_TTL/1]).
--export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, clear_event_params/2]).
-% later do not needed to export
--export([nl2mac_address/1, get_routing_address/3, nl2at/3, create_payload_nl_header/8, flag2num/1, queue_push/4]).
--export([decrease_retries/2, rand_float/2, update_states/1]).
+-export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, clear_event_params/2, clear_spec_event_params/2]).
+-export([add_event_params/2, find_event_params/3, find_event_params/2]).
+-export([nl2mac_address/1, get_routing_address/3, nl2at/3, create_payload_nl_header/8, flag2num/1, queue_push/4, queue_push/3]).
+-export([decrease_retries/2, rand_float/2, update_states/1, count_flag_bits/1]).
 -export([process_set_command/2, process_get_command/2, set_processing_time/3,fill_statistics/2, fill_statistics/3]).
 
 set_event_params(SM, Event_Parameter) ->
   SM#sm{event_params = Event_Parameter}.
+
+add_event_params(SM, Tuple) when SM#sm.event_params == []->
+  set_event_params(SM, [Tuple]);
+add_event_params(SM, Tuple = {Name, _}) ->
+  Params =
+  case find_event_params(SM, Name, new) of
+    new -> [Tuple | SM#sm.event_params];
+    _ ->
+      NE =
+      lists:filtermap(
+      fun(Param) ->
+          case Param of
+              {Name, _} -> false;
+              _ -> {true, Param}
+         end
+      end, SM#sm.event_params),
+      [Tuple | NE]
+  end,
+  set_event_params(SM, Params).
+
+find_event_params(#sm{event_params = []}, _Name, Default)->
+  Default;
+find_event_params(SM, Name, Default) ->
+  P = find_event_params(SM, Name),
+  if P == [] -> Default;
+  true -> P end.
+
+find_event_params(#sm{event_params = []}, _Name)->
+  [];
+find_event_params(SM, Name) ->
+  P =
+  lists:filtermap(
+  fun(Param) ->
+      case Param of
+          {Name, _} -> {true, Param};
+          _ -> false
+     end
+  end, SM#sm.event_params),
+  if P == [] -> [];
+  true -> [NP] = P, NP end.
 
 get_event_params(SM, Event) ->
   if SM#sm.event_params =:= [] ->
@@ -70,14 +110,25 @@ clear_spec_timeout(SM, Spec) ->
                end, SM#sm.timeouts),
   SM#sm{timeouts = TRefList}.
 
+clear_spec_event_params(#sm{event_params = []} = SM, _Event) ->
+  SM;
+clear_spec_event_params(SM, Event) ->
+  Params =
+    lists:filtermap(
+    fun(Param) ->
+        case Param of
+            Event -> false;
+            _ -> {true, Param}
+        end
+    end, SM#sm.event_params),
+  set_event_params(SM, Params).
+
+clear_event_params(#sm{event_params = []} = SM, _Event) ->
+  SM;
 clear_event_params(SM, Event) ->
-  if SM#sm.event_params =:= [] ->
-       SM;
-     true ->
-       EventP = hd(tuple_to_list(SM#sm.event_params)),
-       if EventP =:= Event -> SM#sm{event_params = []};
-        true -> SM
-       end
+  EventP = hd(tuple_to_list(SM#sm.event_params)),
+  if EventP =:= Event -> SM#sm{event_params = []};
+    true -> SM
   end.
 
 get_params_timeout(SM, Spec) ->
@@ -110,11 +161,31 @@ code_send_tuple(SM, Tuple) ->
       {Flag, PkgID, TTL, Src, Dst, Payload}
   end.
 
+list_push(SM, LName, Item, Max) ->
+  L = share:get(SM, LName),
+  Member = lists:member(Item, L),
+
+  List_handler =
+  fun (LSM) when length(L) > Max, not Member ->
+        NL = lists:delete(lists:nth(length(L), L), L),
+        share:put(LSM, LName, [Item | NL]);
+      (LSM) when length(L) > Max, Member ->
+        NL = lists:delete(lists:nth(length(L), L), L),
+        share:put(LSM, LName, NL);
+      (LSM) when not Member ->
+        share:put(LSM, LName, [Item | L]);
+      (LSM) ->
+        LSM
+  end,
+  List_handler(SM).
+
 queue_push(SM, Qname, Item, Max) ->
   Q = share:get(SM, Qname),
   QP = queue_push(Q, Item, Max),
   share:put(SM, Qname, QP).
 
+queue_push(nothing, Item, Max) ->
+  queue_push(queue:new(), Item, Max);
 queue_push(Q, Item, Max) ->
   Q_Member = queue:member(Item, Q),
   case queue:len(Q) of

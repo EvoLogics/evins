@@ -32,6 +32,11 @@
 
 -export([start/4, register_fsms/4]).
 
+% pt - packet transmission
+% pc - packet counter
+% sq - sensitive queue
+% st - tolernat queue
+
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
     fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
@@ -45,17 +50,17 @@ parse_conf(_Mod_ID, ArgS, Share) ->
 
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
 
-  Time_wait_recv_set  = [Time  || {time_wait_recv, Time} <- ArgS],
-  Max_sensitive_queue_set  = [Max  || {max_sensitive_queue, Max} <- ArgS],
-  Max_packets_transmit_sens_set  = [Max  || {max_packets_sensitive_transmit, Max} <- ArgS],
-  Max_packets_tolerant_transmit_set  = [Max  || {max_packets_tolerant_transmit, Max} <- ArgS],
+  Time_wait_data_set  = [Time  || {wait_data_tmo, Time} <- ArgS],
+  Max_sq_set  = [Max  || {max_sensitive_queue, Max} <- ArgS],
+  Max_pt_sens_set  = [Max  || {max_pt_sensitive, Max} <- ArgS],
+  Max_pt_tolerant_set  = [Max  || {max_pt_tolerant, Max} <- ArgS],
   Max_burst_len_set  = [Max  || {max_burst_len, Max} <- ArgS],
 
-  Time_wait_recv  = set_params(Time_wait_recv_set, 20), %s
-  Max_sensitive_queue  = set_params(Max_sensitive_queue_set, 3),
-  Max_burst_len  = set_params(Max_burst_len_set, 127),
-  Max_packets_transmit_sens  = set_params(Max_packets_transmit_sens_set, 3),
-  Max_packets_tolerant_transmit  = set_params(Max_packets_tolerant_transmit_set, 3),
+  Time_wait_data  = set_params(Time_wait_data_set, 20), %s
+  Max_sensitive_queue  = set_params(Max_sq_set, 3),
+  Max_pt_sensitive  = set_params(Max_pt_sens_set, 3),
+  Max_pt_tolerant  = set_params(Max_pt_tolerant_set, 3),
+  Max_burst_len  = set_params(Max_burst_len_set, (Max_pt_sensitive + Max_pt_tolerant) * 1000),
 
   Ref =
     case [{LatRef, LonRef} || {reference_position, {LatRef, LonRef}} <- ArgS] of
@@ -65,11 +70,11 @@ parse_conf(_Mod_ID, ArgS, Share) ->
 
   share:put(ShareID, reference_position, Ref),
   share:put(ShareID, [{nl_protocol, NL_Protocol}]),
-  share:put(ShareID, [{time_wait_recv, Time_wait_recv}]),
+  share:put(ShareID, [{wait_data_tmo, Time_wait_data}]),
   share:put(ShareID, [{max_burst_len, Max_burst_len}]),
   share:put(ShareID, [{max_sensitive_queue, Max_sensitive_queue}]),
-  share:put(ShareID, [{max_packets_sensitive_transmit, Max_packets_transmit_sens}]),
-  share:put(ShareID, [{max_packets_tolerant_transmit, Max_packets_tolerant_transmit}]).
+  share:put(ShareID, [{max_pt_sensitive, Max_pt_sensitive}]),
+  share:put(ShareID, [{max_pt_tolerant, Max_pt_tolerant}]).
 
 set_params(Param, Default) ->
   case Param of
