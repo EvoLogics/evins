@@ -472,19 +472,31 @@ process_package(SM, dst_reached, Tuple) ->
    nl_hf:set_event_params(__, {if_processed, nothing})
   ](SM);
 process_package(SM, _Flag, Tuple) ->
+  Protocol_name = share:get(SM, protocol_name),
+  Protocol_config = share:get(SM, protocol_config, Protocol_name),
   Local_Address = share:get(SM, local_address),
   {_, _, TTL, Src, Dst, _Payload} = Tuple,
   {Exist, QTTL} = nl_hf:exists_received(SM, Tuple),
 
-  ?TRACE(?ID, "process_package : Exist ~p  TTL ~p QTTL ~p Recv Tuple ~p~n",
-              [Exist, TTL, QTTL, Tuple]),
+  Probability =
+  if Protocol_config#pr_conf.prob ->
+    check_probability(SM);
+  true -> true
+  end,
+
+  ?TRACE(?ID, "process_package : Exist ~p  TTL ~p QTTL ~p Recv Tuple ~p Probability ~p~n",
+              [Exist, TTL, QTTL, Tuple, Probability]),
 
   Processed_handler =
   fun (LSM) when QTTL == dst_reached ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
-      (LSM) when Exist == false ->
+      (LSM) when not Exist, not Probability ->
+       nl_hf:set_event_params(LSM, {if_processed, processed});
+      (LSM) when not Exist ->
        nl_hf:set_event_params(LSM, {if_processed, not_processed});
       (LSM) when Src =:= Local_Address; Dst =:= Local_Address ->
+       nl_hf:set_event_params(LSM, {if_processed, processed});
+      (LSM) when TTL < QTTL, not Probability ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
       (LSM) when TTL < QTTL ->
        nl_hf:set_event_params(LSM, {if_processed, not_processed});
@@ -507,6 +519,23 @@ process_package(SM, _Flag, Tuple) ->
          Processed_handler(__)
         ](SM)
   end.
+
+% Snbr - size / number of nodes
+% RN - random number between 0 and 1
+% Relay the packet when (P > RN) and the packet was received first time
+check_probability(SM) ->
+  {Pmin, Pmax} = share:get(SM, probability),
+  Neighbours = share:get(SM, nothing, current_neighbours, []),
+  Snbr = length(Neighbours),
+  P = multi_array(Snbr, Pmax, 1),
+  ?TRACE(?ID, "Snbr ~p probability ~p ~n",[Snbr, P]),
+  RN = rand:uniform(),
+  Calculated_p =
+  if P < Pmin -> Pmin; true -> P end,
+  ?TRACE(?ID, "Snbr ~p P ~p Calculated_p ~p > RN ~p :  ~n", [Snbr, P, Calculated_p, RN]),
+  Calculated_p > RN.
+multi_array(0, _, P) -> P;
+multi_array(Snbr, Pmax, P) -> multi_array(Snbr - 1, Pmax, P * Pmax).
 
 maybe_pick(SM) ->
   Q = share:get(SM, transmission_queue),

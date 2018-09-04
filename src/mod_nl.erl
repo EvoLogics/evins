@@ -160,7 +160,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   WTmo_path       = set_params(WTmo_path_set, RTT + RTT/2),
 
   Path_life       = set_params(Path_life_set, 2 * WTmo_path),
-  Neighbour_life  = set_params(Neighbour_life_set, 10),%set_params(Neighbour_life_set, 2 * WTmo_path),
+  Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
 
   Start_time = erlang:monotonic_time(milli_seconds),
   ShareID = #sm{share = Share},
