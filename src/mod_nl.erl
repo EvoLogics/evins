@@ -115,8 +115,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
   Addr_set      = [Addrs          || {local_addr, Addrs} <- ArgS],
   Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
-  Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
-  Max_address_set   = [Addrs      || {max_address, Addrs} <- ArgS],
+  Routing       = [Addrs          || {routing, Addrs} <- ArgS],
+  Max_address_set = [Addrs        || {max_address, Addrs} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
   Max_hops_Set  = [Hops           || {max_hops, Hops} <- ArgS],
   Pkg_life_Set  = [Time           || {pkg_life, Time} <- ArgS],
@@ -148,10 +148,10 @@ parse_conf(Mod_ID, ArgS, Share) ->
   {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
 
   Blacklist                       = set_blacklist(Bll_addrs, []),
-  Routing_table                   = set_routing(Routing_addrs, NL_Protocol, ?ADDRESS_MAX),
+  Routing_table                   = set_routing(Routing, NL_Protocol, ?ADDRESS_MAX),
   Probability                     = set_params(Prob_set, {0.4, 0.9}),
 
-  Max_hops        = set_params(Max_hops_Set, 8),
+  Max_hops = set_params(Max_hops_Set, 8),
   RTT = count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end),
 
   Default_Tmo_Neighbour = 5 + round(Spath_tmo_end),
@@ -160,7 +160,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   WTmo_path       = set_params(WTmo_path_set, RTT + RTT/2),
 
   Path_life       = set_params(Path_life_set, 2 * WTmo_path),
-  Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
+  Neighbour_life  = set_params(Neighbour_life_set, 10),%set_params(Neighbour_life_set, 2 * WTmo_path),
 
   Start_time = erlang:monotonic_time(milli_seconds),
   ShareID = #sm{share = Share},
@@ -273,13 +273,13 @@ set_timeouts(Tmo, Defaults) ->
     [{Start, End}]-> {Start, End}
   end.
 
-set_routing(Routing_addrs, NL_Protocol, Default) ->
-  case NL_Protocol of
-    _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs =:= [])) ->
+set_routing(Routing, Protocol, Default) ->
+  case Protocol of
+    _ when ( ((Protocol =:= staticr) or (Protocol =:= staticrack)) and (Routing =:= [])) ->
       io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a default value will be set 255 broadcast ~n",[]),
       Default;
-    _ when (Routing_addrs =/= []) ->
-      [TupleRouting] = Routing_addrs,
+    _ when (Routing =/= []) ->
+      [TupleRouting] = Routing,
       [{?ADDRESS_MAX, ?ADDRESS_MAX} | tuple_to_list(TupleRouting)];
     _ -> Default
   end.

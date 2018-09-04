@@ -39,10 +39,10 @@
 -export([extract_payload_nl/2, extract_payload_nl_header/2, clear_spec_timeout/2]).
 -export([mac2nl_address/1, num2flag/2, add_neighbours/3, list_push/4]).
 -export([head_transmission/1, exists_received/2, update_received_TTL/2,
-         pop_transmission/3, pop_transmission/2, decrease_TTL/1]).
+         pop_transmission/3, pop_transmission/2, decrease_TTL/1, delete_neighbour/2]).
 -export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, clear_event_params/2, clear_spec_event_params/2]).
 -export([add_event_params/2, find_event_params/3, find_event_params/2]).
--export([nl2mac_address/1, get_routing_address/3, nl2at/3, create_payload_nl_header/8, flag2num/1, queue_push/4, queue_push/3]).
+-export([nl2mac_address/1, get_routing_address/2, nl2at/3, create_payload_nl_header/8, flag2num/1, queue_push/4, queue_push/3]).
 -export([decrease_retries/2, rand_float/2, update_states/1, count_flag_bits/1]).
 -export([process_set_command/2, process_get_command/2, set_processing_time/3,fill_statistics/2, fill_statistics/3]).
 
@@ -536,8 +536,30 @@ num2flag(Num, Layer) when is_binary(Num)->
   ?NUM2FLAG(binary_to_integer(Num), Layer).
 
 %%----------------------------Routing helper functions -------------------------------
-%TOD0:!!!!
-get_routing_address(_SM, _Flag, _Address) -> 255.
+find_routing(?ADDRESS_MAX, _) -> ?ADDRESS_MAX;
+find_routing(_, ?ADDRESS_MAX) -> ?ADDRESS_MAX;
+find_routing([], _) -> no_routing_table;
+find_routing(Routing, Address) ->
+  find_routing_helper(Routing, Address, nothing).
+
+find_routing_helper(Address) -> Address.
+find_routing_helper([], _Address, nothing) ->
+  ?ADDRESS_MAX;
+find_routing_helper([], _Address, Default) ->
+  Default;
+find_routing_helper([H | T], Address, Default) ->
+  case H of
+    {Address, To} -> find_routing_helper(To);
+    Default_address when not is_tuple(Default_address) ->
+      find_routing_helper(T, Address, Default_address);
+    _ -> find_routing_helper(T, Address, Default)
+  end.
+
+%get_routing_address(_SM, _Flag, _Address) -> 255.
+get_routing_address(SM, Address) ->
+  Routing = share:get(SM, nothing, routing_table, []),
+  find_routing(Routing, Address).
+  %nl2mac_address(RAddress).
 %%----------------------------Parse NL functions -------------------------------
 fill_protocol_info_header(dst_reached, {Transmit_Len, Data}) ->
   fill_data_header(Transmit_Len, Data);
@@ -581,10 +603,10 @@ create_nl_at_command(SM, NL) ->
 
   NL_Info = {Flag, PkgID, TTL, Src, Dst, Payload},
 
-  Route_Addr = get_routing_address(SM, Flag, Dst),
+  Route_Addr = get_routing_address(SM, Dst),
   MAC_Route_Addr = nl2mac_address(Route_Addr),
 
-  ?TRACE(?ID, "MAC_Route_Addr ~p, Src ~p, Dst ~p~n", [MAC_Route_Addr, Src, Dst]),
+  ?TRACE(?ID, "MAC_Route_Addr ~p, Route_Addr ~p Src ~p, Dst ~p~n", [MAC_Route_Addr, Route_Addr, Src, Dst]),
 
   if ((MAC_Route_Addr =:= error) or
       ((Dst =:= ?ADDRESS_MAX) and Protocol_Config#pr_conf.br_na)) ->
@@ -882,16 +904,13 @@ process_set_command(SM, Command) ->
       {nl, neighbours, Neighbours};
     {neighbours, _Neighbours} ->
       {nl, neighbours, error};
-    {routing, Routing} when Protocol_Name =:= staticr;
-                            Protocol_Name =:= staticrack ->
+    {routing, Routing} ->
       Routing_Format = lists:map(
                         fun({default, To}) -> To;
                             (Other) -> Other
                         end, Routing),
       share:put(SM, routing_table, Routing_Format),
       {nl, routing, Routing};
-    {routing, _Routing} ->
-      {nl, routing, error};
     _ ->
       {nl, error}
   end,

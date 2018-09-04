@@ -124,7 +124,9 @@ handle_event(MM, SM, Term) ->
       {disconnected, _} ->
         ?INFO(?ID, "disconnected ~n", []),
         SM;
-      {timeout,{sensing_timeout, _Send_Tuple}} ->
+      {timeout, {neighbour_life, Address}} ->
+        nl_hf:delete_neighbour(SM, Address);
+      {timeout, {sensing_timeout, _Send_Tuple}} ->
         ?INFO(?ID, "St ~p Ev ~p ~n", [SM#sm.event, SM#sm.state]),
         fsm:run_event(MM, SM#sm{event = sensing_timeout}, {});
       {timeout, relay} ->
@@ -338,8 +340,10 @@ process_overheared_packet(SM, Tuple) ->
       {RSrc, RRssi, RIntegrity}
   end,
 
+  Time = share:get(SM, neighbour_life),
   NL_Src  = nl_hf:mac2nl_address(Src),
   [nl_hf:fill_statistics(__, overheared, NL_Src),
+   fsm:set_timeout(__, {s, Time}, {neighbour_life, NL_Src}),
    nl_hf:add_neighbours(__, NL_Src, {Rssi, Integrity})
   ](SM).
 
@@ -402,10 +406,12 @@ packet_handler(SM, true, {Src, _Dst, Rssi, Integrity, Payload}) ->
 
   Flag = nl_hf:num2flag(Flag_Num, nl),
   Tuple = {Flag, Pkg_ID, TTL, NL_Src, NL_Dst, Tail},
+  Time = share:get(SM, neighbour_life),
 
   [process_package(__, Flag, Tuple),
    check_if_processed(__, NL_AT_Src, Tuple),
    nl_hf:set_processing_time(__, received, Tuple),
+   fsm:set_timeout(__, {s, Time}, {neighbour_life, NL_AT_Src}),
    nl_hf:add_neighbours(__, NL_AT_Src, {Rssi, Integrity}),
    nl_hf:clear_event_params(__, if_processed)
   ](SM).
