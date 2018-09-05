@@ -361,7 +361,6 @@ pop_transmission(SM, head, Tuple) ->
       clear_sensing_timeout(SM, Tuple)
   end.
 
-
 pop_transmission(SM, Tuple = {ack, _, TTL, Src, Dst, Payload}) ->
   Q = share:get(SM, transmission_queue),
   PkgID = extract_response(Payload),
@@ -642,7 +641,6 @@ create_nl_at_command(SM, NL) ->
 
   if ((MAC_Route_Addr =:= error) or
       ((Dst =:= ?ADDRESS_MAX) and Protocol_Config#pr_conf.br_na)) ->
-      % TODO: check if it can be
       error;
   true ->
       AT = nl2at(SM, MAC_Route_Addr, NL_Info),

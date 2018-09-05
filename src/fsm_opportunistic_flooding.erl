@@ -276,11 +276,8 @@ handle_alarm(_MM, SM, _Term) ->
 %%------------------------------------------ Helper functions -----------------------------------------------------
 process_nl_send(SM, Tuple) ->
   {PkgID, NL} = nl_hf:code_send_tuple(SM, Tuple),
-  nl_hf:fill_transmission(SM, filo, NL),
-  Fill = nl_hf:get_event_params(SM, fill_tq),
-
   Fill_handler =
-  fun(LSM, {fill_tq, error}) ->
+  fun(LSM, Ev) when Ev == {fill_tq, error}; Ev == nothing ->
         [fsm:cast(__, nl_impl, {send, {nl, send, error}}),
          fsm:set_event(__, eps)
         ](LSM);
@@ -290,20 +287,26 @@ process_nl_send(SM, Tuple) ->
         ](LSM)
   end,
 
-  [nl_hf:clear_event_params(__, fill_tq),
-   Fill_handler(__, Fill)
+  [nl_hf:fill_transmission(__, filo, NL),
+   Fill_handler(__, nl_hf:get_event_params(__, fill_tq)),
+   nl_hf:clear_event_params(__, fill_tq)
   ](SM).
 
-% take first meesage from the queue to transmit
+% take first message from the queue to transmit
 try_transmit(SM, empty) ->
   fsm:set_event(SM, transmitted);
 try_transmit(SM, {value, Head}) ->
   ?INFO(?ID, "Try send message: head item ~p~n", [Head]),
+  AT = nl_hf:create_nl_at_command(SM, Head),
+  try_transmit(SM, AT, Head).
+try_transmit(SM, error, _) ->
+  % TODO: maybe pop_transmission head
+  fsm:set_event(SM, transmitted);
+try_transmit(SM, AT, Head) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Ack_protocol = Protocol_Config#pr_conf.ack,
   Local_Address = share:get(SM, local_address),
-  AT = nl_hf:create_nl_at_command(SM, Head),
   Sensing = nl_hf:rand_float(SM, tmo_sensing),
   Handle_cache =
   fun(LSM, nothing) -> LSM;
