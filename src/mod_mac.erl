@@ -46,7 +46,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   Module =
   case P = parse_conf(ArgS, Share) of
     mac_burst  -> fsm_mac_burst;
-    _ when P == csma_aloha; P == csma_alh -> fsm_csma_aloha;
+    csma_aloha -> fsm_csma_aloha;
     cut_lohi   -> fsm_tlohi;
     aut_lohi   -> fsm_tlohi;
     dacap      -> fsm_dacap;

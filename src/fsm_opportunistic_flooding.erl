@@ -141,6 +141,8 @@ handle_event(MM, SM, Term) ->
         fsm:run_event(MM, __, {})](SM);
       {async, Notification} when Debug == on ->
         process_async(SM, Notification);
+      {sync, _, _} ->
+        fsm:clear_timeout(SM, answer_timeout);
       {nl, send, Local_Address, _Payload} ->
         fsm:cast(SM, nl_impl, {send, {nl, send, error}});
       {nl, send, error} ->
@@ -271,7 +273,7 @@ handle_alarm(_MM, SM, _Term) ->
   exit({alarm, SM#sm.module}).
 %%------------------------------------------ Helper functions -----------------------------------------------------
 process_nl_send(SM, Tuple) ->
-  NL = nl_hf:code_send_tuple(SM, Tuple),
+  {PkgID, NL} = nl_hf:code_send_tuple(SM, Tuple),
   nl_hf:fill_transmission(SM, filo, NL),
   Fill = nl_hf:get_event_params(SM, fill_tq),
 
@@ -281,7 +283,7 @@ process_nl_send(SM, Tuple) ->
          fsm:set_event(__, eps)
         ](LSM);
       (LSM, _) ->
-        [fsm:cast(__, nl_impl, {send, {nl, send, 0}}),
+        [fsm:cast(__, nl_impl, {send, {nl, send, PkgID}}),
          fsm:set_event(__, send)
         ](LSM)
   end,
@@ -420,9 +422,9 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Local_Address = share:get(SM, local_address),
-  {_Flag, Pkg_ID, _TTL, NL_Src, NL_Dst, Tail} = Tuple,
+  {_Flag, _Pkg_ID, _TTL, NL_Src, NL_Dst, Payload} = Tuple,
 
-  %Cast_Tuple = {nl, recv, NL_AT_Src, NL_Dst, Tail},
+  %Cast_Tuple = {nl, recv, NL_AT_Src, NL_Dst, Payload},
   %fsm:cast(SM, nl_impl, {send, Cast_Tuple}),
 
   If_Processed = nl_hf:get_event_params(SM, if_processed),
@@ -446,15 +448,12 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
                                          not Protocol_Config#pr_conf.br_na ->
         [nl_hf:fill_statistics(__, Tuple),
          nl_hf:fill_transmission(__, fifo, Tuple),
-         fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, ?ADDRESS_MAX, Tail}}),
+         fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, ?ADDRESS_MAX, Payload}}),
          Relay_handler(__)
         ](SM);
       {if_processed, not_processed} when NL_Dst =:= Local_Address ->
-        Dst_Tuple = {dst_reached, Pkg_ID, 0, NL_Dst, NL_Src, <<"d">>},
-        [nl_hf:fill_statistics(__, Tuple),
-         nl_hf:fill_transmission(__, fifo, Dst_Tuple),
-         fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, NL_Dst, Tail}}),
-         Relay_handler(__)
+        [process_destination(__, Tuple),
+        Relay_handler(__)
         ](SM);
       {if_processed, not_processed} ->
         [Relay_handler(__),
@@ -463,6 +462,38 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
       _  ->
         Relay_handler(SM)
   end.
+
+% check if protocol needs to send ack
+% if not, sent dst_reacehd to end flooding
+process_destination(SM, Recv_tuple) ->
+  Protocol_Name = share:get(SM, protocol_name),
+  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
+  Ack_protocol = Protocol_Config#pr_conf.ack,
+  {Flag, _Pkg_ID, _TTL, NL_Src, NL_Dst, Payload} = Recv_tuple,
+
+  Destination_handler =
+  fun (LSM) when Ack_protocol, Flag == ack ->
+        ?TRACE(?ID, "extract ack ~p~n", [Payload]),
+        Ack_Pkg_ID = nl_hf:extract_response(Payload),
+        Send_tuple = nl_hf:create_response(SM, dst_reached, Recv_tuple),
+        [nl_hf:fill_transmission(__, fifo, Send_tuple),
+         fsm:cast(__, nl_impl, {send, {nl, delivered, Ack_Pkg_ID, NL_Src, NL_Dst}})
+        ](LSM);
+      (LSM) when Ack_protocol ->
+        Send_tuple = nl_hf:create_response(SM, ack, Recv_tuple),
+        ?TRACE(?ID, "create ack ~p~n", [Send_tuple]),
+        [nl_hf:fill_transmission(__, fifo, Send_tuple),
+         fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, NL_Dst, Payload}})
+        ](LSM);
+      (LSM) ->
+        Send_tuple = nl_hf:create_response(SM, dst_reached, Recv_tuple),
+        [nl_hf:fill_transmission(__, fifo, Send_tuple),
+         fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, NL_Dst, Payload}})
+        ](LSM)
+  end,
+  [nl_hf:fill_statistics(__, Recv_tuple),
+   Destination_handler(__)
+  ](SM).
 
 % check if same package was received from other src
 % delete message, if received dst_reached wiht same pkgID and reverse src, dst
