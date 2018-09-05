@@ -299,12 +299,19 @@ set_pt_helper(SM, Type, Tuple, Q, NQ) ->
   Current_Time = erlang:monotonic_time(milli_seconds),
   case Q_Tuple of
     {_Send_Time, Recv_Time, _Role,
-      {Stored_Flag, PkgID, TTL, Dst, Src, Stored_Payload}} when Type == transmitted,
-                                                                Flag == dst_reached ->
-      NL_Recv_Tuple = {Stored_Flag, PkgID, TTL, Src, Dst, Stored_Payload},
-      Statistic = {Current_Time, Recv_Time, destination, NL_Recv_Tuple},
-      PQ = queue_push(NQ, Statistic, ?Q_STATISTICS_SIZE),
-      set_pt_helper(SM, Type, Tuple, Q_Tail, PQ);
+      {Stored_Flag, Stored_PkgID, TTL, Dst, Src, Stored_Payload}} when Type == transmitted,
+                                                                       Flag == dst_reached ->
+      PkgID_handler =
+      fun (Id) when Stored_PkgID == Id ->
+            NL_Recv_Tuple = {Stored_Flag, PkgID, TTL, Src, Dst, Stored_Payload},
+            Statistic = {Current_Time, Recv_Time, destination, NL_Recv_Tuple},
+            PQ = queue_push(NQ, Statistic, ?Q_STATISTICS_SIZE),
+            set_pt_helper(SM, Type, Tuple, Q_Tail, PQ);
+          (_) ->
+            PQ = queue_push(NQ, Q_Tuple, ?Q_STATISTICS_SIZE),
+            set_pt_helper(SM, Type, Tuple, Q_Tail, PQ)
+      end,
+      PkgID_handler(extract_response(Payload));
     {_Send_Time, Recv_Time, Role, {Flag, PkgID, _TTL, Src, Dst, Payload}} when Type == transmitted ->
       Statistic = {Current_Time, Recv_Time, Role, Tuple},
       PQ = queue_push(NQ, Statistic, ?Q_STATISTICS_SIZE),
@@ -355,6 +362,12 @@ pop_transmission(SM, head, Tuple) ->
   end.
 
 
+pop_transmission(SM, Tuple = {ack, _, TTL, Src, Dst, Payload}) ->
+  Q = share:get(SM, transmission_queue),
+  PkgID = extract_response(Payload),
+  [pop_tq_helper(__, {ack, PkgID, TTL, Src, Dst, Payload}, Q, queue:new()),
+   pop_tq_helper(__, Tuple, share:get(SM, transmission_queue), queue:new())
+  ](SM);
 pop_transmission(SM, Tuple = {dst_reached, _, TTL, Src, Dst, Payload}) ->
   Q = share:get(SM, transmission_queue),
   PkgID = extract_response(Payload),
@@ -380,7 +393,7 @@ pop_tq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Q, NQ) ->
     ](LSM)
   end,
   case Q_Tuple of
-    {_, PkgID, _TTL, Dst, Src, _} when Flag == dst_reached ->
+    {_, PkgID, _TTL, Dst, Src, _} when Flag == dst_reached; Flag == ack ->
       [Pop_handler(__),
        pop_tq_helper(__, Tuple, Q_Tail, NQ)
       ](SM);

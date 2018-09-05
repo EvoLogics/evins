@@ -124,6 +124,8 @@ handle_event(MM, SM, Term) ->
       {disconnected, _} ->
         ?INFO(?ID, "disconnected ~n", []),
         SM;
+      {timeout, {ack_timeout, {Pkg_ID, Src, Dst}}} ->
+        fsm:cast(SM, nl_impl, {send, {nl, failed, Pkg_ID, Src, Dst}});
       {timeout, {neighbour_life, Address}} ->
         nl_hf:delete_neighbour(SM, Address);
       {timeout, {sensing_timeout, _Send_Tuple}} ->
@@ -297,6 +299,10 @@ try_transmit(SM, empty) ->
   fsm:set_event(SM, transmitted);
 try_transmit(SM, {value, Head}) ->
   ?INFO(?ID, "Try send message: head item ~p~n", [Head]),
+  Protocol_Name = share:get(SM, protocol_name),
+  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
+  Ack_protocol = Protocol_Config#pr_conf.ack,
+  Local_Address = share:get(SM, local_address),
   AT = nl_hf:create_nl_at_command(SM, Head),
   Sensing = nl_hf:rand_float(SM, tmo_sensing),
   Handle_cache =
@@ -307,12 +313,21 @@ try_transmit(SM, {value, Head}) ->
       LSM
   end,
 
+  Ack_handler =
+  fun (LSM, {data, PkgID, _, Src, Dst, _}) when Src == Local_Address,
+                                                Ack_protocol ->
+        Time = share:get(SM, rtt),
+        fsm:set_timeout(LSM, {s, Time}, {ack_timeout, {PkgID, Src, Dst}});
+      (LSM, _) -> LSM
+  end,
+
   [nl_hf:set_processing_time(__, transmitted, Head),
    nl_hf:decrease_retries(__, Head),
    nl_hf:update_received_TTL(__, Head),
    nl_hf:queue_push(__, received_queue, Head, 30),
    fsm:maybe_send_at_command(__, AT, Handle_cache),
    fsm:set_timeout(__, {ms, Sensing}, {sensing_timeout, Head}),
+   Ack_handler(__, Head),
    fsm:set_event(__, transmitted)
   ](SM).
 
@@ -471,13 +486,22 @@ process_destination(SM, Recv_tuple) ->
   Ack_protocol = Protocol_Config#pr_conf.ack,
   {Flag, _Pkg_ID, _TTL, NL_Src, NL_Dst, Payload} = Recv_tuple,
 
+  Ack_handler =
+  fun (LSM, true, Ack_Pkg_ID) ->
+        [fsm:clear_timeout(__, {ack_timeout, {Ack_Pkg_ID, NL_Dst, NL_Src}}),
+         fsm:cast(__, nl_impl, {send, {nl, delivered, Ack_Pkg_ID, NL_Dst, NL_Src}})
+        ](LSM);
+      (LSM, false, _) -> LSM
+  end,
+
   Destination_handler =
   fun (LSM) when Ack_protocol, Flag == ack ->
         ?TRACE(?ID, "extract ack ~p~n", [Payload]),
         Ack_Pkg_ID = nl_hf:extract_response(Payload),
         Send_tuple = nl_hf:create_response(SM, dst_reached, Recv_tuple),
+        Wait_ack = fsm:check_timeout(SM, {ack_timeout, {Ack_Pkg_ID, NL_Dst, NL_Src}}),
         [nl_hf:fill_transmission(__, fifo, Send_tuple),
-         fsm:cast(__, nl_impl, {send, {nl, delivered, Ack_Pkg_ID, NL_Src, NL_Dst}})
+         Ack_handler(__, Wait_ack, Ack_Pkg_ID)
         ](LSM);
       (LSM) when Ack_protocol ->
         Send_tuple = nl_hf:create_response(SM, ack, Recv_tuple),

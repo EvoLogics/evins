@@ -136,8 +136,9 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   Max_TTL        = set_params(TTL_Set, 10),
   Local_Retries  = set_params(Local_Retries_Set, 3), % optimal 3
-  {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 1}), % optimal aloha {0,1}
+  {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 3}), % optimal aloha {0,1}
                                                                             % optimal tlohi {1,5} / {0,4}
+                                                                            % optimal for ack {0,3}
 
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
@@ -151,8 +152,9 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Routing_table                   = set_routing(Routing, NL_Protocol, ?ADDRESS_MAX),
   Probability                     = set_params(Prob_set, {0.4, 0.9}),
 
-  Max_hops = set_params(Max_hops_Set, 8),
-  RTT = count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end),
+  Max_hops = set_params(Max_hops_Set, 3),
+  %RTT = count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end),
+  RTT = count_RTT(Max_hops, Tmo_sensing_end),
 
   Default_Tmo_Neighbour = 5 + round(Spath_tmo_end),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, Default_Tmo_Neighbour),
@@ -204,16 +206,20 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   NL_Protocol.
 
-count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end) ->
-  Count_waves     = 2,
-  RMax_timeout     = round(max(Wwv_tmo_end, Wack_tmo_end)),
-  Max_timeout =
-  if RMax_timeout == 0 ->
-    1;
-  true ->
-    RMax_timeout
-  end,
-  Max_hops * Count_waves * Max_timeout + Max_hops.
+% count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end) ->
+%   Count_waves     = 2,
+%   RMax_timeout     = round(max(Wwv_tmo_end, Wack_tmo_end)),
+%   Max_timeout =
+%   if RMax_timeout == 0 ->
+%     1;
+%   true ->
+%     RMax_timeout
+%   end,
+%   Max_hops * Count_waves * Max_timeout + Max_hops.
+
+
+count_RTT(Max_hops, Time) ->
+  2 * Max_hops * (Time + 1).
 
 conf_fsm(Protocol) ->
   [{_, Decr}] = lists:filter(fun({PN, _})-> PN =:= Protocol end, ?PROTOCOL_CONF),
