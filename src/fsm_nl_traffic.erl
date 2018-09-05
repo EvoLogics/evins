@@ -89,7 +89,9 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, error}});
     {nl, traffic, start, Minutes} ->
       Start = erlang:monotonic_time(milli_seconds),
-      [share:put(__, statistics_queue, queue:new()),
+      [share:put(__, delivered, 0),
+       share:put(__, failed, 0),
+       share:put(__, statistics_queue, queue:new()),
        share:put(__, traffic_time, {Start, Minutes}),
        set_send_timeouts(__),
        fsm:cast(__, nl_impl, {send, {nl, traffic, ok}})
@@ -97,7 +99,9 @@ handle_event(MM, SM, Term) ->
     {nl, traffic, start} ->
       Start = erlang:monotonic_time(milli_seconds),
       Minutes = share:get(SM, traffic_time_max),
-      [share:put(__, statistics_queue, queue:new()),
+      [share:put(__, delivered, 0),
+       share:put(__, failed, 0),
+       share:put(__, statistics_queue, queue:new()),
        share:put(__, traffic_time, {Start, Minutes}),
        set_send_timeouts(__),
        fsm:cast(__, nl_impl, {send, {nl, traffic, ok}})
@@ -109,7 +113,9 @@ handle_event(MM, SM, Term) ->
        clear_tx(__)
       ](SM);
     {nl, traffic, clear} ->
-      [share:put(__, statistics_queue, queue:new()),
+      [share:put(__, delivered, 0),
+       share:put(__, failed, 0),
+       share:put(__, statistics_queue, queue:new()),
        fsm:cast(__, nl_impl, {send, {nl, traffic, ok}})
       ](SM);
     {nl, set, generator, Address} ->
@@ -138,10 +144,24 @@ handle_event(MM, SM, Term) ->
       [add_to_statistics(__, received, Time, Payload),
        fsm:cast(__, nl_impl, {send, {nl, recv, Src, Dst, Parsed_Payload}})
       ](SM);
+    {nl, delivered, _Src, _Dst} ->
+      async_counter(SM, delivered, Term);
+    {nl, delivered, _, _Src, _Dst} ->
+      async_counter(SM, delivered, Term);
+    {nl, failed, _Src, _Dst} ->
+      async_counter(SM, failed, Term);
+    {nl, failed, _, _Src, _Dst} ->
+      async_counter(SM, failed, Term);
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
   end.
+
+async_counter(SM, Type, Tuple) ->
+  Count = share:get(SM, nothing, Type, 0),
+  [fsm:cast(__, nl_impl, {send, Tuple}),
+   share:put(__, Type, Count + 1)
+  ](SM).
 
 set_send_timeouts(SM) ->
   Generators = share:get(SM, generators),
@@ -280,7 +300,13 @@ stats_to_bin(SM) ->
   Total = lists:flatten([io_lib:format("        Total recv:~B / tx:~B -> Energy:~.2f",
                         [Total_recv, Total_tx, Total_handler()]),EOL]),
 
-  list_to_binary([Lst, EOL, Tx, EOL, Total, EOL]).
+  Failed = share:get(SM, nothing, failed, 0),
+  Delivered = share:get(SM, nothing, delivered, 0),
+
+  Asyncs = lists:flatten([io_lib:format(">>>> Delivered:~B >>>> Failed:~B",
+                         [Delivered, Failed]),EOL]),
+
+  list_to_binary([Lst, EOL, Tx, EOL, Total, EOL, Asyncs, EOL]).
 
 add_to_statistics(SM, Type, Time, Payload) ->
   Qname = statistics_queue,
