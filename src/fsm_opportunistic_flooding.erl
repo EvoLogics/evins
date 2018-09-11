@@ -124,8 +124,10 @@ handle_event(MM, SM, Term) ->
       {disconnected, _} ->
         ?INFO(?ID, "disconnected ~n", []),
         SM;
-      {timeout, {ack_timeout, {Pkg_ID, Src, Dst}}} ->
-        fsm:cast(SM, nl_impl, {send, {nl, failed, Pkg_ID, Src, Dst}});
+      {timeout, {ack_timeout, Ack_tuple = {Pkg_ID, Src, Dst}}} ->
+        [nl_hf:fill_statistics(__, ack, failed, 0, Ack_tuple),
+         fsm:cast(__, nl_impl, {send, {nl, failed, Pkg_ID, Src, Dst}})
+        ](SM);
       {timeout, {neighbour_life, Address}} ->
         nl_hf:delete_neighbour(SM, Address);
       {timeout, {sensing_timeout, _Send_Tuple}} ->
@@ -460,7 +462,15 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
       end
     end,
 
+  Ack_handler =
+  fun (LSM) ->
+      ?TRACE(?ID, "relay ack ~p~n", [Payload]),
+      Ack_tuple = nl_hf:recreate_response(LSM, ack, Tuple),
+      nl_hf:fill_transmission(LSM, fifo, Ack_tuple)
+  end,
+
   ?INFO(?ID, "Ret process_package ~p - ~p: Sensing_Timeout ~p~n",[If_Processed, Tuple, Sensing]),
+  ?INFO(?ID, "NL_Dst ~p  Local_Address ~p~n",[NL_Dst, Local_Address]),
   case If_Processed of
       {if_processed, not_processed} when NL_Dst =:= ?ADDRESS_MAX,
                                          not Protocol_Config#pr_conf.br_na ->
@@ -472,6 +482,14 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
       {if_processed, not_processed} when NL_Dst =:= Local_Address ->
         [process_destination(__, Tuple),
         Relay_handler(__)
+        ](SM);
+      {if_processed, not_processed_ack} when NL_Dst =:= Local_Address ->
+        [process_destination(__, Tuple),
+        Relay_handler(__)
+        ](SM);
+      {if_processed, not_processed_ack} ->
+        [Ack_handler(__),
+         Relay_handler(__)
         ](SM);
       {if_processed, not_processed} ->
         [Relay_handler(__),
@@ -487,33 +505,35 @@ process_destination(SM, Recv_tuple) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Ack_protocol = Protocol_Config#pr_conf.ack,
-  {Flag, _Pkg_ID, _TTL, NL_Src, NL_Dst, Payload} = Recv_tuple,
+  {Flag, Pkg_ID, _TTL, NL_Src, NL_Dst, Payload} = Recv_tuple,
 
   Ack_handler =
-  fun (LSM, true, Ack_Pkg_ID) ->
-        [fsm:clear_timeout(__, {ack_timeout, {Ack_Pkg_ID, NL_Dst, NL_Src}}),
+  fun (LSM, true, Ack_Pkg_ID, Hops) ->
+        Ack_tuple = {Ack_Pkg_ID, NL_Dst, NL_Src},
+        [fsm:clear_timeout(__, {ack_timeout, Ack_tuple}),
+         nl_hf:fill_statistics(__, ack, delivered_on_src, Hops + 1, Ack_tuple),
          fsm:cast(__, nl_impl, {send, {nl, delivered, Ack_Pkg_ID, NL_Dst, NL_Src}})
         ](LSM);
-      (LSM, false, _) -> LSM
+      (LSM, false, _, _) -> LSM
   end,
 
   Destination_handler =
   fun (LSM) when Ack_protocol, Flag == ack ->
-        ?TRACE(?ID, "extract ack ~p~n", [Payload]),
-        Ack_Pkg_ID = nl_hf:extract_response(Payload),
-        Send_tuple = nl_hf:create_response(SM, dst_reached, Recv_tuple),
+        {Hops, Ack_Pkg_ID} = nl_hf:extract_response(Payload),
+        ?TRACE(?ID, "extract ack ~p ~p ~p~n", [Hops, Ack_Pkg_ID, Payload]),
+        Send_tuple = nl_hf:create_response(SM, dst_reached, Ack_Pkg_ID, NL_Src, NL_Dst, 0),
         Wait_ack = fsm:check_timeout(SM, {ack_timeout, {Ack_Pkg_ID, NL_Dst, NL_Src}}),
         [nl_hf:fill_transmission(__, fifo, Send_tuple),
-         Ack_handler(__, Wait_ack, Ack_Pkg_ID)
+         Ack_handler(__, Wait_ack, Ack_Pkg_ID, Hops)
         ](LSM);
       (LSM) when Ack_protocol ->
-        Send_tuple = nl_hf:create_response(SM, ack, Recv_tuple),
+        Send_tuple = nl_hf:create_response(SM, ack, Pkg_ID, NL_Src, NL_Dst, 0),
         ?TRACE(?ID, "create ack ~p~n", [Send_tuple]),
         [nl_hf:fill_transmission(__, fifo, Send_tuple),
          fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, NL_Dst, Payload}})
         ](LSM);
       (LSM) ->
-        Send_tuple = nl_hf:create_response(SM, dst_reached, Recv_tuple),
+        Send_tuple = nl_hf:create_response(SM, dst_reached, Pkg_ID, NL_Src, NL_Dst, 0),
         [nl_hf:fill_transmission(__, fifo, Send_tuple),
          fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, NL_Dst, Payload}})
         ](LSM)
@@ -529,7 +549,7 @@ process_package(SM, dst_reached, Tuple) ->
    nl_hf:pop_transmission(__, Tuple),
    nl_hf:set_event_params(__, {if_processed, nothing})
   ](SM);
-process_package(SM, _Flag, Tuple) ->
+process_package(SM, Flag, Tuple) ->
   Protocol_name = share:get(SM, protocol_name),
   Protocol_config = share:get(SM, protocol_config, Protocol_name),
   Local_Address = share:get(SM, local_address),
@@ -550,12 +570,16 @@ process_package(SM, _Flag, Tuple) ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
       (LSM) when not Exist, not Probability ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
+      (LSM) when not Exist, Flag == ack ->
+       nl_hf:set_event_params(LSM, {if_processed, not_processed_ack});
       (LSM) when not Exist ->
        nl_hf:set_event_params(LSM, {if_processed, not_processed});
       (LSM) when Src =:= Local_Address; Dst =:= Local_Address ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
       (LSM) when TTL < QTTL, not Probability ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
+      (LSM) when TTL < QTTL, Flag == ack ->
+       nl_hf:set_event_params(LSM, {if_processed, not_processed_ack});
       (LSM) when TTL < QTTL ->
        nl_hf:set_event_params(LSM, {if_processed, not_processed});
       (LSM) ->
