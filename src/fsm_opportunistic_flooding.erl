@@ -442,7 +442,7 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Local_Address = share:get(SM, local_address),
-  {_Flag, _Pkg_ID, _TTL, NL_Src, NL_Dst, Payload} = Tuple,
+  {Flag, _Pkg_ID, _TTL, NL_Src, NL_Dst, Payload} = Tuple,
 
   %Cast_Tuple = {nl, recv, NL_AT_Src, NL_Dst, Payload},
   %fsm:cast(SM, nl_impl, {send, Cast_Tuple}),
@@ -463,10 +463,12 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
     end,
 
   Ack_handler =
-  fun (LSM) ->
-      ?TRACE(?ID, "relay ack ~p~n", [Payload]),
-      Ack_tuple = nl_hf:recreate_response(LSM, ack, Tuple),
-      nl_hf:fill_transmission(LSM, fifo, Ack_tuple)
+  fun (LSM) when Flag == ack ->
+        ?TRACE(?ID, "relay ack ~p~n", [Payload]),
+        Ack_tuple = nl_hf:recreate_response(LSM, ack, Tuple),
+        nl_hf:fill_transmission(LSM, fifo, Ack_tuple);
+      (LSM) ->
+        nl_hf:fill_transmission(LSM, fifo, Tuple)
   end,
 
   ?INFO(?ID, "Ret process_package ~p - ~p: Sensing_Timeout ~p~n",[If_Processed, Tuple, Sensing]),
@@ -483,17 +485,9 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
         [process_destination(__, Tuple),
         Relay_handler(__)
         ](SM);
-      {if_processed, not_processed_ack} when NL_Dst =:= Local_Address ->
-        [process_destination(__, Tuple),
-        Relay_handler(__)
-        ](SM);
-      {if_processed, not_processed_ack} ->
+      {if_processed, not_processed} ->
         [Ack_handler(__),
          Relay_handler(__)
-        ](SM);
-      {if_processed, not_processed} ->
-        [Relay_handler(__),
-         nl_hf:fill_transmission(__, fifo, Tuple)
         ](SM);
       _  ->
         Relay_handler(SM)
@@ -549,7 +543,7 @@ process_package(SM, dst_reached, Tuple) ->
    nl_hf:pop_transmission(__, Tuple),
    nl_hf:set_event_params(__, {if_processed, nothing})
   ](SM);
-process_package(SM, Flag, Tuple) ->
+process_package(SM, _Flag, Tuple) ->
   Protocol_name = share:get(SM, protocol_name),
   Protocol_config = share:get(SM, protocol_config, Protocol_name),
   Local_Address = share:get(SM, local_address),
@@ -570,16 +564,12 @@ process_package(SM, Flag, Tuple) ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
       (LSM) when not Exist, not Probability ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
-      (LSM) when not Exist, Flag == ack ->
-       nl_hf:set_event_params(LSM, {if_processed, not_processed_ack});
       (LSM) when not Exist ->
        nl_hf:set_event_params(LSM, {if_processed, not_processed});
       (LSM) when Src =:= Local_Address; Dst =:= Local_Address ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
       (LSM) when TTL < QTTL, not Probability ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
-      (LSM) when TTL < QTTL, Flag == ack ->
-       nl_hf:set_event_params(LSM, {if_processed, not_processed_ack});
       (LSM) when TTL < QTTL ->
        nl_hf:set_event_params(LSM, {if_processed, not_processed});
       (LSM) ->
