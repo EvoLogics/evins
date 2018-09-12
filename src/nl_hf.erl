@@ -36,13 +36,13 @@
 -include("nl.hrl").
 
 -export([fill_transmission/3, increase_pkgid/3, code_send_tuple/2, create_nl_at_command/2, get_params_timeout/2]).
--export([extract_payload_nl/2, extract_payload_nl_header/2, clear_spec_timeout/2]).
+-export([extract_payload_nl_header/2, clear_spec_timeout/2]).
 -export([mac2nl_address/1, num2flag/2, add_neighbours/3, list_push/4]).
 -export([head_transmission/1, exists_received/2, update_received_TTL/2,
          pop_transmission/3, pop_transmission/2, decrease_TTL/1, delete_neighbour/2]).
 -export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, clear_event_params/2, clear_spec_event_params/2]).
 -export([add_event_params/2, find_event_params/3, find_event_params/2]).
--export([nl2mac_address/1, get_routing_address/2, nl2at/3, create_payload_nl_header/8, flag2num/1, queue_push/4, queue_push/3]).
+-export([nl2mac_address/1, get_routing_address/2, nl2at/3, create_payload_nl_header/11, flag2num/1, queue_push/4, queue_push/3]).
 -export([decrease_retries/2, rand_float/2, update_states/1, count_flag_bits/1]).
 -export([create_response/6, recreate_response/3, extract_response/1]).
 -export([process_set_command/2, process_get_command/2, set_processing_time/3,fill_statistics/2, fill_statistics/3, fill_statistics/5]).
@@ -142,16 +142,24 @@ get_params_timeout(SM, Spec) ->
   end, SM#sm.timeouts).
 
 code_send_tuple(SM, Tuple) ->
+  %Specify_flag =
+  %fun (icrpr, _Config) -> path_data;
+  %    (_Name, _Config) -> data
+  %end,
+
   % TODO: change, usig also other protocols
   Protocol_Name = share:get(SM, protocol_name),
-  TTL = share:get(SM, ttl),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
+  TTL = share:get(SM, ttl),
   Local_address = share:get(SM, local_address),
   {nl, send, Dst, Payload} = Tuple,
   PkgID = increase_pkgid(SM, Local_address, Dst),
 
-  Flag = data,
+  Flag = data, %Specify_flag(Protocol_Name, Protocol_Config),
   Src = Local_address,
+  Path = [Src],
+  Rssi_init = 0,
+  Integrity_init = 0,
 
   ?TRACE(?ID, "Code Send Tuple Flag ~p, PkgID ~p, TTL ~p, Src ~p, Dst ~p~n",
               [Flag, PkgID, TTL, Src, Dst]),
@@ -159,7 +167,7 @@ code_send_tuple(SM, Tuple) ->
   if (((Dst =:= ?ADDRESS_MAX) and Protocol_Config#pr_conf.br_na)) ->
       {PkgID, error};
   true ->
-      {PkgID, {Flag, PkgID, TTL, Src, Dst, Payload}}
+      {PkgID, {Flag, PkgID, TTL, Src, Dst, Path, Rssi_init, Integrity_init, Payload}}
   end.
 
 list_push(SM, LName, Item, Max) ->
@@ -181,12 +189,10 @@ list_push(SM, LName, Item, Max) ->
   List_handler(SM).
 
 queue_push(SM, Qname, Item, Max) ->
-  Q = share:get(SM, Qname),
+  Q = share:get(SM, nothing, Qname, queue:new()),
   QP = queue_push(Q, Item, Max),
   share:put(SM, Qname, QP).
 
-queue_push(nothing, Item, Max) ->
-  queue_push(queue:new(), Item, Max);
 queue_push(Q, Item, Max) ->
   Q_Member = queue:member(Item, Q),
   case queue:len(Q) of
@@ -234,42 +240,44 @@ head_transmission(SM) ->
 pop_transmission(SM, head, Tuple) ->
   Qname = transmission_queue,
   Q = share:get(SM, Qname),
-  {Flag, PkgID, _, Src, Dst, Payload} = Tuple,
+  {Flag, PkgID, _, Src, Dst, _, _, _, Payload} = Tuple,
   Head = head_transmission(SM),
 
   Pop_hadler =
   fun(LSM) ->
     {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
     ?TRACE(?ID, "deleted Tuple ~p from  ~p~n",[Tuple, Q]),
-    [remove_retries(__, Q_Tuple),
+    [
+     set_zero_retries(__, Q_Tuple),
      clear_sensing_timeout(__, Q_Tuple),
      share:put(__, transmission_queue, Q_Tail)
     ](LSM)
   end,
 
   case Head of
-    {value, {Flag, PkgID, _TTL, Src, Dst, Payload}} ->
+    {value, {Flag, PkgID, _TTL, Src, Dst, _, _, _, Payload}} ->
       Pop_hadler(SM);
-    {value, {_Flag, PkgID, _TTL, Dst, Src, _Payload}} ->
+    {value, {_Flag, PkgID, _TTL, Dst, Src, _, _, _, _Payload}} ->
       Pop_hadler(SM);
     _ ->
       clear_sensing_timeout(SM, Tuple)
   end.
 
-pop_transmission(SM, Tuple = {ack, _, TTL, Src, Dst, Payload}) ->
+pop_transmission(SM, Tuple = {ack, _, TTL, Src, Dst, Path, Rssi, Integrity, Payload}) ->
   Q = share:get(SM, transmission_queue),
   {_, PkgID} = extract_response(Payload),
-  Ack_tuple = {ack, PkgID, TTL, Src, Dst, Payload},
+  Ack_tuple = {ack, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload},
   ?INFO(?ID, ">>>>>>>>>>> pop_transmission Tuple ~p  ~p~n", [Tuple, Q]),
   [pop_tq_helper(__, Ack_tuple, Q, queue:new()),
    pop_tq_helper(__, Tuple, share:get(SM, transmission_queue), queue:new())
   ](SM);
-pop_transmission(SM, Tuple = {dst_reached, _, TTL, Src, Dst, Payload}) ->
+pop_transmission(SM, Tuple = {dst_reached, _, TTL, Src, Dst, Path, Rssi, Integrity, Payload}) ->
   Q = share:get(SM, transmission_queue),
   {_, PkgID} = extract_response(Payload),
+  Dst_reached_tuple = {dst_reached, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload},
   % remove all tuples whith the same pkg id
   ?INFO(?ID, ">>>>>>>>>>> pop_transmission ~p ~p~n", [Tuple, Q]),
-  pop_tq_helper(SM, {dst_reached, PkgID, TTL, Src, Dst, Payload}, Q, queue:new());
+  pop_tq_helper(SM, Dst_reached_tuple, Q, queue:new());
 pop_transmission(SM, Tuple) ->
   Q = share:get(SM, transmission_queue),
   ?INFO(?ID, ">>>>>>>>>>> pop_transmission ~p ~p~n", [Tuple, Q]),
@@ -277,13 +285,14 @@ pop_transmission(SM, Tuple) ->
 
 pop_tq_helper(SM, _Tuple, {[],[]}, NQ) ->
   share:put(SM, transmission_queue, NQ);
-pop_tq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Q, NQ) ->
+pop_tq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, _, _, _, Payload}, Q, NQ) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
   Pop_handler =
   fun (LSM) ->
     ?TRACE(?ID, "deleted Tuple ~p from  ~p~n",[Tuple, Q]),
-    [remove_retries(__, Tuple),
-     remove_retries(__, Q_Tuple),
+    [
+     set_zero_retries(__, Tuple),
+     set_zero_retries(__, Q_Tuple),
      clear_sensing_timeout(__, Q_Tuple),
      clear_sensing_timeout(__, Tuple)
     ](LSM)
@@ -299,19 +308,19 @@ pop_tq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Q, NQ) ->
 
   ?TRACE(?ID, ">pop_transmission ~p ~p ~p~n", [Flag, Q_Tuple, Tuple]),
   case Q_Tuple of
-    {ack, _, _TTL, Dst, Src, QPayload} when Flag == dst_reached ->
+    {ack, _, _TTL, Dst, Src, _, _, _, QPayload} when Flag == dst_reached ->
       {_, Ack_Pkg_ID} = nl_hf:extract_response(QPayload),
       ?TRACE(?ID, "compare Ack_Pkg_ID ~p PkgID ~p~n", [Ack_Pkg_ID, PkgID]),
       Ack_handler(SM, Ack_Pkg_ID);
-    {ack, PkgID, _TTL, Src, Dst, _} ->
+    {ack, PkgID, _TTL, Src, Dst, _, _, _, _} ->
       [Pop_handler(__),
        pop_tq_helper(__, Tuple, Q_Tail, NQ)
       ](SM);
-    {data, PkgID, _TTL, Dst, Src, _} when Flag == dst_reached; Flag == ack ->
+    {data, PkgID, _TTL, Dst, Src, _, _, _, _} when Flag == dst_reached; Flag == ack ->
       [Pop_handler(__),
        pop_tq_helper(__, Tuple, Q_Tail, NQ)
       ](SM);
-    {Flag, PkgID, _TTL, Src, Dst, Payload} ->
+    {Flag, PkgID, _TTL, Src, Dst, _, _, _, Payload} ->
       [Pop_handler(__),
        pop_tq_helper(__, Tuple, Q_Tail, NQ)
       ](SM);
@@ -321,19 +330,19 @@ pop_tq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Q, NQ) ->
 
 clear_sensing_timeout(SM, Tuple) ->
   ?TRACE(?ID, "Clear sensing timeout ~p~n",[Tuple]),
-  {_Flag, PkgID, _, Src, Dst, Payload} = Tuple,
+  {_Flag, PkgID, _, Src, Dst, _, _, _, Payload} = Tuple,
   TRefList =
   filter(
    fun({E, TRef}) ->
        case E of
-          {sensing_timeout, {data, PkgID, _TTL, Src, Dst, Payload}} ->
+          {sensing_timeout, {data, PkgID, _TTL, Src, Dst, _, _, _, Payload}} ->
             timer:cancel(TRef),
             false;
-          {sensing_timeout, {Flag, PkgID, _TTL, Src, Dst, _Payload}} when Flag == ack;
+          {sensing_timeout, {Flag, PkgID, _TTL, Src, Dst, _, _, _, _Payload}} when Flag == ack;
                                                                           Flag == dst_reached ->
             timer:cancel(TRef),
             false;
-          {sensing_timeout, {_, PkgID, _TTL, Dst, Src, _Payload}} ->
+          {sensing_timeout, {_, PkgID, _TTL, Dst, Src, _, _, _, _Payload}} ->
             timer:cancel(TRef),
             false;
          _  -> true
@@ -342,66 +351,79 @@ clear_sensing_timeout(SM, Tuple) ->
   SM#sm{timeouts = TRefList}.
 
 
-remove_retries(SM, Tuple = {Flag, _, TTL, Src, Dst, Payload}) when Flag == ack;
-                                                                   Flag == dst_reached ->
+set_zero_retries(SM, Tuple) ->
+  {Flag, _, _, _, _, _, _, _, _} = Tuple,
+  set_zero_retries(SM, Flag, Tuple).
+
+set_zero_retries(SM, Flag, Tuple) when Flag == ack;
+                                       Flag == dst_reached ->
+  {Flag, _, TTL, Src, Dst, Path, Rssi, Integrity, Payload} = Tuple,
   Q = share:get(SM, retries_queue),
   {_, PkgID} = extract_response(Payload),
-  [remove_rq_retries(__, {Flag, PkgID, TTL, Src, Dst, Payload}, Q, queue:new()),
-   remove_rq_retries(__, Tuple, share:get(SM, retries_queue), queue:new())
+  Processed_tuple = {Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload},
+  [zero_rq_retries(__, Processed_tuple, Q, queue:new()),
+   zero_rq_retries(__, Tuple, share:get(SM, retries_queue), queue:new())
   ](SM);
-remove_retries(SM, Tuple) ->
+set_zero_retries(SM, _, Tuple) ->
   Q = share:get(SM, retries_queue),
-  ?TRACE(?ID, "deleted Tuple ~p from retry queue ~p~n",[Tuple, Q]),
-  remove_rq_retries(SM, Tuple, Q, queue:new()).
+  ?TRACE(?ID, "set zero to Tuple ~p in retry queue ~p~n",[Tuple, Q]),
+  zero_rq_retries(SM, Tuple, Q, queue:new()).
 
-remove_rq_retries(SM, _Tuple, {[],[]}, NQ) ->
+zero_rq_retries(SM, _Tuple, {[],[]}, NQ) ->
   share:put(SM, retries_queue, NQ);
-remove_rq_retries(SM, Tuple = {_, PkgID, _, Src, Dst, Payload}, Q, NQ) ->
+zero_rq_retries(SM, Tuple = {_, PkgID, _, Src, Dst, _, _, _, Payload}, Q, NQ) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  Decrease_handler =
+  fun (LSM, QT) ->
+      Decreased_Q = queue_push(NQ, {-1, QT}, ?Q_STATISTICS_SIZE),
+      zero_rq_retries(LSM, Tuple, Q_Tail, Decreased_Q)
+  end,
+
   case Q_Tuple of
-    {_Retries, {data, PkgID, _TTL, Src, Dst, Payload}} ->
-      remove_rq_retries(SM, Tuple, Q_Tail, NQ);
-    {_Retries, {_, PkgID, _TTL, Src, Dst, _}} ->
-      remove_rq_retries(SM, Tuple, Q_Tail, NQ);
+    {_Retries, QT = {data, PkgID, _TTL, Src, Dst, _, _, _, Payload}} ->
+      Decrease_handler(SM, QT);
+    {_Retries, QT = {_, PkgID, _TTL, Src, Dst, _, _, _, _}} ->
+      Decrease_handler(SM, QT);
     _ ->
-      remove_rq_retries(SM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
+      zero_rq_retries(SM, Tuple, Q_Tail, queue_push(NQ, Q_Tuple, ?Q_STATISTICS_SIZE))
   end.
 
 decrease_retries(SM, Tuple) ->
   Q = share:get(SM, retries_queue),
-  ?TRACE(?ID, "Change local tries of packet ~p~n",[Tuple]),
+  ?TRACE(?ID, "Change local tries of packet ~p in retires Q ~p~n",[Tuple, Q]),
   decrease_rq_helper(SM, Tuple, not_inside, Q, queue:new()).
 
-decrease_rq_helper(SM, Tuple, _, Q = {[],[]}, {[],[]}) ->
+decrease_rq_helper(SM, Tuple, not_inside, {[],[]}, {[],[]}) ->
   Local_Retries = share:get(SM, retries),
-  share:put(SM, retries_queue, queue:in({Local_Retries, Tuple}, Q));
+  queue_push(SM, retries_queue, {Local_Retries, Tuple}, ?Q_STATISTICS_SIZE);
 decrease_rq_helper(SM, Tuple, not_inside, {[],[]}, NQ) ->
   Local_Retries = share:get(SM, retries),
-  share:put(SM, retries_queue, queue:in({Local_Retries, Tuple}, NQ));
+  Q = queue_push(NQ, {Local_Retries, Tuple}, ?Q_STATISTICS_SIZE),
+  share:put(SM, retries_queue, Q);
 decrease_rq_helper(SM, _Tuple, inside, {[],[]}, NQ) ->
   share:put(SM, retries_queue, NQ);
-decrease_rq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Inside, Q, NQ) ->
+decrease_rq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, _, _, _, Payload}, Inside, Q, NQ) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
-
-  {Retries, {_QFlag, QPkgID, _TTL, QSrc, QDst, QPayload}} = Q_Tuple,
+  {Retries, {_QFlag, QPkgID, _TTL, QSrc, QDst, _QPath, _QRssi, _QIntegrity, QPayload}} = Q_Tuple,
   Pop_queue =
   fun (LSM, Tries) when Tries =< 0 ->
         ?TRACE(?ID, "drop Tuple ~p from  ~p, retries ~p ~n",[Q_Tuple, Q, Tries]),
+        Decreased_Q = queue_push(NQ, {Tries - 1, Tuple}, ?Q_STATISTICS_SIZE),
         [pop_transmission(__, Tuple),
-         decrease_rq_helper(__, Tuple, inside, Q_Tail, NQ)
+         decrease_rq_helper(__, Tuple, inside, Q_Tail, Decreased_Q)
         ](LSM);
       (LSM, Tries) when Tries > 0 ->
         ?TRACE(?ID, "change Tuple ~p in  ~p, retries ~p ~n",[Q_Tuple, Q, Tries - 1]),
-        decrease_rq_helper(LSM, Tuple, inside, Q_Tail, queue:in({Tries - 1, Tuple}, NQ))
+        Decreased_Q = queue_push(NQ, {Tries - 1, Tuple}, ?Q_STATISTICS_SIZE),
+        decrease_rq_helper(LSM, Tuple, inside, Q_Tail, Decreased_Q)
   end,
-
   Flag_handler =
   fun (LSM, data) when QPkgID == PkgID, QSrc == Src, QDst == Dst, QPayload == Payload ->
         Pop_queue(LSM, Retries);
       (LSM, _) when QPkgID == PkgID, QSrc == Src, QDst == Dst ->
         Pop_queue(LSM, Retries);
       (LSM, _) ->
-        decrease_rq_helper(LSM, Tuple, Inside, Q_Tail, queue:in(Q_Tuple, NQ))
+        decrease_rq_helper(LSM, Tuple, Inside, Q_Tail, queue_push(NQ, Q_Tuple, ?Q_STATISTICS_SIZE))
   end,
 
   Flag_handler(SM, Flag).
@@ -415,13 +437,13 @@ decrease_TTL_tq(SM, {[],[]}, NQ) ->
   share:put(SM, transmission_queue, NQ);
 decrease_TTL_tq(SM, Q, NQ) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  {Flag, PkgID, QTTL, Src, Dst, Payload} = Q_Tuple,
+  {Flag, PkgID, QTTL, Src, Dst, Path, Rssi, Integrity, Payload} = Q_Tuple,
 
   TTL_handler =
   fun (LSM, dst_reached, _) ->
         decrease_TTL_tq(LSM, Q_Tail, queue:in(Q_Tuple, NQ));
       (LSM, _, TTL) when TTL > 0 ->
-        Tuple = {Flag, PkgID, TTL, Src, Dst, Payload},
+        Tuple = {Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload},
         decrease_TTL_tq(LSM, Q_Tail, queue:in(Tuple, NQ));
       (LSM, _, TTL) when TTL =< 0 ->
         ?INFO(?ID, "decrease and drop ~p, TTL ~p =< 0 ~n",[Q_Tuple, TTL]),
@@ -438,26 +460,27 @@ exists_received(SM, Tuple) ->
 exists_rq_response(Tuple) -> Tuple.
 exists_rq_response(SM, Tuple, {[],[]}) ->
   exists_rq_ttl(SM, Tuple, share:get(SM, received_queue));
-exists_rq_response(SM, Tuple = {Flag, PkgID, _, Src, Dst, Payload}, Q) ->
+exists_rq_response(SM, Tuple = {Flag, PkgID, _, Src, Dst, _, _, _, Payload}, Q) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  ?TRACE(?ID, "exists_rq_response ~p ~p~n", [Q_Tuple, Tuple]),
   PkgID_handler =
-  fun (Id1, Id2) when Id1 == Id2 ->
+  fun (QFlag, Id, Id) when QFlag == ack; QFlag == dst_reached ->
         exists_rq_response({true, dst_reached});
-      (_, _) ->
+      (_, _, _) ->
         exists_rq_response(SM, Tuple, Q_Tail)
   end,
   case Q_Tuple of
-    {dst_reached, _, _QTTL, Dst, Src, QPayload} when Flag == data ->
-      {_, Dst_Reached_PkgID} = extract_response(QPayload),
-      ?TRACE(?ID, "exists_rq_response ~p and ~p: parsed ~p, recv ~p ~n",
-        [Q_Tuple, Tuple, Dst_Reached_PkgID, PkgID]),
-      PkgID_handler(PkgID, Dst_Reached_PkgID);
-    {dst_reached, _, _QTTL, Dst, Src, QPayload} when Flag == ack ->
+    {dst_reached, _, _QTTL, Dst, Src, _, _, _, QPayload} when Flag == ack ->
       {_, Dst_Reached_PkgID} = extract_response(QPayload),
       {_, Ack_PkgID} = extract_response(Payload),
       ?TRACE(?ID, "exists_rq_response ~p and ~p: parsed ~p, recv ~p ~n",
         [Q_Tuple, Tuple, Dst_Reached_PkgID, Ack_PkgID]),
-      PkgID_handler(Dst_Reached_PkgID, Ack_PkgID);
+      PkgID_handler(dst_reached, Dst_Reached_PkgID, Ack_PkgID);
+    {QFlag, _, _QTTL, Dst, Src, _, _, _, QPayload} when Flag == data ->
+      {_, Dst_Reached_PkgID} = extract_response(QPayload),
+      ?TRACE(?ID, "exists_rq_response ~p and ~p: parsed ~p, recv ~p ~n",
+        [Q_Tuple, Tuple, Dst_Reached_PkgID, PkgID]),
+      PkgID_handler(QFlag, PkgID, Dst_Reached_PkgID);
     _ ->
       exists_rq_response(SM, Tuple, Q_Tail)
   end.
@@ -466,12 +489,12 @@ exists_rq_ttl(Tuple) ->
   Tuple.
 exists_rq_ttl(_SM, _Tuple, {[],[]}) ->
   {false, 0};
-exists_rq_ttl(SM, Tuple = {_, PkgID, _TTL, Src, Dst, Payload}, Q) ->
+exists_rq_ttl(SM, Tuple = {_, PkgID, _TTL, Src, Dst, _, _, _, Payload}, Q) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
   case Q_Tuple of
-    {data, PkgID, QTTL, Src, Dst, Payload} ->
+    {data, PkgID, QTTL, Src, Dst, _, _, _, Payload} ->
       exists_rq_ttl({true, QTTL});
-    {ack, PkgID, QTTL, Src, Dst, _} ->
+    {ack, PkgID, QTTL, Src, Dst, _, _, _, _} ->
       exists_rq_ttl({true, QTTL});
     _ ->
       exists_rq_ttl(SM, Tuple, Q_Tail)
@@ -484,18 +507,18 @@ update_received_TTL(SM, Tuple) ->
 update_TTL_rq_helper(SM, Tuple, {[],[]}, NQ) ->
   ?INFO(?ID, "change TTL for Tuple ~p in the~n",[Tuple]),
   share:put(SM, received_queue, NQ);
-update_TTL_rq_helper(SM, Tuple = {Flag, PkgID, TTL, Src, Dst, Payload}, Q, NQ) ->
+update_TTL_rq_helper(SM, Tuple = {Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload}, Q, NQ) ->
   { {value, Q_Tuple}, Q_Tail} = queue:out(Q),
 
-  {QFlag, QPkgID, QTTL, QSrc, QDst, QPayload} = Q_Tuple,
+  {QFlag, QPkgID, QTTL, QSrc, QDst, _QPath, _QRssi, _QIntegrity, QPayload} = Q_Tuple,
 
   TTL_handler =
   fun (LSM, true, data) when PkgID == QPkgID, Src == QSrc,
                              Dst == QDst, Payload == QPayload ->
-        NT = {Flag, PkgID, TTL, Src, Dst, Payload},
+        NT = {Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload},
         update_TTL_rq_helper(LSM, Tuple, Q_Tail, queue:in(NT, NQ));
       (LSM, true, ack) when PkgID == QPkgID, Src == QSrc, Dst == QDst ->
-        NT = {Flag, PkgID, TTL, Src, Dst, Payload},
+        NT = {Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload},
         update_TTL_rq_helper(LSM, Tuple, Q_Tail, queue:in(NT, NQ));
       (LSM, _, _) ->
         update_TTL_rq_helper(LSM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
@@ -544,12 +567,11 @@ get_routing_address(SM, Address) ->
   find_routing(Routing, Address).
   %nl2mac_address(RAddress).
 %%----------------------------Parse NL functions -------------------------------
-fill_protocol_info_header(dst_reached, {Transmit_Len, Data}) ->
-  fill_data_header(Transmit_Len, Data);
-fill_protocol_info_header(data, {Transmit_Len, Data}) ->
-  fill_data_header(Transmit_Len, Data);
-fill_protocol_info_header(ack, {Transmit_Len, Data}) ->
+fill_protocol_info_header(icrpr, data, {Path, _, _, Transmit_Len, Data}) ->
+  fill_path_data_header(Path, Transmit_Len, Data);
+fill_protocol_info_header(_, _, {_, _, _, Transmit_Len, Data}) ->
   fill_data_header(Transmit_Len, Data).
+
 % fill_msg(neighbours, Tuple) ->
 %   create_neighbours(Tuple);
 % fill_msg(neighbours_path, {Neighbours, Path}) ->
@@ -564,11 +586,11 @@ nl2at(SM, IDst, Tuple) when is_tuple(Tuple)->
   NLPPid = ?PROTOCOL_NL_PID(share:get(SM, protocol_name)),
   ?WARNING(?ID, ">>>>>>>> NLPPid: ~p~n", [NLPPid]),
   case Tuple of
-    {Flag, PkgID, TTL, Src, Dst, Payload}  when byte_size(Payload) < ?MAX_IM_LEN ->
-      AT_Payload = create_payload_nl_header(SM, NLPPid, Flag, PkgID, TTL, Src, Dst, Payload),
+    {Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload}  when byte_size(Payload) < ?MAX_IM_LEN ->
+      AT_Payload = create_payload_nl_header(SM, NLPPid, Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload),
       {at, {pid,PID}, "*SENDIM", IDst, noack, AT_Payload};
-    {Flag, PkgID, TTL, Src, Dst, Payload} ->
-      AT_Payload = create_payload_nl_header(SM, NLPPid, Flag, PkgID, TTL, Src, Dst, Payload),
+    {Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload} ->
+      AT_Payload = create_payload_nl_header(SM, NLPPid, Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload),
       {at, {pid,PID}, "*SEND", IDst, AT_Payload};
     _ ->
       error
@@ -580,15 +602,12 @@ create_nl_at_command(SM, NL) ->
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Local_address = share:get(SM, local_address),
 
-  {Flag, PkgID, TTL, Src, Dst, NL_Payload} = NL,
+  {Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload} = NL,
 
   % TODO: Additional_Info, different protocols have difeferent Header
-  Transmit_Len = byte_size(NL_Payload),
-  Payload = fill_protocol_info_header(Flag, {Transmit_Len, NL_Payload}),
-  ?INFO(?ID, "create_nl_at_command ~p ~p ~p Payload ~p ~n", [Flag, Transmit_Len, NL_Payload, Payload]),
+  ?INFO(?ID, "create_nl_at_command ~p Payload ~p ~n", [Flag, Payload]),
 
-  NL_Info = {Flag, PkgID, TTL, Src, Dst, Payload},
-
+  NL_Info = {Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Payload},
   Route_Addr = get_routing_address(SM, Dst),
   MAC_Route_Addr = nl2mac_address(Route_Addr),
 
@@ -605,22 +624,46 @@ create_nl_at_command(SM, NL) ->
       AT
   end.
 
-extract_payload_nl(SM, Payload) ->
-  {Pid, Flag_Num, Pkg_ID, TTL, NL_Src, NL_Dst, Tail} =
-    extract_payload_nl_header(SM, Payload),
-  Flag = num2flag(Flag_Num, nl),
-  % TODO: split path data
-  Splitted_Payload =
-  case Flag of
-    Flag when Flag == data; Flag == ack; Flag == dst_reached ->
-      case split_path_data(SM, Tail) of
-        [_Path, _B_LenData, Data] -> Data;
-        _ -> Tail
-      end;
-    _ -> <<"">>
-  end,
+extract_response(Payload) ->
+  C_Bits_PkgID = count_flag_bits(?PKG_ID_MAX),
+  C_Bits_Hops = count_flag_bits(?MAX_LEN_PATH),
+  <<Hops:C_Bits_Hops, Pkg_ID:C_Bits_PkgID, _Rest/bitstring>> = Payload,
+  {Hops, Pkg_ID}.
 
-  {Pid, Flag_Num, Pkg_ID, TTL, NL_Src, NL_Dst, Splitted_Payload}.
+create_response(SM, dst_reached, Pkg_ID, Src, Dst, Hops) ->
+  create_response(SM, dst_reached, Pkg_ID, Src, Dst, 0, Hops);
+create_response(SM, ack, Pkg_ID, Src, Dst, Hops) ->
+  Max_ttl = share:get(SM, ttl),
+  create_response(SM, ack, Pkg_ID, Src, Dst, Max_ttl, Hops).
+
+recreate_response(SM, ack, Tuple) ->
+  {Flag, Pkg_ID, TTL, Src, Dst, Path, Rssi, Integrity, Payload} = Tuple,
+  {Hops, Ack_Pkg_ID} = extract_response(Payload),
+  Coded_payload = encode_response(Hops + 1, Ack_Pkg_ID),
+  ?TRACE(?ID, "recreate_response ~p Hops ~p ~p ~p ~p~n", [Flag, Hops, Ack_Pkg_ID, Tuple, Coded_payload]),
+  {Flag, Pkg_ID, TTL, Src, Dst, Path, Rssi, Integrity, Coded_payload}.
+
+create_response(SM, Type, Pkg_ID, Src, Dst, TTL, Hops) ->
+  Coded_payload = encode_response(Hops, Pkg_ID),
+  Incereased_Pkg_ID = increase_pkgid(SM, Dst, Src),
+  % CHECK TODO
+  {Type, Incereased_Pkg_ID, TTL, Dst, Src, [], 0, 0, Coded_payload}.
+
+encode_response(Hops, Pkg_ID) ->
+  C_Bits_PkgID = count_flag_bits(?PKG_ID_MAX),
+  C_Bits_Hops = count_flag_bits(?MAX_LEN_PATH),
+  B_Hops = <<Hops:C_Bits_Hops>>,
+  B_PkgID = <<Pkg_ID:C_Bits_PkgID>>,
+
+  Tmp_Data = <<B_Hops/bitstring, B_PkgID/bitstring>>,
+  Data_Bin = is_binary(Tmp_Data) =:= false or ( (bit_size(Tmp_Data) rem 8) =/= 0),
+  if Data_Bin =:= false ->
+    Add = (8 - bit_size(Tmp_Data) rem 8) rem 8,
+    <<B_Hops/bitstring, B_PkgID/bitstring, 0:Add>>;
+  true ->
+    Tmp_Data
+  end.
+
 
 extract_payload_nl_header(SM, Payload) ->
   % 6 bits NL_Protocol_PID
@@ -638,57 +681,23 @@ extract_payload_nl_header(SM, Payload) ->
   C_Bits_TTL = count_flag_bits(Max_TTL),
   C_Bits_Addr = count_flag_bits(?ADDRESS_MAX),
 
-  Data_Bin = (bit_size(Payload) rem 8) =/= 0,
-  <<B_Pid:C_Bits_Pid, B_Flag:C_Bits_Flag, B_PkgID:C_Bits_PkgID, B_TTL:C_Bits_TTL,
-    B_Src:C_Bits_Addr, B_Dst:C_Bits_Addr, Rest/bitstring>> = Payload,
-  if Data_Bin =:= false ->
+  <<Pid:C_Bits_Pid, Flag:C_Bits_Flag, PkgID:C_Bits_PkgID, TTL:C_Bits_TTL,
+    Src:C_Bits_Addr, Dst:C_Bits_Addr, Rest/bitstring>> = Payload,
+
+  Data_bin = (bit_size(Payload) rem 8) =/= 0,
+  Extract_payload =
+  if Data_bin =:= false ->
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
-    {B_Pid, B_Flag, B_PkgID, B_TTL, B_Src, B_Dst, Data};
+    Data;
   true ->
-    {B_Pid, B_Flag, B_PkgID, B_TTL, B_Src, B_Dst, Rest}
-  end.
+    Rest
+  end,
 
-extract_response(Payload) ->
-  C_Bits_PkgID = count_flag_bits(?PKG_ID_MAX),
-  C_Bits_Hops = count_flag_bits(?MAX_LEN_PATH),
-  <<Hops:C_Bits_Hops, Pkg_ID:C_Bits_PkgID, _Rest/bitstring>> = Payload,
-  {Hops, Pkg_ID}.
+  ?INFO(?ID, "To extract Payload ~p~n", [Extract_payload]),
 
-create_response(SM, dst_reached, Pkg_ID, Src, Dst, Hops) ->
-  create_response(SM, dst_reached, Pkg_ID, Src, Dst, 0, Hops);
-create_response(SM, ack, Pkg_ID, Src, Dst, Hops) ->
-  Max_ttl = share:get(SM, ttl),
-  create_response(SM, ack, Pkg_ID, Src, Dst, Max_ttl, Hops).
-
-recreate_response(SM, ack, Tuple) ->
-  {Flag, Pkg_ID, TTL, Src, Dst, Payload} = Tuple,
-  {Hops, Ack_Pkg_ID} = extract_response(Payload),
-  Coded_payload = encode_response(Hops + 1, Ack_Pkg_ID),
-  ?TRACE(?ID, "recreate_response ~p Hops ~p ~p ~p ~p~n", [Flag, Hops, Ack_Pkg_ID, Tuple, Coded_payload]),
-  {Flag, Pkg_ID, TTL, Src, Dst, Coded_payload}.
-
-create_response(SM, Type, Pkg_ID, Src, Dst, TTL, Hops) ->
-  Coded_payload = encode_response(Hops, Pkg_ID),
-  Incereased_Pkg_ID = increase_pkgid(SM, Dst, Src),
-  {Type, Incereased_Pkg_ID, TTL, Dst, Src, Coded_payload}.
-
-encode_response(Hops, Pkg_ID) ->
-  C_Bits_PkgID = count_flag_bits(?PKG_ID_MAX),
-  C_Bits_Hops = count_flag_bits(?MAX_LEN_PATH),
-  B_Hops = <<Hops:C_Bits_Hops>>,
-  B_PkgID = <<Pkg_ID:C_Bits_PkgID>>,
-
-  Tmp_Data = <<B_Hops/bitstring, B_PkgID/bitstring>>,
-  Data_Bin = is_binary(Tmp_Data) =:= false or ( (bit_size(Tmp_Data) rem 8) =/= 0),
-  if Data_Bin =:= false ->
-    Add = (8 - bit_size(Tmp_Data) rem 8) rem 8,
-    <<B_Hops/bitstring, B_PkgID/bitstring, 0:Add>>;
-  true ->
-    Tmp_Data
-  end.
-
-create_payload_nl_header(SM, Pid, Flag, PkgID, TTL, Src, Dst, Data) ->
+  [Path, Integrity, Rssi, Splitted_Payload] = extract_payload(SM, Extract_payload),
+  {Pid, Flag, PkgID, TTL, Src, Dst, Path, Integrity, Rssi, Splitted_Payload}.
   % 6 bits NL_Protocol_PID
   % 3 bits Flag
   % 6 bits PkgID
@@ -696,6 +705,7 @@ create_payload_nl_header(SM, Pid, Flag, PkgID, TTL, Src, Dst, Data) ->
   % 6 bits SRC
   % 6 bits DST
   % rest bits reserved for later (+ 3)
+create_payload_nl_header(SM, Pid, Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Data) ->
   Max_TTL = share:get(SM, ttl),
   C_Bits_Pid = count_flag_bits(?NL_PID_MAX),
   C_Bits_Flag = count_flag_bits(?FLAG_MAX),
@@ -713,17 +723,41 @@ create_payload_nl_header(SM, Pid, Flag, PkgID, TTL, Src, Dst, Data) ->
   B_Src = <<Src:C_Bits_Addr>>,
   B_Dst = <<Dst:C_Bits_Addr>>,
 
+  Transmit_Len = byte_size(Data),
+  Protocol_Name = share:get(SM, protocol_name),
+  Coded_Payload = fill_protocol_info_header(Protocol_Name, Flag, {Path, Rssi, Integrity, Transmit_Len, Data}),
+  ?INFO(?ID, "Coded_Payload ~p ~p~n", [Flag, Coded_Payload]),
+
   Tmp_Data = <<B_Pid/bitstring, B_Flag/bitstring, B_PkgID/bitstring, B_TTL/bitstring,
-               B_Src/bitstring, B_Dst/bitstring, Data/binary>>,
+               B_Src/bitstring, B_Dst/bitstring, Coded_Payload/binary>>,
   Data_Bin = is_binary(Tmp_Data) =:= false or ( (bit_size(Tmp_Data) rem 8) =/= 0),
 
   if Data_Bin =:= false ->
     Add = (8 - bit_size(Tmp_Data) rem 8) rem 8,
     <<B_Pid/bitstring, B_Flag/bitstring, B_PkgID/bitstring, B_TTL/bitstring, B_Src/bitstring,
-      B_Dst/bitstring, 0:Add, Data/binary>>;
+      B_Dst/bitstring, 0:Add, Coded_Payload/binary>>;
   true ->
     Tmp_Data
   end.
+
+%%----------------NL functions create/extract protocol header-------------------
+%-------> path_data
+%   3b        6b            6b        LenPath * 6b   REST till / 8
+%   TYPEMSG   MAX_DATA_LEN  LenPath   Path           ADD
+fill_path_data_header(Path, TransmitLen, Data) ->
+  LenPath = length(Path),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
+  CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
+  TypeNum = ?TYPEMSG2NUM(path_data),
+
+  BLenData = <<TransmitLen:CBitsMaxLenData>>,
+  BType = <<TypeNum:CBitsTypeMsg>>,
+  BLenPath = <<LenPath:CBitsLenPath>>,
+  BPath = code_header(path, Path),
+  BHeader = <<BType/bitstring, BLenData/bitstring, BLenPath/bitstring, BPath/bitstring>>,
+  Add = (8 - (bit_size(BHeader)) rem 8) rem 8,
+  <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 %-------> data
 % 3b        6b
@@ -740,33 +774,59 @@ fill_data_header(TransmitLen, Data) ->
   Add = (8 - (bit_size(BHeader)) rem 8) rem 8,
   <<BHeader/bitstring, 0:Add, Data/binary>>.
 
-% TODO:
-split_path_data(SM, Payload) ->
-  C_Bits_TypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  _C_Bits_LenPath = count_flag_bits(?MAX_LEN_PATH),
-  C_Bits_MaxLenData = count_flag_bits(?MAX_DATA_LEN),
+extract_payload(SM, Payload) ->
+  CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
 
-  Data_Bin = (bit_size(Payload) rem 8) =/= 0,
-  <<B_Type:C_Bits_TypeMsg, B_LenData:C_Bits_MaxLenData, Path_Rest/bitstring>> = Payload,
+  Data_bin = (bit_size(Payload) rem 8) =/= 0,
+  <<Type:CBitsTypeMsg, _LenData:CBitsMaxLenData, Path_payload/bitstring>> = Payload,
 
+  ?TRACE(?ID, "extract_payload type ~p ~n", [?NUM2TYPEMSG(Type)]),
   {Path, Rest} =
-  case ?NUM2TYPEMSG(B_Type) of
-    % TODO path data
-    %path_data ->
-    %  extract_header(path, CBitsLenPath, CBitsLenPath, PathRest);
+  case ?NUM2TYPEMSG(Type) of
+    % TODO: other types
+    path_data ->
+      extract_header(path, CBitsLenPath, CBitsLenPath, Path_payload);
     data ->
-      {nothing, Path_Rest}
+      {[], Path_payload}
   end,
 
-  ?TRACE(?ID, "extract path data BType ~p ~n", [B_Type]),
-  if Data_Bin =:= false ->
+  if Data_bin =:= false ->
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
-    [Path, B_LenData, Data];
+    [Path, 0, 0, Data];
   true ->
-    [Path, B_LenData, Rest]
+    [Path, 0, 0, Rest]
   end.
 
+
+decode_header(neighbours, Neighbours) ->
+  W = count_flag_bits(?MAX_LEN_NEIGBOURS),
+  [N || <<N:W>> <= Neighbours];
+decode_header(path, Paths) ->
+  W = count_flag_bits(?MAX_LEN_PATH),
+  [P || <<P:W>> <= Paths];
+decode_header(add, AddInfos) ->
+  W = count_flag_bits(?ADD_INFO_MAX),
+  [N || <<N:W>> <= AddInfos].
+
+extract_header(Id, LenWidth, FieldWidth, Input) ->
+  <<Len:LenWidth, _/bitstring>> = Input,
+  Width = Len * FieldWidth,
+  <<_:LenWidth, BField:Width/bitstring, Rest/bitstring>> = Input,
+  {decode_header(Id, BField), Rest}.
+
+code_header(neighbours, Neighbours) ->
+  W = count_flag_bits(?MAX_LEN_NEIGBOURS),
+  << <<N:W>> || N <- Neighbours>>;
+code_header(path, Paths) ->
+  W = count_flag_bits(?MAX_LEN_PATH),
+  << <<N:W>> || N <- Paths>>;
+code_header(add, AddInfos) ->
+  W = count_flag_bits(?ADD_INFO_MAX),
+  Saturated_integrities = lists:map(fun(S) when S > 255 -> 255; (S) -> S end, AddInfos),
+  << <<N:W>> || N <- Saturated_integrities>>.
 %%------------------------- ETS Helper functions ----------------------------------
 init_dets(SM) ->
   Ref = SM#sm.dets_share,
@@ -851,7 +911,8 @@ add_neighbours(SM, Src, {Rssi, Integrity}) ->
   ?INFO(?ID, "Add neighbour Src ~p, Rssi ~p Integrity ~p ~n", [Src, Rssi, Integrity]),
   N_Channel = share:get(SM, neighbours_channel),
   Time = erlang:monotonic_time(milli_seconds) - share:get(SM, nl_start_time),
-  Neighbours = share:get(SM, current_neighbours),
+  Neighbours = share:get(SM, nothing, current_neighbours, []),
+
   case lists:member(Src, Neighbours) of
     _ when N_Channel == nothing ->
       [share:put(__, neighbours_channel, [{Src, Rssi, Integrity, Time}]),
@@ -1027,16 +1088,16 @@ fill_statistics(SM, _Type, Src) ->
   end,
   Counter_handler(SM, queue:is_empty(Q)).
 
-fill_statistics(SM, {dst_reached, _, _, _, _, _}) ->
+fill_statistics(SM, {dst_reached,  _, _, _, _, _, _, _, _}) ->
   SM;
-fill_statistics(SM, {ack, _, _, NL_Src, NL_Dst, Payload}) ->
+fill_statistics(SM, {ack, _, _, NL_Src, NL_Dst, _, _, _, Payload}) ->
   {Hops, Ack_Pkg_ID} = extract_response(Payload),
   Ack_tuple = {Ack_Pkg_ID, NL_Dst, NL_Src},
   fill_statistics(SM, ack, delivered, Hops, Ack_tuple);
 fill_statistics(SM, Tuple) ->
   Local_Address = share:get(SM, local_address),
   Q = share:get(SM, statistics_queue),
-  {_, _, _, Src, Dst, _} = Tuple,
+  {_, _, _, Src, Dst, _, _, _, _} = Tuple,
 
   Role_handler =
   fun (A) when Src == A -> source;
@@ -1062,11 +1123,11 @@ fill_sq_ack(SM, State, Hops, Time, Ack_tuple, Inside, Q, NQ) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
   case Q_Tuple of
     {STime, RTime, Role, _, _, _,
-     Tuple = {_, PkgID, _, Src, Dst, _}} when State == delivered_on_src ->
+     Tuple = {_, PkgID, _, Src, Dst, _, _, _, _}} when State == delivered_on_src ->
       PQ = queue_push(NQ, {STime, RTime, Role, Time, delivered, Hops, Tuple}, ?Q_STATISTICS_SIZE),
       fill_sq_ack(SM, State, Hops, Time, Ack_tuple, inside, Q_Tail, PQ);
     {STime, RTime, Role, _, no_info, 0,
-     Tuple = {_, PkgID, _, Src, Dst, _}} ->
+     Tuple = {_, PkgID, _, Src, Dst, _, _, _, _}} ->
       PQ = queue_push(NQ, {STime, RTime, Role, Time, State, Hops, Tuple}, ?Q_STATISTICS_SIZE),
       fill_sq_ack(SM, State, Hops, Time, Ack_tuple, inside, Q_Tail, PQ);
     _ ->
@@ -1096,10 +1157,11 @@ fill_sq_helper(SM, Role, Tuple, not_inside, {[],[]}, NQ) ->
   PQ = queue_push(NQ, {empty, empty, Role, 0, no_info, 0, Tuple}, ?Q_STATISTICS_SIZE),
   share:put(SM, statistics_queue, PQ);
 fill_sq_helper(SM, Role, Tuple, Inside, Q, NQ) ->
-  {Flag, PkgID, TTL, Src, Dst, Payload} = Tuple,
+  {Flag, PkgID, TTL, Src, Dst, _, _, _, Payload} = Tuple,
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
   case Q_Tuple of
-    {_, _, _, _, _, _, {Flag, PkgID, STTL, Src, Dst, Payload}} when TTL < STTL ->
+    {_, _, _, _, _, _,
+    {Flag, PkgID, STTL, Src, Dst, _, _, _, Payload}} when TTL < STTL ->
       PQ = queue_push(NQ, {empty, empty, Role, 0, no_info, 0, Tuple}, ?Q_STATISTICS_SIZE),
       fill_sq_helper(SM, Role, Tuple, inside, Q_Tail, PQ);
     _ ->
@@ -1114,7 +1176,7 @@ set_processing_time(SM, Type, Tuple) ->
 set_pt_helper(SM, _Type, _Tuple, {[],[]}, NQ) ->
   share:put(SM, statistics_queue, NQ);
 set_pt_helper(SM, Type, Tuple, Q, NQ) ->
-  {Flag, PkgID, _, Src, Dst, Payload} = Tuple,
+  {Flag, PkgID, _, Src, Dst, _, _, _, Payload} = Tuple,
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
   Current_Time = erlang:monotonic_time(milli_seconds),
 
@@ -1126,11 +1188,12 @@ set_pt_helper(SM, Type, Tuple, Q, NQ) ->
 
   case Q_Tuple of
     {_Send_Time, Recv_Time, _Role, Duration, State, Hops,
-      {Stored_Flag, Stored_PkgID, TTL, Dst, Src, Stored_Payload}} when Type == transmitted,
+      {Stored_Flag, Stored_PkgID, TTL, Dst, Src, Path, Rssi, Integrity, Stored_Payload}}
+                                                                  when Type == transmitted,
                                                                        Flag == dst_reached ->
       PkgID_handler =
       fun ({_, Id}) when Stored_PkgID == Id ->
-            NL_Recv_Tuple = {Stored_Flag, PkgID, TTL, Src, Dst, Stored_Payload},
+            NL_Recv_Tuple = {Stored_Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Stored_Payload},
             Statistic = {Current_Time, Recv_Time, destination, Duration, State, Hops, NL_Recv_Tuple},
             Push_queue(SM, Statistic);
           (_) ->
@@ -1138,12 +1201,12 @@ set_pt_helper(SM, Type, Tuple, Q, NQ) ->
       end,
       PkgID_handler(extract_response(Payload));
     {_Send_Time, Recv_Time, Role, Duration, State, Hops,
-      {Flag, PkgID, _TTL, Src, Dst, Payload}} when Type == transmitted ->
+      {Flag, PkgID, _TTL, Src, Dst, _, _, _, Payload}} when Type == transmitted ->
       Statistic = {Current_Time, Recv_Time, Role, Duration, State, Hops, Tuple},
       Push_queue(SM, Statistic);
     {Send_Time, _Recv_Time, Role, Duration, State, Hops,
-      {Flag, PkgID, _TTL, Src, Dst, Payload}} when Type == received,
-                                                   Flag =/= dst_reached ->
+      {Flag, PkgID, _TTL, Src, Dst, _, _, _, Payload}} when Type == received,
+                                                            Flag =/= dst_reached ->
       Statistic = {Send_Time, Current_Time, Role, Duration, State, Hops, Tuple},
       Push_queue(SM, Statistic);
     _ ->
@@ -1204,7 +1267,7 @@ process_get_command(SM, Command) ->
         end,
       Data =
         lists:map(fun({STimestamp, _RTimestamp, Role, DTimestamp, State, Hops, Tuple}) ->
-                      {_Flag, _PkgID, _TTL, Src, Dst, Payload} = Tuple,
+                      {_Flag, _PkgID, _TTL, Src, Dst, _Path, _Rssi, _Integrity, Payload} = Tuple,
                       Send_Time = from_start(SM, STimestamp),
                       Ack_time = from_start(SM, DTimestamp),
                       Duration = Duration_handler(Role, DTimestamp, Ack_time - Send_Time),
@@ -1217,7 +1280,7 @@ process_get_command(SM, Command) ->
     {statistics, data} when not Statistics_Empty ->
       Data =
         lists:map(fun({STimestamp, RTimestamp, Role, _DTimestamp, _State, _Hops, Tuple}) ->
-                      {_Flag, _PkgID, TTL, Src, Dst, Payload} = Tuple,
+                      {_Flag, _PkgID, TTL, Src, Dst, _Path, _Rssi, _Integrity, Payload} = Tuple,
                       Send_Time = from_start(SM, STimestamp),
                       Recv_Time = from_start(SM, RTimestamp),
                       Len = byte_size(Payload),

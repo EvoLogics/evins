@@ -319,7 +319,7 @@ try_transmit(SM, AT, Head) ->
   end,
 
   Ack_handler =
-  fun (LSM, {data, PkgID, _, Src, Dst, _}) when Src == Local_Address,
+  fun (LSM, {data, PkgID, _, Src, Dst, _Path, _Rssi, _Integrity, _}) when Src == Local_Address,
                                                 Ack_protocol ->
         Time = share:get(SM, rtt),
         fsm:set_timeout(LSM, {s, Time}, {ack_timeout, {PkgID, Src, Dst}});
@@ -342,7 +342,7 @@ maybe_transmit_next(SM) ->
   Head_handler =
   fun(LSM, empty) ->
       maybe_pick(LSM);
-     (LSM, {value, T = {dst_reached,_,_,_,_,_}}) ->
+     (LSM, {value, T = {dst_reached,_,_,_,_, _Path, _Rssi, _Integrity,_}}) ->
       [nl_hf:pop_transmission(__, head, T),
       maybe_pick(__)](LSM);
      (LSM, {value, _Head}) ->
@@ -406,7 +406,7 @@ process_received_packet(SM, false, AT) ->
         PPid = ?PROTOCOL_NL_PID(share:get(LSM, protocol_name)),
         {_Src, _Dst, _Rssi, _Integrity, Payload} = AT,
         try
-          {Pid, _,  _,  _,  _,  _,  _} = nl_hf:extract_payload_nl_header(LSM, Payload),
+          {Pid, _,  _,  _,  _,  _, _, _, _, _} = nl_hf:extract_payload_nl_header(LSM, Payload),
           packet_handler(LSM, (PPid =:= Pid), AT)
         catch error: Reason ->
         % Got a message not for NL
@@ -420,21 +420,22 @@ process_received_packet(SM, false, AT) ->
 packet_handler(SM, false, AT) ->
   ?TRACE(?ID, "Message is not applicable with current protocol ~p ~n", [AT]),
   fsm:set_event(SM, eps);
-packet_handler(SM, true, {Src, _Dst, Rssi, Integrity, Payload}) ->
+packet_handler(SM, true, {Src, _Dst, AT_Rssi, AT_Integrity, Payload}) ->
   NL_AT_Src  = nl_hf:mac2nl_address(Src),
 
-  {_Pid, Flag_Num, Pkg_ID, TTL, NL_Src, NL_Dst, Tail} =
-      nl_hf:extract_payload_nl(SM, Payload),
+  Recv_tuple = {_Pid, Flag_Num, Pkg_ID, TTL, NL_Src, NL_Dst, Path, Rssi, Integrity, Tail} =
+      nl_hf:extract_payload_nl_header(SM, Payload),
 
+  ?TRACE(?ID, "Extracted message  ~p ~n", [Recv_tuple]),
   Flag = nl_hf:num2flag(Flag_Num, nl),
-  Tuple = {Flag, Pkg_ID, TTL, NL_Src, NL_Dst, Tail},
+  Tuple = {Flag, Pkg_ID, TTL, NL_Src, NL_Dst, Path, Rssi, Integrity, Tail},
   Time = share:get(SM, neighbour_life),
 
   [process_package(__, Flag, Tuple),
    check_if_processed(__, NL_AT_Src, Tuple),
    nl_hf:set_processing_time(__, received, Tuple),
    fsm:set_timeout(__, {s, Time}, {neighbour_life, NL_AT_Src}),
-   nl_hf:add_neighbours(__, NL_AT_Src, {Rssi, Integrity}),
+   nl_hf:add_neighbours(__, NL_AT_Src, {AT_Rssi, AT_Integrity}),
    nl_hf:clear_event_params(__, if_processed)
   ](SM).
 
@@ -442,7 +443,7 @@ check_if_processed(SM, _NL_AT_Src, Tuple) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Local_Address = share:get(SM, local_address),
-  {Flag, _Pkg_ID, _TTL, NL_Src, NL_Dst, Payload} = Tuple,
+  {Flag, _Pkg_ID, _TTL, NL_Src, NL_Dst, _Path, _Rssi, _Integrity, Payload} = Tuple,
 
   %Cast_Tuple = {nl, recv, NL_AT_Src, NL_Dst, Payload},
   %fsm:cast(SM, nl_impl, {send, Cast_Tuple}),
@@ -499,7 +500,7 @@ process_destination(SM, Recv_tuple) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Ack_protocol = Protocol_Config#pr_conf.ack,
-  {Flag, Pkg_ID, _TTL, NL_Src, NL_Dst, Payload} = Recv_tuple,
+  {Flag, Pkg_ID, _TTL, NL_Src, NL_Dst, _Path, _Rssi, _Integrity, Payload} = Recv_tuple,
 
   Ack_handler =
   fun (LSM, true, Ack_Pkg_ID, Hops) ->
@@ -547,7 +548,7 @@ process_package(SM, _Flag, Tuple) ->
   Protocol_name = share:get(SM, protocol_name),
   Protocol_config = share:get(SM, protocol_config, Protocol_name),
   Local_Address = share:get(SM, local_address),
-  {_, _, TTL, Src, Dst, _Payload} = Tuple,
+  {_, _, TTL, Src, Dst, _Path, _Rssi, _Integrity, _Payload} = Tuple,
   {Exist, QTTL} = nl_hf:exists_received(SM, Tuple),
 
   Probability =
