@@ -71,7 +71,7 @@
 
 -define(MAX_IM_LEN, 50).
 -define(Q_STATISTICS_SIZE, 300).
-
+-define(RQ_SIZE, 30).
 -define(LIST_ALL_PROTOCOLS, [staticr,
            staticrack,
            sncfloodr,
@@ -218,7 +218,8 @@
        "================== Statistics commands only for protocols of path finding type ==================\n",
        "NL,get,statistics,paths\t\t\t\t- Get statistics of all paths from start of program till the current time
        \t\t\tAnswer:
-       \t\t\t<Role : relay or source><Path><Duration find path><Count found this path><Total count try findpath>\n"
+       \t\t\t<Path><Duration find path><Count found this path><Total count try findpath>\n
+       \t\t\t<Path><Count found this path><Total count try findpath>\n"
        "\n",
        "========================= Statistics commands only for protocols without ack ========================\n",
        "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time

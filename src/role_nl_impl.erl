@@ -227,9 +227,12 @@ from_term({nl,statistics,neighbours,Neighbours}, Cfg) ->
 from_term({nl,statistics,paths,Paths}, Cfg) ->
   EOL = Cfg#config.eol,
   PathsLst =
-    lists:map(fun({Role,Path,Duration,Count,Total}) ->
-                  PathS = lists:flatten(lists:join(",",[integer_to_list(I) || I <- Path])),
-                  lists:flatten([io_lib:format(" ~p path:~s duration:~.1.0f count:~B total:~B",[Role,PathS,Duration,Count,Total]),EOL])
+    lists:map(fun({Path,Duration,Count,Total}) ->
+                    PathS = lists:flatten(lists:join(",",[integer_to_list(I) || I <- Path])),
+                    lists:flatten([io_lib:format("path:~s duration:~.1.0f count:~B total:~B",[PathS,Duration,Count,Total]),EOL]);
+                  ({Path,Count,Total}) ->
+                    PathS = lists:flatten(lists:join(",",[integer_to_list(I) || I <- Path])),
+                    lists:flatten([io_lib:format("path:~s count:~B total:~B",[PathS,Count,Total]),EOL])
               end, Paths),
   [list_to_binary(["NL,statistics,paths,",EOL,PathsLst,EOL]), Cfg];
 %% NL,statistics,data,<EOL> <relay or source> data:<data hash> len:<length> duration:<duration> state:<state> total:<total> dst:<dst> hops:<hops><EOL>...<EOL><EOL>

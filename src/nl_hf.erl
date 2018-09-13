@@ -1119,7 +1119,8 @@ update_routing(SM, Routing) ->
   Local_address = share:get(SM, local_address),
   {Slist, Dlist} = lists:splitwith(fun(A) -> A =/= Local_address end, Routing),
   ?TRACE(?ID, "update_routing ~p ~p~n", [Slist, Dlist]),
-  [update_routing(__, source, Slist),
+  [fill_statistics(__, paths, Routing),
+   update_routing(__, source, Slist),
    update_routing(__, destination, Dlist)
   ](SM).
 
@@ -1189,6 +1190,13 @@ routing_to_list(SM) ->
         end, Routing_table)
   end.
 %-------------------------- Statistics helper functions---------------------------
+fill_statistics(SM, paths, Routing) ->
+  Total = share:get(SM, nothing, paths_total_count, 0),
+  Path_count = share:get(SM, nothing, Routing, 0),
+  [share:put(__, paths_total_count, Total + 1),
+   list_push(__, paths, Routing, 100),
+   share:put(__, Routing, Path_count + 1)
+  ](SM);
 fill_statistics(SM, _Type, Src) ->
   Q = share:get(SM, statistics_neighbours),
   Time = erlang:monotonic_time(milli_seconds),
@@ -1360,11 +1368,12 @@ process_get_command(SM, Command) ->
     {protocolinfo, Name} ->
       {nl, protocolinfo, Name, get_protocol_info(SM, Name)};
     {statistics, paths} when Protocol#pr_conf.pf ->
-      %TODO, implement protocols pf
+      Total = share:get(SM, nothing, paths_total_count, 0),
       Paths =
-        lists:map(fun({{Role, Path}, Duration, Count, TS}) ->
-                      {Role, Path, Duration, Count, TS}
-                  end, queue:to_list(share:get(SM, paths))),
+        lists:map(fun(Path) ->
+                    Count = share:get(SM, nothing, Path, 0),
+                    {Path, Count, Total}
+                  end, share:get(SM, nothing, paths, [])),
       Answer = case Paths of []  -> empty; _ -> Paths end,
       {nl, statistics, paths, Answer};
     {statistics, paths} ->
