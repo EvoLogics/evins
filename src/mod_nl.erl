@@ -138,7 +138,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Local_Retries  = set_params(Local_Retries_Set, 3), % optimal 3
   {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 1}), % optimal aloha {0,1}
                                                                             % optimal tlohi {1,5} / {0,4}
-                                                                            % optimal for ack {1,5}
+                                                                            % optimal for ack {0,3}
 
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
