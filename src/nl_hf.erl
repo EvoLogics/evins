@@ -304,43 +304,38 @@ pop_tq_helper(SM, Tuple = {Flag, PkgID, _, Src, Dst, _, _, _, Payload}, Q, NQ) -
     [set_zero_retries(__, Tuple),
      set_zero_retries(__, Q_Tuple),
      clear_sensing_timeout(__, Q_Tuple),
-     clear_sensing_timeout(__, Tuple)
+     clear_sensing_timeout(__, Tuple),
+     pop_tq_helper(__, Tuple, Q_Tail, NQ)
     ](LSM)
   end,
   Ack_handler =
   fun (LSM, Id) when Id == PkgID ->
-        [Pop_handler(__),
-         pop_tq_helper(__, Tuple, Q_Tail, NQ)
-        ](LSM);
+        Pop_handler(LSM);
       (LSM, _) ->
         pop_tq_helper(LSM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
   end,
 
-  ?TRACE(?ID, ">pop_transmission ~p ~p ~p~n", [Flag, Q_Tuple, Tuple]),
-  case Q_Tuple of
-    {ack, _, _TTL, Dst, Src, _, _, _, QPayload} when Flag == dst_reached ->
-      {_, Ack_Pkg_ID} = nl_hf:extract_response(QPayload),
-      ?TRACE(?ID, "compare Ack_Pkg_ID ~p PkgID ~p~n", [Ack_Pkg_ID, PkgID]),
-      Ack_handler(SM, Ack_Pkg_ID);
-    {ack, PkgID, _TTL, Src, Dst, _, _, _, _} ->
-      [Pop_handler(__),
-       pop_tq_helper(__, Tuple, Q_Tail, NQ)
-      ](SM);
-    {data, PkgID, _TTL, Dst, Src, _, _, _, _} when Flag == dst_reached; Flag == ack ->
-      [Pop_handler(__),
-       pop_tq_helper(__, Tuple, Q_Tail, NQ)
-      ](SM);
-    {data, PkgID, _TTL, Src, Dst, _, _, _, _} when Flag == dst_reached, Ack_protocol ->
-      [Pop_handler(__),
-       pop_tq_helper(__, Tuple, Q_Tail, NQ)
-      ](SM);
-    {Flag, PkgID, _TTL, Src, Dst, _, _, _, Payload} ->
-      [Pop_handler(__),
-       pop_tq_helper(__, Tuple, Q_Tail, NQ)
-      ](SM);
-    _ ->
-      pop_tq_helper(SM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
-  end.
+  ?TRACE(?ID, "pop_transmission ~p ~p ~p~n", [Flag, Q_Tuple, Tuple]),
+  {QFlag, QPkgID, _, QSrc, QDst, _, _, _, QPayload} = Q_Tuple,
+  Flag_handler =
+  fun (LSM, ack, dst_reached) when QSrc == Dst, QDst == Src ->
+        {_, Ack_Pkg_ID} = nl_hf:extract_response(QPayload),
+        ?TRACE(?ID, "compare Ack_Pkg_ID ~p PkgID ~p~n", [Ack_Pkg_ID, PkgID]),
+        Ack_handler(LSM, Ack_Pkg_ID);
+      (LSM, ack, _) when QPkgID == PkgID, QSrc == Src, QDst == Dst ->
+        Pop_handler(LSM);
+      (LSM, data, dst_reached) when QPkgID == PkgID, QSrc == Dst, QDst == Src ->
+        Pop_handler(LSM);
+      (LSM, data, ack) when QPkgID == PkgID, QSrc == Dst, QDst == Src ->
+        Pop_handler(LSM);
+      (LSM, data, dst_reached) when QPkgID == PkgID, QSrc == Src, QDst == Dst, Ack_protocol ->
+        Pop_handler(LSM);
+      (LSM, F, F) when QPkgID == PkgID, QSrc == Src, QDst == Dst, QPayload == Payload ->
+        Pop_handler(LSM);
+      (LSM, _, _) ->
+        pop_tq_helper(LSM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
+  end,
+  Flag_handler(SM, QFlag, Flag).
 
 clear_sensing_timeout(SM, Tuple) ->
   ?TRACE(?ID, "Clear sensing timeout ~p~n",[Tuple]),
@@ -581,7 +576,7 @@ num2flag(Num, Layer) when is_binary(Num)->
 %%----------------------------Routing helper functions -------------------------------
 find_routing(?ADDRESS_MAX, _) -> ?ADDRESS_MAX;
 find_routing(_, ?ADDRESS_MAX) -> ?ADDRESS_MAX;
-find_routing([], _) -> no_routing_table;
+find_routing([], _) -> ?ADDRESS_MAX;
 find_routing(Routing, Address) ->
   find_routing_helper(Routing, Address, nothing).
 
