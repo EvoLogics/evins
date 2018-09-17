@@ -150,7 +150,8 @@ handle_event(MM, SM, Term) ->
         fsm:cast(SM, nl_impl, {send, {nl, send, error}});
       {nl, send, _IDst, _Payload} ->
         [process_nl_send(__, Term),
-        fsm:run_event(MM, __, {})](SM);
+         fsm:run_event(MM, __, {})
+        ](SM);
       {nl, error, _} ->
         fsm:cast(SM, nl_impl, {send, {nl, error}});
       {nl, reset, state} ->
@@ -217,9 +218,9 @@ init_flood(SM) ->
                  {neighbours_channel, []},
                  {last_states, queue:new()},
                  {paths, []},
-                 {retries_queue, queue:new()},
-                 {received_queue, queue:new()},
-                 {transmission_queue, queue:new()},
+                 {retriesq, queue:new()},
+                 {received, queue:new()},
+                 {transmission, queue:new()},
                  {statistics_neighbours, queue:new()},
                  {statistics_queue, queue:new()}]),
   nl_hf:init_dets(SM).
@@ -229,11 +230,27 @@ handle_idle(_MM, SM, Term) ->
   nl_hf:update_states(SM),
   fsm:set_event(SM, eps).
 
+% check if pf and path is available
+% if not evailable -> try_transmit path message, and than data
+% path messages has priority in transmission queue
+% do not decrease TTL if pf is active
 handle_transmit(_MM, SM, Term) ->
   ?INFO(?ID, "transmit state ~120p~n", [Term]),
+  %Protocol_Name = share:get(SM, protocol_name),
+  %Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   nl_hf:update_states(SM),
   Head = nl_hf:head_transmission(SM),
   try_transmit(SM, Head).
+
+  % Path_needed =
+  % not Protocol_Config#pr_conf.ry_only and
+  % Protocol_Config#pr_conf.pf and not nl_hf:routing_exist(SM, Head),
+
+  % if Path_needed ->
+  %   establish_path(SM, Head);
+  % true ->
+  %   try_transmit(SM, Head)
+  % end.
 
 handle_sensing(_MM, SM, _Term) ->
   ?INFO(?ID, "sensing state ~120p~n", [SM#sm.event]),
@@ -268,54 +285,78 @@ handle_alarm(_MM, SM, _Term) ->
   exit({alarm, SM#sm.module}).
 %%------------------------------------------ Helper functions -----------------------------------------------------
 process_nl_send(SM, Tuple) ->
+  ?INFO(?ID, "process_nl_send state ~p ev ~p ~p ~n", [SM#sm.state, SM#sm.event, Tuple]),
   {PkgID, NL} = nl_hf:code_send_tuple(SM, Tuple),
   Fill_handler =
-  fun(LSM, Ev) when Ev == {fill_tq, error}; Ev == nothing ->
+  fun(LSM) ->
+    case nl_hf:get_event_params(LSM, fill_tq) of
+       Ev when Ev == {fill_tq, error}; Ev == nothing ->
         [fsm:cast(__, nl_impl, {send, {nl, send, error}}),
          fsm:set_event(__, eps)
         ](LSM);
-      (LSM, _) ->
+       _ ->
         [fsm:cast(__, nl_impl, {send, {nl, send, PkgID}}),
          fsm:set_event(__, relay)
         ](LSM)
+      end
   end,
 
-  [nl_hf:fill_transmission(__, filo, NL),
-   Fill_handler(__, nl_hf:get_event_params(__, fill_tq)),
-   nl_hf:clear_event_params(__, fill_tq)
-  ](SM).
+ [nl_hf:fill_transmission(__, filo, NL),
+  Fill_handler(__),
+  nl_hf:clear_event_params(__, fill_tq)
+ ](SM).
+
+
+%if no path on src
+%TODO: if no path on relay
+% establish_path(SM, empty) ->
+%   fsm:set_event(SM, transmitted);
+% establish_path(SM, NL) ->
+%   ?INFO(?ID, "Establish path ~n", []),
+%   {_, _, _, Src, Dst, _, _, _, _} = NL,
+%   Local_address = share:get(SM, local_address),
+%   establish_path(SM, Src == Local_address, Dst, NL).
+
+% %genrator
+% establish_path(SM, true, Dst, _NL) ->
+%   Local_address = share:get(SM, local_address),
+%   Tuple = nl_hf:prepare_path(SM, path, path_addit, Local_address, Dst),
+%   [nl_hf:postpone_queue(__),
+%    try_transmit(__, Tuple)
+%   ](SM);
+% establish_path(SM, false, _Dst, NL) ->
+%   try_transmit(SM, NL).
 
 % take first message from the queue to transmit
 try_transmit(SM, empty) ->
   fsm:set_event(SM, transmitted);
-try_transmit(SM, {value, Head}) ->
+try_transmit(SM, Head) ->
   ?INFO(?ID, "Try send message: head item ~p~n", [Head]),
   AT = nl_hf:create_nl_at_command(SM, Head),
   try_transmit(SM, AT, Head).
+
 try_transmit(SM, error, _) ->
-  % TODO: maybe pop_transmission head
   fsm:set_event(SM, transmitted);
 try_transmit(SM, AT, Head) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Ack_protocol = Protocol_Config#pr_conf.ack,
-  Local_Address = share:get(SM, local_address),
+  Local_address = share:get(SM, local_address),
   Sensing = nl_hf:rand_float(SM, tmo_sensing),
   Handle_cache =
   fun(LSM, nothing) -> LSM;
-     (LSM, Next) ->
-      % TODO: should be processed?
-      ?INFO(?ID, "Handle_cache next ~p~n", [Next]),
-      LSM
+     (LSM, _) -> LSM
   end,
 
   Ack_handler =
-  fun (LSM, {data, PkgID, _, Src, Dst, _Path, _Rssi, _Integrity, _}) when Src == Local_Address,
-                                                Ack_protocol ->
-        Time = share:get(SM, rtt),
-        fsm:set_timeout(LSM, {s, Time}, {ack_timeout, {PkgID, Src, Dst}});
-      (LSM, _) -> LSM
-  end,
+    fun (LSM) ->
+        [Flag, PkgID, Src, Dst] = nl_hf:getv([flag, id, src, dst], Head),
+        if Flag == data, Src == Local_address, Ack_protocol ->
+          Time = share:get(SM, rtt),
+          fsm:set_timeout(LSM, {s, Time}, {ack_timeout, {PkgID, Src, Dst}});
+        true -> LSM
+        end
+    end,
 
   [nl_hf:set_processing_time(__, transmitted, Head),
    nl_hf:decrease_retries(__, Head),
@@ -323,21 +364,27 @@ try_transmit(SM, AT, Head) ->
    nl_hf:update_received(__, Head),
    fsm:maybe_send_at_command(__, AT, Handle_cache),
    fsm:set_timeout(__, {ms, Sensing}, {sensing_timeout, Head}),
-   Ack_handler(__, Head),
+   Ack_handler(__),
    fsm:set_event(__, transmitted)
   ](SM).
 
 maybe_transmit_next(SM) ->
   Head = nl_hf:head_transmission(SM),
 
+  Dst_handler =
+  fun (LSM, dst_reached) ->
+        [nl_hf:pop_transmission(__, head, Head),
+         maybe_pick(__)
+        ](LSM);
+      (LSM, _) ->
+        fsm:set_event(LSM, eps)
+  end,
+
   Head_handler =
   fun(LSM, empty) ->
       maybe_pick(LSM);
-     (LSM, {value, T = {dst_reached,_,_,_,_, _Path, _Rssi, _Integrity,_}}) ->
-      [nl_hf:pop_transmission(__, head, T),
-      maybe_pick(__)](LSM);
-     (LSM, {value, _Head}) ->
-      fsm:set_event(LSM, eps)
+     (LSM, T) ->
+      Dst_handler(LSM, nl_hf:getv(flag, T))
   end,
 
   Head_handler(SM, Head).
@@ -361,6 +408,7 @@ process_overheared_packet(SM, Tuple) ->
   ](SM).
 
 process_received_packet(SM, Tuple) ->
+  ?INFO(?ID, "process_received_packet : ~w ~n", [Tuple]),
   Blacklist = share:get(SM, blacklist),
   case Tuple of
   {recv, _, Src, Dst, _, _, Rssi, Integrity, _, Payload} ->
@@ -392,7 +440,7 @@ process_received_packet(SM, false, AT) ->
   PPid = ?PROTOCOL_NL_PID(share:get(SM, protocol_name)),
 
   try
-    {Pid, _,  _,  _,  _,  _, _, _, _, _, _} = nl_hf:extract_payload_nl_header(SM, Payload),
+    {Pid, _} = nl_hf:extract_payload_nl_header(SM, Payload),
     packet_handler(SM, (PPid =:= Pid), Adressed, AT)
   catch error: Reason ->
     % Got a message not for NL, no NL header
@@ -405,38 +453,31 @@ packet_handler(SM, false, _, AT) ->
   fsm:set_event(SM, eps);
 packet_handler(SM, true, Adressed, {Src, _Dst, AT_Rssi, AT_Integrity, Payload}) ->
   NL_AT_Src  = nl_hf:mac2nl_address(Src),
-
-  Recv_tuple = {_Pid, Flag_Num, Pkg_ID, TTL, NL_Src, NL_Dst, Message_type, Path, Rssi, Integrity, Tail} =
-      nl_hf:extract_payload_nl_header(SM, Payload),
-
-  ?TRACE(?ID, "Extracted message  ~p ~n", [Recv_tuple]),
-  Flag = nl_hf:num2flag(Flag_Num, nl),
-  Tuple = {Flag, Pkg_ID, TTL, NL_Src, NL_Dst, Path, Rssi, Integrity, Tail},
-
+  {_, Tuple} = nl_hf:extract_payload_nl_header(SM, Payload),
+  ?TRACE(?ID, "Extracted message  ~p ~n", [Tuple]),
+  Flag = nl_hf:getv(flag, Tuple),
   [process_package(__, Flag, Tuple),
-   packet_handler(__, Adressed, NL_AT_Src, Message_type, Tuple, AT_Rssi, AT_Integrity)
+   packet_handler(__, Adressed, NL_AT_Src, Tuple, AT_Rssi, AT_Integrity)
   ](SM).
 
-packet_handler(SM, false, _, _, Tuple, _, _) ->
+packet_handler(SM, false, _, Tuple, _, _) ->
   ?INFO(?ID, "Handle packet, but not relay ~p~n", [Tuple]),
   SM;
-packet_handler(SM, true, NL_AT_Src, Message_type, Tuple, AT_Rssi, AT_Integrity) ->
+packet_handler(SM, true, NL_AT_Src, Tuple, AT_Rssi, AT_Integrity) ->
   Time = share:get(SM, neighbour_life),
-  [check_if_processed(__, NL_AT_Src, Message_type, Tuple),
+  [check_if_processed(__, Tuple, AT_Rssi, AT_Integrity),
    nl_hf:set_processing_time(__, received, Tuple),
    fsm:set_timeout(__, {s, Time}, {neighbour_life, NL_AT_Src}),
    nl_hf:add_neighbours(__, NL_AT_Src, {AT_Rssi, AT_Integrity}),
    nl_hf:clear_event_params(__, if_processed)
   ](SM).
 
-check_if_processed(SM, _NL_AT_Src, Message_type, Tuple) ->
+check_if_processed(SM, Tuple, AT_Rssi, AT_Integrity) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Local_Address = share:get(SM, local_address),
-  {Flag, _Pkg_ID, _TTL, NL_Src, NL_Dst, Path, _Rssi, _Integrity, Payload} = Tuple,
-
-  %Cast_Tuple = {nl, recv, NL_AT_Src, NL_Dst, Payload},
-  %fsm:cast(SM, nl_impl, {send, Cast_Tuple}),
+  [Flag, NL_Src, NL_Dst, MType, Path, Payload] =
+    nl_hf:getv([flag, src, dst, mtype, path, payload], Tuple),
 
   If_Processed = nl_hf:get_event_params(SM, if_processed),
   Sensing = nl_hf:get_params_timeout(SM, sensing_timeout),
@@ -454,14 +495,18 @@ check_if_processed(SM, _NL_AT_Src, Message_type, Tuple) ->
     end,
 
   Recreate_handler =
-  fun (LSM) when Flag == ack ->
+  fun (LSM) when Flag == path ->
+        ?TRACE(?ID, "relay path ~p~n", [Payload]),
+        Path_tuple = nl_hf:recreate_path(LSM, AT_Rssi, AT_Integrity, Tuple),
+        nl_hf:fill_transmission(LSM, fifo, Path_tuple);
+      (LSM) when Flag == ack, MType == data ->
         ?TRACE(?ID, "relay ack ~p~n", [Payload]),
         Ack_tuple = nl_hf:recreate_response(LSM, ack, Tuple),
         nl_hf:fill_transmission(LSM, fifo, Ack_tuple);
-      (LSM) when Message_type == path_data ->
+      (LSM) when MType == path_data ->
         ?TRACE(?ID, "relay path data ~p~n", [Path]),
         Path_data_tuple = nl_hf:update_path(SM, Tuple),
-        {_, _, _, _, _, New_path, _, _, _} = Path_data_tuple,
+        New_path = nl_hf:getv(path, Path_data_tuple),
         [nl_hf:update_routing(__, New_path),
          nl_hf:fill_transmission(__, fifo, Path_data_tuple)
         ](LSM);
@@ -480,7 +525,7 @@ check_if_processed(SM, _NL_AT_Src, Message_type, Tuple) ->
          Relay_handler(__)
         ](SM);
       {if_processed, not_processed} when NL_Dst =:= Local_Address ->
-        [process_destination(__, Message_type, Tuple),
+        [process_destination(__, Tuple),
         Relay_handler(__)
         ](SM);
       {if_processed, not_processed} ->
@@ -493,11 +538,12 @@ check_if_processed(SM, _NL_AT_Src, Message_type, Tuple) ->
 
 % check if protocol needs to send ack
 % if not, sent dst_reacehd to end flooding
-process_destination(SM, Message_type, Recv_tuple) ->
+process_destination(SM, Recv_tuple) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Ack_protocol = Protocol_Config#pr_conf.ack,
-  {Flag, Pkg_ID, _TTL, NL_Src, NL_Dst, _Path, _Rssi, _Integrity, Payload} = Recv_tuple,
+  [Flag, Pkg_ID, NL_Src, NL_Dst, MType, Payload] =
+    nl_hf:getv([flag, id, src, dst, mtype, payload], Recv_tuple),
 
   Ack_handler =
   fun (LSM, true, Ack_Pkg_ID, Hops) ->
@@ -511,32 +557,36 @@ process_destination(SM, Message_type, Recv_tuple) ->
   end,
 
   Path_handler =
-  fun (LSM) when Message_type == path_data ->
+  fun (LSM) when MType == path_data ->
         Path_data_tuple = nl_hf:update_path(SM, Recv_tuple),
-        {_, _, _, _, _, New_path, _, _, _} = Path_data_tuple,
+        New_path = nl_hf:getv(path, Path_data_tuple),
         nl_hf:update_routing(LSM, New_path);
       (LSM) -> LSM
   end,
 
   Destination_handler =
-  fun (LSM) when Ack_protocol, Flag == ack ->
+  fun (LSM) when Flag == path ->
+        ?TRACE(?ID, "extract path ~p~n", [Recv_tuple]),
+        % create ack path addit
+        LSM;
+      (LSM) when Ack_protocol, Flag == ack ->
         {Hops, Ack_Pkg_ID} = nl_hf:extract_response(Payload),
         ?TRACE(?ID, "extract ack ~p ~p ~p~n", [Hops, Ack_Pkg_ID, Payload]),
-        Send_tuple = nl_hf:create_response(SM, dst_reached, Ack_Pkg_ID, NL_Src, NL_Dst, 0),
+        Send_tuple = nl_hf:create_response(SM, dst_reached, MType, Ack_Pkg_ID, NL_Src, NL_Dst, 0),
         Wait_ack = fsm:check_timeout(SM, {ack_timeout, {Ack_Pkg_ID, NL_Dst, NL_Src}}),
         [nl_hf:pop_transmission(__, Recv_tuple),
          nl_hf:fill_transmission(__, fifo, Send_tuple),
          Ack_handler(__, Wait_ack, Ack_Pkg_ID, Hops)
         ](LSM);
       (LSM) when Ack_protocol ->
-        Send_tuple = nl_hf:create_response(SM, ack, Pkg_ID, NL_Src, NL_Dst, 0),
+        Send_tuple = nl_hf:create_response(SM, ack, MType, Pkg_ID, NL_Src, NL_Dst, 0),
         ?TRACE(?ID, "create ack ~p~n", [Send_tuple]),
         [Path_handler(__),
          nl_hf:fill_transmission(__, fifo, Send_tuple),
          fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, NL_Dst, Payload}})
         ](LSM);
       (LSM) ->
-        Send_tuple = nl_hf:create_response(SM, dst_reached, Pkg_ID, NL_Src, NL_Dst, 0),
+        Send_tuple = nl_hf:create_response(SM, dst_reached, MType, Pkg_ID, NL_Src, NL_Dst, 0),
         [nl_hf:fill_transmission(__, fifo, Send_tuple),
          fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, NL_Dst, Payload}})
         ](LSM)
@@ -547,6 +597,10 @@ process_destination(SM, Message_type, Recv_tuple) ->
 
 % check if same package was received from other src
 % delete message, if received dst_reached wiht same pkgID and reverse src, dst
+process_package(SM, path, Tuple) ->
+  [nl_hf:postpone_queue(__),
+   process_package(__, path_addit, Tuple)
+  ](SM);
 process_package(SM, dst_reached, Tuple) ->
   [nl_hf:update_received(__, Tuple),
    nl_hf:pop_transmission(__, Tuple),
@@ -556,28 +610,29 @@ process_package(SM, _Flag, Tuple) ->
   Protocol_name = share:get(SM, protocol_name),
   Protocol_config = share:get(SM, protocol_config, Protocol_name),
   Local_Address = share:get(SM, local_address),
-  {_, _, TTL, Src, Dst, _Path, _Rssi, _Integrity, _Payload} = Tuple,
+  [TTL, Src, Dst] = nl_hf:getv([ttl, src, dst], Tuple),
   {Exist, QTTL} = nl_hf:exists_received(SM, Tuple),
 
-  Probability =
+  % TODO check integrity later
+  Relay =
   if Protocol_config#pr_conf.prob ->
     check_probability(SM);
   true -> true
   end,
 
-  ?TRACE(?ID, "process_package : Exist ~p  TTL ~p QTTL ~p Recv Tuple ~p Probability ~p~n",
-              [Exist, TTL, QTTL, Tuple, Probability]),
+  ?TRACE(?ID, "process_package : Exist ~p  TTL ~p QTTL ~p Recv Tuple ~p Relay ~p~n",
+              [Exist, TTL, QTTL, Tuple, Relay]),
 
   Processed_handler =
   fun (LSM) when QTTL == dst_reached ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
-      (LSM) when not Exist, not Probability ->
+      (LSM) when not Exist, not Relay ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
       (LSM) when not Exist ->
        nl_hf:set_event_params(LSM, {if_processed, not_processed});
       (LSM) when Src =:= Local_Address; Dst =:= Local_Address ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
-      (LSM) when TTL < QTTL, not Probability ->
+      (LSM) when TTL < QTTL, not Relay ->
        nl_hf:set_event_params(LSM, {if_processed, processed});
       (LSM) when TTL < QTTL ->
        nl_hf:set_event_params(LSM, {if_processed, not_processed});
@@ -619,7 +674,7 @@ multi_array(0, _, P) -> P;
 multi_array(Snbr, Pmax, P) -> multi_array(Snbr - 1, Pmax, P * Pmax).
 
 maybe_pick(SM) ->
-  Q = share:get(SM, transmission_queue),
+  Q = share:get(SM, transmission),
   Sensing = nl_hf:get_params_timeout(SM, sensing_timeout),
 
   case queue:is_empty(Q) of

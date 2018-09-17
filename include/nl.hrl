@@ -61,7 +61,7 @@
 -define(TYPE_MSG_MAX, 5).
 -define(TTL, 3).
 -define(TRANSMISSION_QUEUE_SIZE, 30).
--define(PKG_ID_MAX, 63).
+-define(PKG_ID_MAX, 255).
 -define(ADDRESS_MAX, 63).
 -define(MAX_LEN_PATH, 63).
 -define(MAX_LEN_NEIGBOURS, 63).
