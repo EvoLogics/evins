@@ -44,7 +44,7 @@
 -export([add_event_params/2, find_event_params/3, find_event_params/2]).
 -export([nl2mac_address/1, get_routing_address/2, nl2at/3, flag2num/1, queue_push/4, queue_push/3]).
 -export([decrease_retries/2, rand_float/2, update_states/1, count_flag_bits/1]).
--export([create_response/7, recreate_response/3, extract_response/1, prepare_path/5, recreate_path/5]).
+-export([create_response/8, recreate_response/3, extract_response/1, extract_response/2, prepare_path/5, recreate_path/4]).
 -export([process_set_command/2, process_get_command/2, set_processing_time/3,fill_statistics/2, fill_statistics/3, fill_statistics/5]).
 -export([update_path/2, update_routing/2, update_received/2, routing_exist/2]).
 -export([getv/2, geta/1, replace/3]).
@@ -163,12 +163,17 @@ code_send_tuple(SM, Tuple) ->
       {PkgID, error};
   true ->
       DTuple = create_default(SM),
+      MType = specify_mtype(Protocol_Name, Flag),
+
       RTuple =
       replace(
-        [flag, id, ttl, src, dst, path, payload],
-        [Flag, PkgID, TTL, Src, Dst, Path, Payload], DTuple),
+        [flag, id, ttl, src, dst, mtype, path, payload],
+        [Flag, PkgID, TTL, Src, Dst, MType, Path, Payload], DTuple),
       {PkgID, RTuple}
   end.
+
+specify_mtype(icrpr, data) -> path_data;
+specify_mtype(_, _) -> data.
 
 list_push(SM, LName, Item, Max) ->
   L = share:get(SM, LName),
@@ -210,7 +215,10 @@ geta(Tuple) ->
 getv(Types, Tuple) when is_list(Types) ->
   lists:foldr(fun(Type, L) -> [getv(Type, Tuple) | L] end, [], Types);
 getv(Type, Tuple) when is_atom(Type) ->
-  {Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity, Payload} = Tuple,
+  PT =
+  case Tuple of {_Retries, T} -> T; _-> Tuple end,
+  {Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity, Payload} = PT,
+
   Structure =
   [{flag, Flag}, {id, PkgID}, {ttl, TTL}, {src, Src}, {dst, Dst},
    {mtype, MType}, {path, Path}, {rssi, Rssi}, {integrity, Integrity},
@@ -249,8 +257,8 @@ postpone_queue(SM) ->
   ](SM).
 
 postpone_queue(SM, Qname1, Qname2) ->
-  TQ = share:get(SM, Qname1),
-  PTQ = share:get(SM, Qname2),
+  TQ = share:get(SM, nothing, Qname1, queue:new()),
+  PTQ = share:get(SM, nothing, Qname2, queue:new()),
   move_data(SM, Qname1, Qname2, TQ, queue:new(), PTQ).
 
 move_data(SM, Qname1, Qname2, {[],[]}, RQ, NQ) ->
@@ -260,6 +268,7 @@ move_data(SM, Qname1, Qname2, {[],[]}, RQ, NQ) ->
 move_data(SM, Qname1, Qname2, Q, RQ, NQ) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
   Flag = getv(flag, Q_Tuple),
+  % TODO: ack + data, dst_reached + data
   if Flag == data; Flag == ack; Flag == dst_reached ->
     move_data(SM, Qname1, Qname2, Q_Tail, RQ, queue:in(Q_Tuple, NQ));
   true ->
@@ -302,39 +311,12 @@ head_transmission(SM) ->
   ?INFO(?ID, "GET HEAD ~p~n", [Head]),
   Head.
 
-pop_transmission(SM, Tuple) ->
-  pop_transmission(SM, getv(flag, Tuple), Tuple).
-
-pop_transmission(SM, ack, Tuple) ->
-  Q = share:get(SM, transmission),
-  Payload = getv(payload, Tuple),
-  {_, PkgID} = extract_response(Payload),
-  Ack_tuple = replace(id, PkgID, Tuple),
-  ?INFO(?ID, ">>>>>>>>>>> pop_transmission Tuple ~p  ~p~n", [Tuple, Q]),
-
-  SMP = pop_tq_helper(SM, Ack_tuple, Q, queue:new()),
-  pop_tq_helper(SMP, Tuple, share:get(SMP, transmission), queue:new());
-  %[pop_tq_helper(__, Ack_tuple, Q, queue:new()),
-  % pop_tq_helper(__, Tuple, share:get(__, transmission), queue:new())
-  %](SM);
-
-pop_transmission(SM, dst_reached, Tuple) ->
-  Q = share:get(SM, transmission),
-  Payload = getv(payload, Tuple),
-  {_, PkgID} = extract_response(Payload),
-  Dst_reached_tuple = replace(id, PkgID, Tuple),
-  ?INFO(?ID, ">>>>>>>>>>> pop_transmission ~p ~p~n", [Tuple, Q]),
-  pop_tq_helper(SM, Dst_reached_tuple, Q, queue:new());
-
 pop_transmission(SM, head, Tuple) ->
   Qname = transmission,
   Q = share:get(SM, Qname),
   Head = head_transmission(SM),
 
-  [Flag, PkgID, Src, Dst, Payload] = getv([flag, id, src, dst, payload], Tuple),
-  [QFlag, QPkgID, QSrc, QDst, QPayload] = getv([flag, id, src, dst, payload], Head),
-
-  Pop_hadler =
+  Pop_handler =
   fun(LSM) ->
     {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
     ?TRACE(?ID, "deleted Tuple ~p from  ~p~n",[Tuple, Q]),
@@ -344,17 +326,14 @@ pop_transmission(SM, head, Tuple) ->
     ](LSM)
   end,
 
-  Clear_handler =
-  fun (LSM, F) when QFlag == F, QPkgID == PkgID, QSrc == Src, QDst == Dst, QPayload == Payload ->
-        Pop_hadler(LSM);
-      (LSM, _) when QPkgID == PkgID, QSrc == Dst, QDst == Src ->
-        Pop_hadler(LSM);
-      (LSM, _) ->
-        clear_sensing_timeout(LSM, Tuple)
-  end,
-  Clear_handler(SM, Flag);
+  Response = is_response(SM, Head, Tuple),
+  ?TRACE(?ID, "pop_transmission head Response ~p ~p ~p~n", [Response, Head, Tuple]),
+  if Response -> Pop_handler(SM);
+  true ->
+    clear_sensing_timeout(SM, Tuple)
+  end.
 
-pop_transmission(SM, _, Tuple) ->
+pop_transmission(SM, Tuple) ->
   Q = share:get(SM, transmission),
   ?INFO(?ID, ">>>>>>>>>>> pop_transmission ~p ~p~n", [Tuple, Q]),
   pop_tq_helper(SM, Tuple, Q, queue:new()).
@@ -369,10 +348,6 @@ pop_tq_helper(SM, _Tuple, {[],[]}, NQ) ->
   ?TRACE(?ID, "Current transmission queue ~p~n", [NQ]),
   share:put(SM, transmission, NQ);
 pop_tq_helper(SM, Tuple, Q, NQ) ->
-  Protocol_Name = share:get(SM, protocol_name),
-  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
-  Ack_protocol = Protocol_Config#pr_conf.ack,
-  [Flag, PkgID, Src, Dst, Payload] = getv([flag, id, src, dst, payload], Tuple),
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
   Pop_handler =
   fun (LSM) ->
@@ -384,106 +359,184 @@ pop_tq_helper(SM, Tuple, Q, NQ) ->
      pop_tq_helper(__, Tuple, Q_Tail, NQ)
     ](LSM)
   end,
-  Ack_handler =
-  fun (LSM, Id) when Id == PkgID ->
-        Pop_handler(LSM);
-      (LSM, _) ->
-        pop_tq_helper(LSM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
-  end,
 
-  ?TRACE(?ID, "pop_transmission ~p ~p ~p~n", [Flag, Q_Tuple, Tuple]),
-  [QFlag, QPkgID, QSrc, QDst, QPayload] = getv([flag, id, src, dst, payload], Q_Tuple),
-  Flag_handler =
-  fun (LSM, ack, dst_reached) when QSrc == Dst, QDst == Src ->
-        {_, Ack_Pkg_ID} = nl_hf:extract_response(QPayload),
-        ?TRACE(?ID, "compare Ack_Pkg_ID ~p PkgID ~p~n", [Ack_Pkg_ID, PkgID]),
-        Ack_handler(LSM, Ack_Pkg_ID);
-      (LSM, ack, _) when QPkgID == PkgID, QSrc == Src, QDst == Dst ->
-        Pop_handler(LSM);
-      (LSM, data, dst_reached) when QPkgID == PkgID, QSrc == Dst, QDst == Src ->
-        Pop_handler(LSM);
-      (LSM, data, ack) when QPkgID == PkgID, QSrc == Dst, QDst == Src ->
-        Pop_handler(LSM);
-      (LSM, data, dst_reached) when QPkgID == PkgID, QSrc == Src, QDst == Dst, Ack_protocol ->
-        Pop_handler(LSM);
-      (LSM, F, F) when QPkgID == PkgID, QSrc == Src, QDst == Dst, QPayload == Payload ->
-        Pop_handler(LSM);
-      (LSM, _, _) ->
-        pop_tq_helper(LSM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
-  end,
-  Flag_handler(SM, QFlag, Flag).
+  Response = is_response(SM, Q_Tuple, Tuple),
+  ?TRACE(?ID, "pop_transmission Response ~p ~p ~p~n", [Response, Q_Tuple, Tuple]),
+
+  if Response ->
+    Pop_handler(SM);
+  true ->
+    pop_tq_helper(SM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
+  end.
+
+is_response(SM, Tuple1, Tuple2) ->
+  Flag1 = getv(flag, Tuple1),
+  Flag2 = getv(flag, Tuple2),
+  is_response(SM, Flag1, Flag2, Tuple1, Tuple2).
+
+is_same(SM, Tuple1, Tuple2) ->
+  Flag1 = getv(flag, Tuple1),
+  Flag2 = getv(flag, Tuple2),
+  is_same(SM, Flag1, Flag2, Tuple1, Tuple2).
+
+is_same(_, data, data, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [PkgID2, Src2, Dst2, MType2, Payload2] =
+    getv([id, src, dst, mtype, payload], Tuple2),
+  (PkgID1 == PkgID2) and (Src1 == Src2) and (Dst1 == Dst2)
+  and (MType1 == MType2) and (Payload1 == Payload2);
+is_same(_, ack, ack, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [PkgID2, Src2, Dst2, MType2, Payload2] =
+    getv([id, src, dst, mtype, payload], Tuple2),
+  Hash1 = nl_hf:extract_response(hash, Payload1),
+  Hash2 = nl_hf:extract_response(hash, Payload2),
+  (PkgID1 == PkgID2) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2)
+  and (Hash1 == Hash2);
+is_same(_, dst_reached, dst_reached, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1] =
+    getv([id, src, dst, mtype], Tuple1),
+  [PkgID2, Src2, Dst2, MType2] =
+    getv([id, src, dst, mtype], Tuple2),
+  (PkgID1 == PkgID2) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2);
+is_same(_, _, _, _, _) ->
+  false.
+
+is_response(SM, data, data, Tuple1, Tuple2) ->
+  is_same(SM, data, data, Tuple1, Tuple2);
+is_response(SM, ack, ack, Tuple1, Tuple2) ->
+  is_same(SM, ack, ack, Tuple1, Tuple2);
+is_response(SM, dst_reached, dst_reached, Tuple1, Tuple2) ->
+  is_same(SM, dst_reached, dst_reached, Tuple1, Tuple2);
+is_response(SM, data, dst_reached, Tuple1, Tuple2) ->
+  Protocol_Name = share:get(SM, protocol_name),
+  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
+  Ack_protocol = Protocol_Config#pr_conf.ack,
+  is_response(SM, Ack_protocol, data, dst_reached, Tuple1, Tuple2);
+is_response(_, ack, dst_reached, Tuple1, Tuple2) ->
+  [Src1, Dst1, MType1, Payload1] =
+    getv([src, dst, mtype, payload], Tuple1),
+  [Src2, Dst2, MType2, Payload2] =
+    getv([src, dst, mtype, payload], Tuple2),
+  [Ack_Pkg_ID, Hash1] = nl_hf:extract_response([id, hash], Payload1),
+  [Dst_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
+  (Ack_Pkg_ID == Dst_Pkg_ID) and (Src1 == Dst2)
+  and (Src2 == Dst1) and (MType1 == MType2)
+  and (Hash1 == Hash2);
+is_response(_, data, ack, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [Src2, Dst2, MType2, Payload2] =
+    getv([src, dst, mtype, payload], Tuple2),
+  <<Hash1:16, _/binary>> = crypto:hash(md5, Payload1),
+  [Ack_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
+  (PkgID1 == Ack_Pkg_ID) and (Src1 == Dst2)
+  and (Dst1 == Src2) and (MType1 == MType2)
+  and (Hash1 == Hash2);
+is_response(_, _, _, _, _) ->
+  false.
+
+is_response(_, true, data, dst_reached, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [Src2, Dst2, MType2, Payload2] =
+    getv([src, dst, mtype, payload], Tuple2),
+  <<Hash1:16, _/binary>> = crypto:hash(md5, Payload1),
+  [Dst_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
+  (PkgID1 == Dst_Pkg_ID) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2)
+  and (Hash1 == Hash2);
+is_response(_, false, data, dst_reached, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [Src2, Dst2, MType2, Payload2] =
+    getv([src, dst, mtype, payload], Tuple2),
+  <<Hash1:16, _/binary>> = crypto:hash(md5, Payload1),
+  [Dst_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
+  (PkgID1 == Dst_Pkg_ID) and (Src1 == Dst2)
+  and (Dst1 == Src2) and (MType1 == MType2)
+  and (Hash1 == Hash2).
+
+data_reached(SM, Tuple1, Tuple2) ->
+  Flag1 = getv(flag, Tuple1),
+  Flag2 = getv(flag, Tuple2),
+  data_reached(SM, Flag1, Flag2, Tuple1, Tuple2).
+data_reached(_, ack, data, Tuple1, Tuple2) ->
+  [Src1, Dst1, MType1, Payload1] =
+    getv([src, dst, mtype, payload], Tuple1),
+  [PkgID2, Src2, Dst2, MType2, Payload2] =
+    getv([id, src, dst, mtype, payload], Tuple2),
+  <<Hash2:16, _/binary>> = crypto:hash(md5, Payload2),
+  [Ack_Pkg_ID, Hash1] = nl_hf:extract_response([id, hash], Payload1),
+  (PkgID2 == Ack_Pkg_ID) and (Src1 == Dst2)
+  and (Dst1 == Src2) and (MType1 == MType2)
+  and (Hash1 == Hash2);
+data_reached(SM, dst_reached, data, Tuple1, Tuple2) ->
+  Protocol_Name = share:get(SM, protocol_name),
+  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
+  Ack_protocol = Protocol_Config#pr_conf.ack,
+  [Src1, Dst1, MType1, Payload1] =
+    getv([src, dst, mtype, payload], Tuple1),
+  [PkgID2, Src2, Dst2, MType2, Payload2] =
+    getv([id, src, dst, mtype, payload], Tuple2),
+  [Dst_Pkg_ID, Hash1] = nl_hf:extract_response([id, hash], Payload1),
+  <<Hash2:16, _/binary>> = crypto:hash(md5, Payload2),
+  (Ack_protocol and ((PkgID2 == Dst_Pkg_ID) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2)
+  and (Hash1 == Hash2)) ) or
+  ((PkgID2 == Dst_Pkg_ID) and (Src1 == Dst2)
+  and (Dst1 == Src2) and (MType1 == MType2)
+  and (Hash1 == Hash2));
+data_reached(_, _, _, _, _) ->
+  false.
 
 clear_sensing_timeout(SM, Tuple) ->
-  ?TRACE(?ID, "Clear sensing timeout ~p~n",[Tuple]),
-  [PkgID, Src, Dst, Payload] = getv([id, src, dst, payload], Tuple),
+  ?TRACE(?ID, "Clear sensing timeout ~p in ~p~n",[Tuple, SM#sm.timeouts]),
   TRefList =
   filter(
    fun({E, TRef}) ->
-       case E of
+      case E of
           {sensing_timeout, STuple} ->
-            [QFlag, QPkgID, QSrc, QDst, QPayload] = getv([flag, id, src, dst, payload], STuple),
-            Cancel = fun (Ref) -> timer:cancel(Ref), false end,
-            Sensing_handler =
-            fun (data) when QPkgID == PkgID, QSrc == Src, QDst == Dst, QPayload == Payload ->
-                  Cancel(TRef);
-                (dst_reached) when QPkgID == PkgID, QSrc == Src, QDst == Dst ->
-                  Cancel(TRef);
-                (ack) when QPkgID == PkgID, QSrc == Src, QDst == Dst ->
-                  Cancel(TRef);
-                (_) when QPkgID == PkgID, QSrc == Dst, QDst == Src ->
-                  Cancel(TRef);
-                (_) -> true
-            end,
-            Sensing_handler(QFlag);
-            _-> true
-       end
-   end, SM#sm.timeouts),
+            Response = is_response(SM, STuple, Tuple),
+            if Response -> timer:cancel(TRef), false;
+            true -> true
+            end;
+          _-> true
+
+      end
+  end, SM#sm.timeouts),
+  ?TRACE(?ID, "Cleared ~p~n",[TRefList]),
   SM#sm{timeouts = TRefList}.
 
-
 set_zero_retries(SM, Tuple) ->
-  set_zero_retries(SM, getv(flag, Tuple), Tuple).
-
-set_zero_retries(SM, Flag, Tuple) when Flag == ack;
-                                       Flag == dst_reached ->
   Q = share:get(SM, retriesq),
-  Payload = getv(payload, Tuple),
-  {_, PkgID} = extract_response(Payload),
-  Processed_tuple = replace(id, PkgID, Tuple),
-
-  SMZ = zero_rq_retries(SM, Processed_tuple, Q, queue:new()),
-  zero_rq_retries(SMZ, Tuple, share:get(SMZ, retriesq), queue:new());
-  %[zero_rq_retries(__, Processed_tuple, Q, queue:new()),
-  % zero_rq_retries(__, Tuple, share:get(__, retriesq), queue:new())
-  %](SM);
-set_zero_retries(SM, _, Tuple) ->
-  Q = share:get(SM, retriesq),
-  ?TRACE(?ID, "set zero to Tuple ~p in retry queue ~p~n",[Tuple, Q]),
   zero_rq_retries(SM, Tuple, Q, queue:new()).
 
 zero_rq_retries(SM, _Tuple, {[],[]}, NQ) ->
+  ?TRACE(?ID, "current retry queue ~p~n",[NQ]),
   share:put(SM, retriesq, NQ);
 zero_rq_retries(SM, Tuple, Q, NQ) ->
-  [PkgID, Src, Dst, Payload] = getv([id, src, dst, payload], Tuple),
-
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  Decrease_handler =
-  fun (LSM, QT) ->
-      Decreased_Q = queue_push(NQ, {-1, QT}, ?RQ_SIZE),
-      zero_rq_retries(LSM, Tuple, Q_Tail, Decreased_Q)
-  end,
-
   {_Retries, QT} = Q_Tuple,
-  [QFlag, QPkgID, QSrc, QDst, QPayload] = getv([flag, id, src, dst, payload], QT),
-  QT_handler =
-  fun (LSM, data) when QPkgID == PkgID, QSrc == Src, QDst == Dst, QPayload == Payload ->
-        Decrease_handler(LSM, QT);
-      (LSM, _) when QPkgID == PkgID, QSrc == Src, QDst == Dst ->
-        Decrease_handler(LSM, QT);
-      (LSM, _) ->
-        zero_rq_retries(LSM, Tuple, Q_Tail, queue_push(NQ, Q_Tuple, ?RQ_SIZE))
-  end,
-  QT_handler(SM, QFlag).
+  Same = is_same(SM, QT, Tuple),
+  Response = is_response(SM, QT, Tuple),
+  ?TRACE(?ID, "zero_rq_retries Response ~p Same ~p ~p ~p~n", [Response, Same, QT, Tuple]),
+
+  case Same of
+    true ->
+      Decreased_Q1 = queue_push(NQ, {-1, QT}, ?RQ_SIZE),
+      zero_rq_retries(SM, Tuple, Q_Tail, Decreased_Q1);
+    false when Response ->
+      Decreased_Q1 = queue_push(NQ, {-1, QT}, ?RQ_SIZE),
+      Decreased_Q2 = queue_push(Decreased_Q1, {-1, Tuple}, ?RQ_SIZE),
+      zero_rq_retries(SM, Tuple, Q_Tail, Decreased_Q2);
+    _ ->
+      zero_rq_retries(SM, Tuple, Q_Tail, queue_push(NQ, Q_Tuple, ?RQ_SIZE))
+  end.
 
 decrease_retries(SM, Tuple) ->
   Q = share:get(SM, retriesq),
@@ -502,8 +555,6 @@ decrease_rq_helper(SM, _Tuple, inside, {[],[]}, NQ) ->
 decrease_rq_helper(SM, Tuple, Inside, Q, NQ) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
   {Retries, QT} = Q_Tuple,
-  [Flag, PkgID, Src, Dst, Payload] = getv([flag, id, src, dst, payload], Tuple),
-  [QPkgID, QSrc, QDst, QPayload] = getv([id, src, dst, payload], QT),
   Pop_queue =
   fun (LSM, Tries) when Tries =< 0 ->
         ?TRACE(?ID, "drop Tuple ~p from  ~p, retries ~p ~n",[Q_Tuple, Q, Tries]),
@@ -516,16 +567,13 @@ decrease_rq_helper(SM, Tuple, Inside, Q, NQ) ->
         Decreased_Q = queue_push(NQ, {Tries - 1, Tuple}, ?RQ_SIZE),
         decrease_rq_helper(LSM, Tuple, inside, Q_Tail, Decreased_Q)
   end,
-  Flag_handler =
-  fun (LSM, data) when QPkgID == PkgID, QSrc == Src, QDst == Dst, QPayload == Payload ->
-        Pop_queue(LSM, Retries);
-      (LSM, _) when QPkgID == PkgID, QSrc == Src, QDst == Dst ->
-        Pop_queue(LSM, Retries);
-      (LSM, _) ->
-        decrease_rq_helper(LSM, Tuple, Inside, Q_Tail, queue_push(NQ, Q_Tuple, ?RQ_SIZE))
-  end,
 
-  Flag_handler(SM, Flag).
+  Same = is_same(SM, QT, Tuple),
+  ?TRACE(?ID, "decrease_rq_helper ~p ~p ~p~n", [Same, QT, Tuple]),
+  if Same -> Pop_queue(SM, Retries);
+  true ->
+    decrease_rq_helper(SM, Tuple, Inside, Q_Tail, queue_push(NQ, Q_Tuple, ?RQ_SIZE))
+  end.
 
 decrease_TTL(SM) ->
   Q = share:get(SM, transmission),
@@ -551,57 +599,43 @@ decrease_TTL_tq(SM, Q, NQ) ->
   end,
   TTL_handler(SM, Flag, QTTL - 1).
 
+exists_received(Tuple) -> Tuple.
 exists_received(SM, Tuple) ->
-  exists_rq_response(SM, Tuple, share:get(SM, received)).
+  Q = share:get(SM, received),
+  LQ = queue:to_list(Q),
+  Reached =
+    length(lists:filtermap(
+      fun(Q_Tuple) ->
+        R = data_reached(SM, Q_Tuple, Tuple),
+        if R -> true; true -> false end
+      end, LQ)) > 0,
 
-exists_rq_response(Tuple) -> Tuple.
-exists_rq_response(SM, Tuple, {[],[]}) ->
-  exists_rq_ttl(SM, Tuple, share:get(SM, received));
-exists_rq_response(SM, Tuple, Q) ->
-  [Flag, PkgID, Src, Dst, Payload] = getv([flag, id, src, dst, payload], Tuple),
-  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  ?TRACE(?ID, "exists_rq_response ~p ~p~n", [Q_Tuple, Tuple]),
-  PkgID_handler =
-  fun (_, QFlag, Id, Id) when QFlag == ack; QFlag == dst_reached ->
-        exists_rq_response({true, dst_reached});
-      (LSM, _, _, _) ->
-        exists_rq_response(LSM, Tuple, Q_Tail)
-  end,
+  SameQTTL =
+    lists:filtermap(
+      fun(Q_Tuple) ->
+        QTTL = getv(ttl, Q_Tuple),
+        R = is_same(SM, Q_Tuple, Tuple),
+        if R -> {true, QTTL}; true -> false end
+      end, LQ),
+  Same = length(SameQTTL) > 0,
+  Response =
+    length(lists:filtermap(
+      fun(Q_Tuple) ->
+        R = is_response(SM, Q_Tuple, Tuple),
+        if R -> {true, Q_Tuple}; true -> false end
+      end, LQ)) > 0,
 
-  [QFlag, QSrc, QDst, QPayload] = getv([flag, src, dst, payload], Q_Tuple),
-  Dst_handler =
-  fun (LSM, data, dst_reached) when QSrc == Src, QDst == Dst ->
-        {_, Dst_PkgID} = extract_response(QPayload),
-        PkgID_handler(LSM, dst_reached, Dst_PkgID, PkgID);
-      (LSM, ack, dst_reached) when QSrc == Dst, QDst == Src ->
-        {_, Dst_PkgID} = extract_response(QPayload),
-        {_, Ack_PkgID} = extract_response(Payload),
-        PkgID_handler(LSM, dst_reached, Dst_PkgID, Ack_PkgID);
-      (LSM, data, _) when QSrc == Dst, QDst == Src ->
-        {_, Dst_PkgID} = extract_response(QPayload),
-        PkgID_handler(LSM, QFlag, PkgID, Dst_PkgID);
-      (LSM, _, _) ->
-        exists_rq_response(LSM, Tuple, Q_Tail)
-  end,
-  Dst_handler(SM, Flag, QFlag).
+  ?TRACE(?ID, "exists_received Dst : ~p Same: ~p Response: ~p : ~p ~p~n",
+    [Reached, Same, Response, Tuple, Q]),
 
-exists_rq_ttl(Tuple) ->
-  Tuple.
-exists_rq_ttl(_SM, _Tuple, {[],[]}) ->
-  {false, 0};
-exists_rq_ttl(SM, Tuple, Q) ->
-  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  [PkgID, Src, Dst, Payload] = getv([id, src, dst, payload], Tuple),
-  [QFlag, QPkgID, QTTL, QSrc, QDst, QPayload] = getv([flag, id, ttl, src, dst, payload], Q_Tuple),
-  TTL_handler =
-  fun (_LSM, data) when QPkgID == PkgID, QSrc == Src, QDst == Dst, QPayload == Payload ->
-        exists_rq_ttl({true, QTTL});
-      (_LSM, ack) when QPkgID == PkgID, QSrc == Src, QDst == Dst ->
-        exists_rq_ttl({true, QTTL});
-      (LSM, _) ->
-        exists_rq_ttl(LSM, Tuple, Q_Tail)
-  end,
-  TTL_handler(SM, QFlag).
+  case Reached of
+    true -> exists_received({true, 0});
+    _ when Same ->
+      TTL = hd(SameQTTL),
+      exists_received({true, TTL});
+    _ when Response -> exists_received({false, dst_reached});
+    _ -> {false, 0}
+  end.
 
 update_received(SM, Tuple) ->
   Q = share:get(SM, received),
@@ -613,13 +647,13 @@ update_rq_helper(SM, _, inside, {[],[]}) ->
   SM;
 update_rq_helper(SM, Tuple, Inside, Q) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  [Flag, PkgID, Src, Dst] = getv([flag, id, src, dst], Tuple),
-  [QFlag, QPkgID, QSrc, QDst] = getv([flag, id, src, dst], Q_Tuple),
 
-  if QFlag == Flag, QPkgID == PkgID, QSrc == Src, QDst == Dst ->
-      update_rq_helper(SM, Tuple, inside, Q_Tail);
+  Same = is_same(SM, Q_Tuple, Tuple),
+  ?TRACE(?ID, "update_received Same ~p ~p ~p~n", [Same, Q_Tuple, Tuple]),
+  if Same ->
+    update_rq_helper(SM, Tuple, inside, Q_Tail);
   true ->
-      update_rq_helper(SM, Tuple, Inside, Q_Tail)
+    update_rq_helper(SM, Tuple, Inside, Q_Tail)
   end.
 
 update_received_TTL(SM, Tuple) ->
@@ -627,27 +661,21 @@ update_received_TTL(SM, Tuple) ->
   update_TTL_rq_helper(SM, Tuple, Q, queue:new()).
 
 update_TTL_rq_helper(SM, Tuple, {[],[]}, NQ) ->
-  ?INFO(?ID, "change TTL for Tuple ~p in the ~p~n",[Tuple, NQ]),
+  ?INFO(?ID, "change TTL for Tuple ~p~n",[Tuple]),
   share:put(SM, received, NQ);
 update_TTL_rq_helper(SM, Tuple, Q, NQ) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  [PkgID, TTL, Src, Dst, Payload] = getv([id, ttl, src, dst, payload], Tuple),
-  [QFlag, QPkgID, QTTL, QSrc, QDst, QPayload] =
-    getv([flag, id, ttl, src, dst, payload], Q_Tuple),
+  TTL = getv(ttl, Tuple),
+  QTTL = getv(ttl, Q_Tuple),
 
-  TTL_handler =
-  fun (LSM, true, data) when PkgID == QPkgID, Src == QSrc,
-                             Dst == QDst, Payload == QPayload ->
-        NT = replace(ttl, TTL, Q_Tuple),
-        update_TTL_rq_helper(LSM, Tuple, Q_Tail, queue:in(NT, NQ));
-      (LSM, true, ack) when PkgID == QPkgID, Src == QSrc, Dst == QDst ->
-        NT = replace(ttl, TTL, Q_Tuple),
-        update_TTL_rq_helper(LSM, Tuple, Q_Tail, queue:in(NT, NQ));
-      (LSM, _, _) ->
-        update_TTL_rq_helper(LSM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
-  end,
-
-  TTL_handler(SM, TTL < QTTL, QFlag).
+  Same = is_same(SM, Q_Tuple, Tuple),
+  ?TRACE(?ID, "update_received_TTL head Same ~p ~p ~p ~p ~p~n", [Same, Q_Tuple, Tuple, TTL, QTTL]),
+  if Same and (TTL < QTTL) ->
+    NT = replace(ttl, TTL, Q_Tuple),
+    update_TTL_rq_helper(SM, Tuple, Q_Tail, queue:in(NT, NQ));
+  true ->
+    update_TTL_rq_helper(SM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
+  end.
 %%----------------------------Converting NL -------------------------------
 %TOD0:!!!!
 % return no_address, if no info
@@ -718,13 +746,16 @@ strip_path(Address, Path, [_ | T]) ->
   strip_path(Address, Path, T).
 
 %%----------------------------Parse NL functions -------------------------------
-fill_protocol_info_header(_, Protocol_Config, path, Tuple) when Protocol_Config#pr_conf.evo->
+%fill_protocol_info_header(_, _, Flag, MType, {_, _, _, Transmit_Len, Data}) when Flag == ack;
+                                                                                  %Flag == dst_reached ->
+%  fill_data_header(MType, Transmit_Len, Data);
+fill_protocol_info_header(icrpr, _, data, _, {Path, _, _, Transmit_Len, Data}) ->
+  fill_path_data_header(Path, Transmit_Len, Data);
+fill_protocol_info_header(_, Protocol_Config, path, _, Tuple) when Protocol_Config#pr_conf.evo->
   {Path, Rssi, Integrity, _, _} = Tuple,
   fill_path_evo_header(Path, Rssi, Integrity);
-fill_protocol_info_header(icrpr, _, data, {Path, _, _, Transmit_Len, Data}) ->
-  fill_path_data_header(Path, Transmit_Len, Data);
-fill_protocol_info_header(_, _, _, {_, _, _, Transmit_Len, Data}) ->
-  fill_data_header(Transmit_Len, Data).
+fill_protocol_info_header(_, _, _, MType, {_, _, _, Transmit_Len, Data}) ->
+  fill_data_header(MType, Transmit_Len, Data).
 
 % fill_msg(neighbours, Tuple) ->
 %   create_neighbours(Tuple);
@@ -774,59 +805,83 @@ create_nl_at_command(SM, NL) ->
 extract_response(Payload) ->
   C_Bits_PkgID = count_flag_bits(?PKG_ID_MAX),
   C_Bits_Hops = count_flag_bits(?MAX_LEN_PATH),
-  <<Hops:C_Bits_Hops, Pkg_ID:C_Bits_PkgID, _Rest/bitstring>> = Payload,
-  {Hops, Pkg_ID}.
+  <<Hops:C_Bits_Hops, PkgID:C_Bits_PkgID, Rest/bitstring>> = Payload,
 
-create_response(SM, dst_reached, MType, Pkg_ID, Src, Dst, Hops) ->
-  create_response(SM, dst_reached, MType, Pkg_ID, Src, Dst, 0, Hops);
-create_response(SM, ack, MType, Pkg_ID, Src, Dst, Hops) ->
+  Data_bin = (bit_size(Payload) rem 8) =/= 0,
+  Hash =
+  if Data_bin =:= false ->
+    Add = bit_size(Rest) rem 8,
+    <<_:Add, H/binary>> = Rest, H;
+  true -> Rest
+  end,
+
+  {Hops, PkgID, binary_to_integer(Hash)}.
+
+extract_response(Types, Payload) when is_list(Types) ->
+  lists:foldr(fun(Type, L) -> [extract_response(Type, Payload) | L] end, [], Types);
+extract_response(Type, Payload) ->
+  {Hops, PkgID, Hash} = extract_response(Payload),
+  Structure =
+  [{hops, Hops}, {id, PkgID}, {hash, Hash}],
+  Map = maps:from_list(Structure),
+  {ok, Val} = maps:find(Type, Map),
+  Val.
+
+create_response(SM, dst_reached, MType, Pkg_ID, Src, Dst, Hops, Payload) ->
+  create_response(SM, dst_reached, MType, Pkg_ID, Src, Dst, 0, Hops, Payload);
+create_response(SM, ack, MType, Pkg_ID, Src, Dst, Hops, Payload) ->
   Max_ttl = share:get(SM, ttl),
-  create_response(SM, ack, MType, Pkg_ID, Src, Dst, Max_ttl, Hops).
+  create_response(SM, ack, MType, Pkg_ID, Src, Dst, Max_ttl, Hops, Payload).
 
 recreate_response(SM, Flag = ack, Tuple) ->
   Payload = getv(payload, Tuple),
-  {Hops, Ack_Pkg_ID} = extract_response(Payload),
-  Coded_payload = encode_response(Hops + 1, Ack_Pkg_ID),
+  [Hops, Ack_Pkg_ID, Hash] = extract_response([hops, id, hash], Payload),
+  Coded_payload = encode_response(Hops + 1, Ack_Pkg_ID, Hash),
   ?TRACE(?ID, "recreate_response ~p Hops ~p ~p ~p ~p~n",
     [Flag, Hops, Ack_Pkg_ID, Tuple, Coded_payload]),
   replace(payload, Coded_payload, Tuple).
 
-create_response(SM, Flag, MType, Pkg_ID, Src, Dst, TTL, Hops) ->
-  Coded_payload = encode_response(Hops, Pkg_ID),
+create_response(SM, Flag, MType, Pkg_ID, Src, Dst, TTL, Hops, Payload) ->
+  <<Hash:16, _/binary>> = crypto:hash(md5, Payload),
+  Coded_payload = encode_response(Hops, Pkg_ID, Hash),
   Incereased = increase_pkgid(SM, Dst, Src),
   Tuple = create_default(SM),
   replace(
     [flag, id, ttl, src, dst, mtype, payload],
     [Flag, Incereased, TTL, Dst, Src, MType, Coded_payload], Tuple).
 
-recreate_path(SM, path_addit, Rssi, Integrity, Tuple) ->
+recreate_path(SM,  Rssi, Integrity, Tuple) ->
   [Path, Path_rssi, Path_integrity] = getv([path, rssi, integrity], Tuple),
   Aver_Rssi = get_average(Rssi, Path_rssi),
   Aver_Integrity = get_average(Integrity, Path_integrity),
   New_path = update_path(SM, Path),
   replace(
-    [Aver_Rssi, Aver_Integrity, New_path],
-    [path, rssi, integrity], Tuple).
+    [path, rssi, integrity],
+    [New_path, Aver_Rssi, Aver_Integrity],
+    Tuple).
 
 prepare_path(SM, Flag, MType, Src, Dst) ->
   Max_ttl = share:get(SM, ttl),
   PkgID = increase_pkgid(SM, Src, Dst),
   Tuple = create_default(SM),
+  New_path = [Src],
   replace(
-    [flag, id, ttl, src, dst, mtype],
-    [Flag, PkgID, Max_ttl, Src, Dst, MType], Tuple).
+    [flag, id, ttl, src, dst, mtype, path],
+    [Flag, PkgID, Max_ttl, Src, Dst, MType, New_path], Tuple).
 
-encode_response(Hops, Pkg_ID) ->
+% TODO: send binary encoded hash
+encode_response(Hops, Pkg_ID, Hash) ->
+  BHash = integer_to_binary(Hash),
   C_Bits_PkgID = count_flag_bits(?PKG_ID_MAX),
   C_Bits_Hops = count_flag_bits(?MAX_LEN_PATH),
   B_Hops = <<Hops:C_Bits_Hops>>,
   B_PkgID = <<Pkg_ID:C_Bits_PkgID>>,
 
-  Tmp_Data = <<B_Hops/bitstring, B_PkgID/bitstring>>,
+  Tmp_Data = <<B_Hops/bitstring, B_PkgID/bitstring, BHash/binary>>,
   Data_Bin = is_binary(Tmp_Data) =:= false or ( (bit_size(Tmp_Data) rem 8) =/= 0),
   if Data_Bin =:= false ->
     Add = (8 - bit_size(Tmp_Data) rem 8) rem 8,
-    <<B_Hops/bitstring, B_PkgID/bitstring, 0:Add>>;
+    <<B_Hops/bitstring, B_PkgID/bitstring, 0:Add, BHash/binary>>;
   true ->
     Tmp_Data
   end.
@@ -878,8 +933,8 @@ extract_payload_nl_header(SM, Payload) ->
   % 6 bits DST
   % rest bits reserved for later (+ 3)
 create_payload_nl_header(SM, Pid, Tuple) ->
-  [Flag, PkgID, TTL, Src, Dst, Path, Rssi, Integrity, Data] =
-    getv([flag, id, ttl, src, dst, path, rssi, integrity, payload], Tuple),
+  [Flag, PkgID, TTL, Src, Dst, Mtype, Path, Rssi, Integrity, Data] =
+    getv([flag, id, ttl, src, dst, mtype, path, rssi, integrity, payload], Tuple),
 
   Max_TTL = share:get(SM, ttl),
   C_Bits_Pid = count_flag_bits(?NL_PID_MAX),
@@ -904,8 +959,8 @@ create_payload_nl_header(SM, Pid, Tuple) ->
   CTuple = {Path, Rssi, Integrity, Transmit_Len, Data},
 
   % TODO: check if Mtype needed
-  Coded_Payload = fill_protocol_info_header(Protocol_Name, Protocol_Config, Flag, CTuple),
-  ?INFO(?ID, "Coded_Payload ~p ~p~n", [Flag, Coded_Payload]),
+  ?INFO(?ID, "Code Payload ~p ~p ~p ~p ~p~n", [Protocol_Name, Protocol_Config, Flag, Mtype, CTuple]),
+  Coded_Payload = fill_protocol_info_header(Protocol_Name, Protocol_Config, Flag, Mtype, CTuple),
 
   Tmp_Data = <<B_Pid/bitstring, B_Flag/bitstring, B_PkgID/bitstring, B_TTL/bitstring,
                B_Src/bitstring, B_Dst/bitstring, Coded_Payload/binary>>,
@@ -941,10 +996,10 @@ fill_path_data_header(Path, TransmitLen, Data) ->
 %-------> data
 % 3b        6b
 %   TYPEMSG   MAX_DATA_LEN
-fill_data_header(TransmitLen, Data) ->
+fill_data_header(Type, TransmitLen, Data) ->
   CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
-  TypeNum = ?TYPEMSG2NUM(data),
+  TypeNum = ?TYPEMSG2NUM(Type),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
   BLenData = <<TransmitLen:CBitsMaxLenData>>,
@@ -1391,7 +1446,7 @@ fill_statistics(SM, data, dst_reached, _) ->
   SM;
 fill_statistics(SM, data, ack, Tuple) ->
   [Src, Dst, Payload] = getv([src, dst, payload], Tuple),
-  {Hops, Ack_Pkg_ID} = extract_response(Payload),
+  [Hops, Ack_Pkg_ID] = extract_response([hops, id], Payload),
   Ack_tuple = {Ack_Pkg_ID, Dst, Src},
   fill_statistics(SM, ack, delivered, Hops, Ack_tuple);
 fill_statistics(SM, data, _, Tuple) ->
@@ -1500,14 +1555,14 @@ set_pt_helper(SM, Type, Tuple, Q, NQ) ->
   Time_handler =
   fun (LSM, transmitted, dst_reached) when QSrc == Dst, QDst == Src ->
           PkgID_handler =
-          fun ({_, Id}) when QPkgID == Id ->
+          fun (Id) when QPkgID == Id ->
                 Recv_Tuple = replace([src, dst], [Dst, Src], STuple),
                 Statistic = {Current_Time, Recv_Time, destination, Duration, State, Hops, Recv_Tuple},
                 Push_queue(LSM, Statistic);
               (_) ->
                 Push_queue(LSM, Q_Tuple)
           end,
-          PkgID_handler(extract_response(Payload));
+          PkgID_handler(extract_response(id, Payload));
         (LSM, transmitted, _) when QPkgID == PkgID, QSrc == Src, QDst == Dst,
                                    QFlag == Flag, QPayload == Payload ->
             Statistic = {Current_Time, Recv_Time, Role, Duration, State, Hops, Tuple},

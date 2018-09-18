@@ -71,7 +71,7 @@
 
 -define(MAX_IM_LEN, 50).
 -define(Q_STATISTICS_SIZE, 300).
--define(RQ_SIZE, 30).
+-define(RQ_SIZE, 100).
 -define(LIST_ALL_PROTOCOLS, [staticr,
            staticrack,
            sncfloodr,
