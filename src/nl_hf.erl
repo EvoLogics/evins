@@ -39,15 +39,16 @@
 -export([extract_payload_nl_header/2, clear_spec_timeout/2]).
 -export([mac2nl_address/1, num2flag/2, add_neighbours/3, list_push/4]).
 -export([head_transmission/1, exists_received/2, update_received_TTL/2,
-         pop_transmission/3, pop_transmission/2, decrease_TTL/1, delete_neighbour/2, postpone_queue/1]).
+         pop_transmission/3, pop_transmission/2, decrease_TTL/1, delete_neighbour/2]).
 -export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, clear_event_params/2, clear_spec_event_params/2]).
 -export([add_event_params/2, find_event_params/3, find_event_params/2]).
 -export([nl2mac_address/1, get_routing_address/2, nl2at/3, flag2num/1, queue_push/4, queue_push/3]).
 -export([decrease_retries/2, rand_float/2, update_states/1, count_flag_bits/1]).
--export([create_response/8, recreate_response/3, extract_response/1, extract_response/2, prepare_path/5, recreate_path/4]).
+-export([create_response/8, create_ack_path/9, recreate_response/3, extract_response/1, extract_response/2, prepare_path/5, recreate_path/4]).
 -export([process_set_command/2, process_get_command/2, set_processing_time/3,fill_statistics/2, fill_statistics/3, fill_statistics/5]).
 -export([update_path/2, update_routing/2, update_received/2, routing_exist/2]).
 -export([getv/2, geta/1, replace/3]).
+-export([add_to_paths/6, get_stable_path/3, remove_old_paths/3, if_path_packet/1,has_path_packets/3, check_tranmission_path/2]).
 
 set_event_params(SM, Event_Parameter) ->
   SM#sm{event_params = Event_Parameter}.
@@ -249,49 +250,195 @@ replace(Type, Value, Tuple) when is_atom(Type) ->
 replace_helper([], _, Tuple) -> Tuple;
 replace_helper([Type | Types], [Value | Values], Tuple) ->
   replace_helper(Types, Values, replace(Type, Value, Tuple)).
-% -------------------------------- postpone queue ----------------------------------------------------------
-postpone_queue(SM) ->
-  [postpone_queue(__, transmission, postponed_tq),
-   postpone_queue(__, received, postponed_rq),
-   postpone_queue(__, retriesq, postponed_rtq)
-  ](SM).
 
-postpone_queue(SM, Qname1, Qname2) ->
-  TQ = share:get(SM, nothing, Qname1, queue:new()),
-  PTQ = share:get(SM, nothing, Qname2, queue:new()),
-  move_data(SM, Qname1, Qname2, TQ, queue:new(), PTQ).
+%--------------------------------- Rules to handle messages -------------------------------------------
+is_response(SM, Tuple1, Tuple2) ->
+  Flag1 = getv(flag, Tuple1),
+  Flag2 = getv(flag, Tuple2),
+  is_response(SM, Flag1, Flag2, Tuple1, Tuple2).
 
-move_data(SM, Qname1, Qname2, {[],[]}, RQ, NQ) ->
-  [share:put(__, Qname1, RQ),
-   share:put(__, Qname2, NQ)
-  ] (SM);
-move_data(SM, Qname1, Qname2, Q, RQ, NQ) ->
-  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  Flag = getv(flag, Q_Tuple),
-  % TODO: ack + data, dst_reached + data
-  if Flag == data; Flag == ack; Flag == dst_reached ->
-    move_data(SM, Qname1, Qname2, Q_Tail, RQ, queue:in(Q_Tuple, NQ));
-  true ->
-    move_data(SM, Qname1, Qname2, Q_Tail, queue:in(Q_Tuple, RQ), NQ)
+is_same(SM, Tuple1, Tuple2) ->
+  Flag1 = getv(flag, Tuple1),
+  Flag2 = getv(flag, Tuple2),
+  is_same(SM, Flag1, Flag2, Tuple1, Tuple2).
+
+is_same(_, data, data, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [PkgID2, Src2, Dst2, MType2, Payload2] =
+    getv([id, src, dst, mtype, payload], Tuple2),
+  (PkgID1 == PkgID2) and (Src1 == Src2) and (Dst1 == Dst2)
+  and (MType1 == MType2) and (Payload1 == Payload2);
+is_same(_, ack, ack, Tuple1, Tuple2) ->
+  MType1 = getv(mtype, Tuple1),
+  MType2 = getv(mtype, Tuple2),
+  is_same(ack, ack, MType1, MType2, Tuple1, Tuple2);
+is_same(_, dst_reached, dst_reached, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1] =
+    getv([id, src, dst, mtype], Tuple1),
+  [PkgID2, Src2, Dst2, MType2] =
+    getv([id, src, dst, mtype], Tuple2),
+  (PkgID1 == PkgID2) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2);
+is_same(_, path, path, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1] =
+    getv([id, src, dst, mtype], Tuple1),
+  [PkgID2, Src2, Dst2, MType2] =
+    getv([id, src, dst, mtype], Tuple2),
+  (PkgID1 == PkgID2) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2);
+is_same(_, _, _, _, _) ->
+  false.
+
+is_response(SM, data, data, Tuple1, Tuple2) ->
+  is_same(SM, data, data, Tuple1, Tuple2);
+is_response(SM, ack, ack, Tuple1, Tuple2) ->
+  is_same(SM, ack, ack, Tuple1, Tuple2);
+is_response(SM, dst_reached, dst_reached, Tuple1, Tuple2) ->
+  is_same(SM, dst_reached, dst_reached, Tuple1, Tuple2);
+is_response(SM, path, path, Tuple1, Tuple2) ->
+  is_same(SM, path, path, Tuple1, Tuple2);
+is_response(SM, data, dst_reached, Tuple1, Tuple2) ->
+  Protocol_Name = share:get(SM, protocol_name),
+  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
+  Ack_protocol = Protocol_Config#pr_conf.ack,
+  is_response(SM, Ack_protocol, data, dst_reached, Tuple1, Tuple2);
+is_response(_, ack, dst_reached, Tuple1, Tuple2) ->
+  [Src1, Dst1, MType1, Payload1] =
+    getv([src, dst, mtype, payload], Tuple1),
+  [Src2, Dst2, MType2, Payload2] =
+    getv([src, dst, mtype, payload], Tuple2),
+  [Ack_Pkg_ID, Hash1] = nl_hf:extract_response([id, hash], Payload1),
+  [Dst_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
+  (Ack_Pkg_ID == Dst_Pkg_ID) and (Src1 == Dst2)
+  and (Src2 == Dst1) and (MType1 == MType2)
+  and (Hash1 == Hash2);
+is_response(_, data, ack, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [Src2, Dst2, MType2, Payload2] =
+    getv([src, dst, mtype, payload], Tuple2),
+  <<Hash1:16, _/binary>> = crypto:hash(md5, Payload1),
+  [Ack_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
+  (PkgID1 == Ack_Pkg_ID) and (Src1 == Dst2)
+  and (Dst1 == Src2) and (MType1 == MType2)
+  and (Hash1 == Hash2);
+is_response(_, path, ack, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1] =
+    getv([id, src, dst, mtype], Tuple1),
+  [Src2, Dst2, MType2, Payload2] =
+    getv([src, dst, mtype, payload], Tuple2),
+  Ack_Pkg_ID = nl_hf:extract_response(id, Payload2),
+  (PkgID1 == Ack_Pkg_ID) and (Src1 == Dst2)
+  and (Dst1 == Src2) and (MType1 == MType2);
+is_response(_, _, _, _, _) ->
+  false.
+
+is_response(_, true, data, dst_reached, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [Src2, Dst2, MType2, Payload2] =
+    getv([src, dst, mtype, payload], Tuple2),
+  <<Hash1:16, _/binary>> = crypto:hash(md5, Payload1),
+  [Dst_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
+  (PkgID1 == Dst_Pkg_ID) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2)
+  and (Hash1 == Hash2);
+is_response(_, false, data, dst_reached, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [Src2, Dst2, MType2, Payload2] =
+    getv([src, dst, mtype, payload], Tuple2),
+  <<Hash1:16, _/binary>> = crypto:hash(md5, Payload1),
+  [Dst_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
+  (PkgID1 == Dst_Pkg_ID) and (Src1 == Dst2)
+  and (Dst1 == Src2) and (MType1 == MType2)
+  and (Hash1 == Hash2).
+
+is_same(ack, ack, path_addit, path_addit, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1] = getv([id, src, dst, mtype], Tuple1),
+  [PkgID2, Src2, Dst2, MType2] = getv([id, src, dst, mtype], Tuple2),
+  (PkgID1 == PkgID2) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2);
+is_same(ack, ack, MType1, MType2, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1, Payload1] =
+    getv([id, src, dst, mtype, payload], Tuple1),
+  [PkgID2, Src2, Dst2, MType2, Payload2] =
+    getv([id, src, dst, mtype, payload], Tuple2),
+  Hash1 = nl_hf:extract_response(hash, Payload1),
+  Hash2 = nl_hf:extract_response(hash, Payload2),
+  (PkgID1 == PkgID2) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2)
+  and (Hash1 == Hash2).
+
+data_reached(SM, Tuple1, Tuple2) ->
+  Flag1 = getv(flag, Tuple1),
+  Flag2 = getv(flag, Tuple2),
+  data_reached(SM, Flag1, Flag2, Tuple1, Tuple2).
+data_reached(_, ack, data, Tuple1, Tuple2) ->
+  [Src1, Dst1, MType1, Payload1] =
+    getv([src, dst, mtype, payload], Tuple1),
+  [PkgID2, Src2, Dst2, MType2, Payload2] =
+    getv([id, src, dst, mtype, payload], Tuple2),
+  <<Hash2:16, _/binary>> = crypto:hash(md5, Payload2),
+  [Ack_Pkg_ID, Hash1] = nl_hf:extract_response([id, hash], Payload1),
+  (PkgID2 == Ack_Pkg_ID) and (Src1 == Dst2)
+  and (Dst1 == Src2) and (MType1 == MType2)
+  and (Hash1 == Hash2);
+data_reached(SM, dst_reached, data, Tuple1, Tuple2) ->
+  Protocol_Name = share:get(SM, protocol_name),
+  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
+  Ack_protocol = Protocol_Config#pr_conf.ack,
+  [Src1, Dst1, MType1, Payload1] =
+    getv([src, dst, mtype, payload], Tuple1),
+  [PkgID2, Src2, Dst2, MType2, Payload2] =
+    getv([id, src, dst, mtype, payload], Tuple2),
+  [Dst_Pkg_ID, Hash1] = nl_hf:extract_response([id, hash], Payload1),
+  <<Hash2:16, _/binary>> = crypto:hash(md5, Payload2),
+  (Ack_protocol and ((PkgID2 == Dst_Pkg_ID) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2)
+  and (Hash1 == Hash2)) ) or
+  ((PkgID2 == Dst_Pkg_ID) and (Src1 == Dst2)
+  and (Dst1 == Src2) and (MType1 == MType2)
+  and (Hash1 == Hash2));
+data_reached(_, _, _, _, _) ->
+  false.
+
+if_path_packet(empty) -> false;
+if_path_packet(Tuple) ->
+  [Flag, MType] = getv([flag, mtype], Tuple),
+  if Flag == path, MType == path_addit;
+     Flag == ack, MType == path_addit -> true;
+  true -> false
   end.
 % -------------------------------- Message queues handling functions -------------------------------------
 fill_transmission(SM, _, error) ->
   ?INFO(?ID, "fill_transmission 1 to ~p~n", [?TRANSMISSION_QUEUE_SIZE]),
-
   set_event_params(SM, {fill_tq, error});
 fill_transmission(SM, Type, Tuple) ->
   Qname = transmission,
   Q = share:get(SM, Qname),
 
+  Is_path = if_path_packet(Tuple),
+  Has_path_packets = has_path_packets(Q, false, 0),
+  ?INFO(?ID, "Has_path_packets ~p ~n", [Has_path_packets]),
+
   Fill_handler =
-  fun(LSM, filo) ->
+  fun(LSM, path) ->
+        share:put(LSM, Qname, queue:in_r(Tuple, Q));
+     (LSM, filo) ->
         share:put(LSM, Qname, queue:in(Tuple, Q));
-     (LSM, fifo) ->
-        share:put(LSM, Qname, queue:in_r(Tuple, Q))
+     (LSM, fifo) when not Has_path_packets->
+        share:put(LSM, Qname, queue:in_r(Tuple, Q));
+      (LSM, fifo) ->
+        NQ = shift_push(Q, Tuple, Has_path_packets),
+        share:put(LSM, Qname, NQ)
   end,
 
   ?INFO(?ID, "fill_transmission ~p to ~p~n", [Tuple, Q]),
   case queue:len(Q) of
+    _ when Is_path ->
+      Fill_handler(SM, path);
     Len when Len >= ?TRANSMISSION_QUEUE_SIZE ->
       set_event_params(SM, {fill_tq, error});
     _  ->
@@ -300,6 +447,40 @@ fill_transmission(SM, Type, Tuple) ->
        set_event_params(__, {fill_tq, ok})
       ](SM)
   end.
+
+has_path_packets({[],[]}, false, _) -> false;
+has_path_packets({[],[]}, true, Num) -> {true, Num};
+has_path_packets(Q, Inside, Num) ->
+  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  Is_path = if_path_packet(Q_Tuple),
+  if Is_path ->
+    has_path_packets(Q_Tail, true, Num + 1);
+  true ->
+    has_path_packets(Q_Tail, Inside, Num + 1)
+  end.
+
+check_tranmission_path(SM, Tuple) ->
+  check_tranmission_path(SM, Tuple, transmission) or
+  check_tranmission_path(SM, Tuple, received).
+
+check_tranmission_path(SM, Tuple, Qname) ->
+  {Pkg_ID, NL_Src, NL_Dst, MType, _} = Tuple, 
+  Q = share:get(SM, Qname),
+  Ack_paths =
+  lists:filtermap(
+  fun (X) ->
+      [XFlag, XSrc, XDst, XMtype, XPayload] =
+        getv([flag, src, dst, mtype, payload], X),
+      if XFlag == ack, XMtype == MType, XSrc == NL_Dst,
+         NL_Src == XDst ->
+        Ack_Pkg_ID = extract_response(id, XPayload),
+        if Pkg_ID == Ack_Pkg_ID -> {true, Tuple};
+        true -> false end;
+      true -> false
+      end
+  end, queue:to_list(Q)),
+  ?INFO(?ID, "Check in queue ~p ~p~n",  [Qname, length(Ack_paths)]),
+  length(Ack_paths) > 0.
 
 head_transmission(SM) ->
   Q = share:get(SM, transmission),
@@ -310,6 +491,11 @@ head_transmission(SM) ->
   end,
   ?INFO(?ID, "GET HEAD ~p~n", [Head]),
   Head.
+
+shift_push(Q, Tuple, {true, Num}) ->
+  {Q1, Q2} = queue:split(Num, Q),
+  NQ = queue:in_r(Tuple, Q2),
+  queue:join(Q1, NQ).
 
 pop_transmission(SM, head, Tuple) ->
   Qname = transmission,
@@ -368,131 +554,6 @@ pop_tq_helper(SM, Tuple, Q, NQ) ->
   true ->
     pop_tq_helper(SM, Tuple, Q_Tail, queue:in(Q_Tuple, NQ))
   end.
-
-is_response(SM, Tuple1, Tuple2) ->
-  Flag1 = getv(flag, Tuple1),
-  Flag2 = getv(flag, Tuple2),
-  is_response(SM, Flag1, Flag2, Tuple1, Tuple2).
-
-is_same(SM, Tuple1, Tuple2) ->
-  Flag1 = getv(flag, Tuple1),
-  Flag2 = getv(flag, Tuple2),
-  is_same(SM, Flag1, Flag2, Tuple1, Tuple2).
-
-is_same(_, data, data, Tuple1, Tuple2) ->
-  [PkgID1, Src1, Dst1, MType1, Payload1] =
-    getv([id, src, dst, mtype, payload], Tuple1),
-  [PkgID2, Src2, Dst2, MType2, Payload2] =
-    getv([id, src, dst, mtype, payload], Tuple2),
-  (PkgID1 == PkgID2) and (Src1 == Src2) and (Dst1 == Dst2)
-  and (MType1 == MType2) and (Payload1 == Payload2);
-is_same(_, ack, ack, Tuple1, Tuple2) ->
-  [PkgID1, Src1, Dst1, MType1, Payload1] =
-    getv([id, src, dst, mtype, payload], Tuple1),
-  [PkgID2, Src2, Dst2, MType2, Payload2] =
-    getv([id, src, dst, mtype, payload], Tuple2),
-  Hash1 = nl_hf:extract_response(hash, Payload1),
-  Hash2 = nl_hf:extract_response(hash, Payload2),
-  (PkgID1 == PkgID2) and (Src1 == Src2)
-  and (Dst1 == Dst2) and (MType1 == MType2)
-  and (Hash1 == Hash2);
-is_same(_, dst_reached, dst_reached, Tuple1, Tuple2) ->
-  [PkgID1, Src1, Dst1, MType1] =
-    getv([id, src, dst, mtype], Tuple1),
-  [PkgID2, Src2, Dst2, MType2] =
-    getv([id, src, dst, mtype], Tuple2),
-  (PkgID1 == PkgID2) and (Src1 == Src2)
-  and (Dst1 == Dst2) and (MType1 == MType2);
-is_same(_, _, _, _, _) ->
-  false.
-
-is_response(SM, data, data, Tuple1, Tuple2) ->
-  is_same(SM, data, data, Tuple1, Tuple2);
-is_response(SM, ack, ack, Tuple1, Tuple2) ->
-  is_same(SM, ack, ack, Tuple1, Tuple2);
-is_response(SM, dst_reached, dst_reached, Tuple1, Tuple2) ->
-  is_same(SM, dst_reached, dst_reached, Tuple1, Tuple2);
-is_response(SM, data, dst_reached, Tuple1, Tuple2) ->
-  Protocol_Name = share:get(SM, protocol_name),
-  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
-  Ack_protocol = Protocol_Config#pr_conf.ack,
-  is_response(SM, Ack_protocol, data, dst_reached, Tuple1, Tuple2);
-is_response(_, ack, dst_reached, Tuple1, Tuple2) ->
-  [Src1, Dst1, MType1, Payload1] =
-    getv([src, dst, mtype, payload], Tuple1),
-  [Src2, Dst2, MType2, Payload2] =
-    getv([src, dst, mtype, payload], Tuple2),
-  [Ack_Pkg_ID, Hash1] = nl_hf:extract_response([id, hash], Payload1),
-  [Dst_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
-  (Ack_Pkg_ID == Dst_Pkg_ID) and (Src1 == Dst2)
-  and (Src2 == Dst1) and (MType1 == MType2)
-  and (Hash1 == Hash2);
-is_response(_, data, ack, Tuple1, Tuple2) ->
-  [PkgID1, Src1, Dst1, MType1, Payload1] =
-    getv([id, src, dst, mtype, payload], Tuple1),
-  [Src2, Dst2, MType2, Payload2] =
-    getv([src, dst, mtype, payload], Tuple2),
-  <<Hash1:16, _/binary>> = crypto:hash(md5, Payload1),
-  [Ack_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
-  (PkgID1 == Ack_Pkg_ID) and (Src1 == Dst2)
-  and (Dst1 == Src2) and (MType1 == MType2)
-  and (Hash1 == Hash2);
-is_response(_, _, _, _, _) ->
-  false.
-
-is_response(_, true, data, dst_reached, Tuple1, Tuple2) ->
-  [PkgID1, Src1, Dst1, MType1, Payload1] =
-    getv([id, src, dst, mtype, payload], Tuple1),
-  [Src2, Dst2, MType2, Payload2] =
-    getv([src, dst, mtype, payload], Tuple2),
-  <<Hash1:16, _/binary>> = crypto:hash(md5, Payload1),
-  [Dst_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
-  (PkgID1 == Dst_Pkg_ID) and (Src1 == Src2)
-  and (Dst1 == Dst2) and (MType1 == MType2)
-  and (Hash1 == Hash2);
-is_response(_, false, data, dst_reached, Tuple1, Tuple2) ->
-  [PkgID1, Src1, Dst1, MType1, Payload1] =
-    getv([id, src, dst, mtype, payload], Tuple1),
-  [Src2, Dst2, MType2, Payload2] =
-    getv([src, dst, mtype, payload], Tuple2),
-  <<Hash1:16, _/binary>> = crypto:hash(md5, Payload1),
-  [Dst_Pkg_ID, Hash2] = nl_hf:extract_response([id, hash], Payload2),
-  (PkgID1 == Dst_Pkg_ID) and (Src1 == Dst2)
-  and (Dst1 == Src2) and (MType1 == MType2)
-  and (Hash1 == Hash2).
-
-data_reached(SM, Tuple1, Tuple2) ->
-  Flag1 = getv(flag, Tuple1),
-  Flag2 = getv(flag, Tuple2),
-  data_reached(SM, Flag1, Flag2, Tuple1, Tuple2).
-data_reached(_, ack, data, Tuple1, Tuple2) ->
-  [Src1, Dst1, MType1, Payload1] =
-    getv([src, dst, mtype, payload], Tuple1),
-  [PkgID2, Src2, Dst2, MType2, Payload2] =
-    getv([id, src, dst, mtype, payload], Tuple2),
-  <<Hash2:16, _/binary>> = crypto:hash(md5, Payload2),
-  [Ack_Pkg_ID, Hash1] = nl_hf:extract_response([id, hash], Payload1),
-  (PkgID2 == Ack_Pkg_ID) and (Src1 == Dst2)
-  and (Dst1 == Src2) and (MType1 == MType2)
-  and (Hash1 == Hash2);
-data_reached(SM, dst_reached, data, Tuple1, Tuple2) ->
-  Protocol_Name = share:get(SM, protocol_name),
-  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
-  Ack_protocol = Protocol_Config#pr_conf.ack,
-  [Src1, Dst1, MType1, Payload1] =
-    getv([src, dst, mtype, payload], Tuple1),
-  [PkgID2, Src2, Dst2, MType2, Payload2] =
-    getv([id, src, dst, mtype, payload], Tuple2),
-  [Dst_Pkg_ID, Hash1] = nl_hf:extract_response([id, hash], Payload1),
-  <<Hash2:16, _/binary>> = crypto:hash(md5, Payload2),
-  (Ack_protocol and ((PkgID2 == Dst_Pkg_ID) and (Src1 == Src2)
-  and (Dst1 == Dst2) and (MType1 == MType2)
-  and (Hash1 == Hash2)) ) or
-  ((PkgID2 == Dst_Pkg_ID) and (Src1 == Dst2)
-  and (Dst1 == Src2) and (MType1 == MType2)
-  and (Hash1 == Hash2));
-data_reached(_, _, _, _, _) ->
-  false.
 
 clear_sensing_timeout(SM, Tuple) ->
   ?TRACE(?ID, "Clear sensing timeout ~p in ~p~n",[Tuple, SM#sm.timeouts]),
@@ -583,7 +644,9 @@ decrease_TTL(SM) ->
 decrease_TTL_tq(SM, {[],[]}, NQ) ->
   share:put(SM, transmission, NQ);
 decrease_TTL_tq(SM, Q, NQ) ->
+  Waiting_path = share:get(SM, nothing, waiting_path, false),
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  Is_path = nl_hf:if_path_packet(Q_Tuple),
   [Flag, QTTL] = getv([flag, ttl], Q_Tuple),
   TTL_handler =
   fun (LSM, dst_reached, _) ->
@@ -597,7 +660,12 @@ decrease_TTL_tq(SM, Q, NQ) ->
          decrease_TTL_tq(__, Q_Tail, NQ)
         ](LSM)
   end,
-  TTL_handler(SM, Flag, QTTL - 1).
+
+  case Waiting_path of
+    true when Is_path -> TTL_handler(SM, Flag, QTTL - 1);
+    true -> decrease_TTL_tq(SM, Q_Tail, queue:in(Q_Tuple, NQ));
+    false -> TTL_handler(SM, Flag, QTTL - 1)
+  end.
 
 exists_received(Tuple) -> Tuple.
 exists_received(SM, Tuple) ->
@@ -719,8 +787,10 @@ get_routing_address(SM, Address) ->
 
 routing_exist(_SM, empty) ->
   false;
-routing_exist(SM, NL) ->
+routing_exist(SM, NL) when is_tuple(NL) ->
   Dst = getv(dst, NL),
+  routing_exist(SM, Dst);
+routing_exist(SM, Dst) ->
   Route_Addr = get_routing_address(SM, Dst),
   ?INFO(?ID, "routing_exist ~p ~p~n", [Route_Addr, ?ADDRESS_MAX]),
   Route_Addr =/= ?ADDRESS_MAX.
@@ -745,15 +815,38 @@ strip_path(Address, Path, [H | T]) when H == Address ->
 strip_path(Address, Path, [_ | T]) ->
   strip_path(Address, Path, T).
 
+add_to_paths(SM, Src, Dst, Path, Integrity, _Rssi) ->
+  Paths = share:get(SM, nothing, stable_paths, []),
+  share:put(SM, stable_paths, [ {Src, Dst, Integrity, Path} | Paths]).
+
+get_stable_path(SM, Src, Dst) ->
+  Paths = share:get(SM, nothing, stable_paths, []),
+  ?INFO(?ID, "Choose between paths ~p~n", [Paths]),
+  get_stable_path_helper(SM, Src, Dst, Paths, 0, []).
+
+get_stable_path_helper(_, _, _, [], 0, []) -> [];
+get_stable_path_helper(_, _, _, [], _, NP) -> NP;
+get_stable_path_helper(SM, Src, Dst, [ H | T], Max, NP) ->
+  case H of 
+    {Src, Dst, Integrity, Path} when Integrity > Max ->
+      get_stable_path_helper(SM, Src, Dst, T, Integrity, Path);
+    _ ->
+      get_stable_path_helper(SM, Src, Dst, T, Max, NP)
+  end.
+
+remove_old_paths(SM, Src, Dst) ->
+  Paths = share:get(SM, nothing, stable_paths, []),
+  L =
+  lists:foldr(fun
+    ({XSrc, XDst, _, _}, A) when XSrc == Src, XDst == Dst -> A;
+    (X, A) -> [X | A]
+  end, [], Paths),
+  share:put(SM, stable_paths, L).
 %%----------------------------Parse NL functions -------------------------------
-%fill_protocol_info_header(_, _, Flag, MType, {_, _, _, Transmit_Len, Data}) when Flag == ack;
-                                                                                  %Flag == dst_reached ->
-%  fill_data_header(MType, Transmit_Len, Data);
 fill_protocol_info_header(icrpr, _, data, _, {Path, _, _, Transmit_Len, Data}) ->
   fill_path_data_header(Path, Transmit_Len, Data);
-fill_protocol_info_header(_, Protocol_Config, path, _, Tuple) when Protocol_Config#pr_conf.evo->
-  {Path, Rssi, Integrity, _, _} = Tuple,
-  fill_path_evo_header(Path, Rssi, Integrity);
+fill_protocol_info_header(_, Protocol_Config, _, path_addit, Tuple) when Protocol_Config#pr_conf.evo->
+  fill_path_evo_header(Tuple);
 fill_protocol_info_header(_, _, _, MType, {_, _, _, Transmit_Len, Data}) ->
   fill_data_header(MType, Transmit_Len, Data).
 
@@ -840,6 +933,11 @@ recreate_response(SM, Flag = ack, Tuple) ->
   ?TRACE(?ID, "recreate_response ~p Hops ~p ~p ~p ~p~n",
     [Flag, Hops, Ack_Pkg_ID, Tuple, Coded_payload]),
   replace(payload, Coded_payload, Tuple).
+
+create_ack_path(SM, ack, MType, Pkg_ID, Src, Dst, Hops, Payload, Path) ->
+  Max_ttl = share:get(SM, ttl),
+  Tuple = create_response(SM, ack, MType, Pkg_ID, Src, Dst, Max_ttl, Hops, Payload),
+  replace(path, Path, Tuple).
 
 create_response(SM, Flag, MType, Pkg_ID, Src, Dst, TTL, Hops, Payload) ->
   <<Hash:16, _/binary>> = crypto:hash(md5, Payload),
@@ -1012,7 +1110,8 @@ fill_data_header(Type, TransmitLen, Data) ->
 %-------> path_addit
 %   3b        6b        LenPath * 6b    2b        LenAdd * 8b       REST till / 8
 %   TYPEMSG   LenPath   Path            LenAdd    Addtional Info     ADD
-fill_path_evo_header(Path, Rssi, Integrity) ->
+fill_path_evo_header(Tuple) ->
+  {Path, Rssi, Integrity, Transmit_Len, Data} = Tuple,  
   LenPath = length(Path),
   LenAdd = length([Rssi, Integrity]),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
@@ -1030,12 +1129,16 @@ fill_path_evo_header(Path, Rssi, Integrity) ->
   TmpData = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
             BLenAdd/bitstring, BAdd/bitstring>>,
   Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
+  Header =
   if Data_bin =:= false ->
      Add = (8 - bit_size(TmpData) rem 8) rem 8,
      <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
             BLenAdd/bitstring, BAdd/bitstring, 0:Add>>;
    true ->
      TmpData
+  end,
+  if (Transmit_Len > 0) -> <<Header/binary, Data/binary>>;
+    true -> Header
   end.
 
 extract_path_evo_header(SM, Payload) ->
@@ -1046,7 +1149,7 @@ extract_path_evo_header(SM, Payload) ->
 
   <<BType:CBitsTypeMsg, PathRest/bitstring>> = Payload,
   {Path, Add_rest} = extract_header(path, CBitsLenPath, CBitsLenPath, PathRest),
-  {Additional, _} = extract_header(add, CBitsLenAdd, CBitsAdd, Add_rest),
+  {Additional, Data_rest} = extract_header(add, CBitsLenAdd, CBitsAdd, Add_rest),
 
   path_addit = ?NUM2TYPEMSG(BType),
   [Rssi, Integrity] = Additional,
@@ -1054,7 +1157,14 @@ extract_path_evo_header(SM, Payload) ->
   ?TRACE(?ID, "extract path addit BType ~p  Path ~p Additonal ~p~n",
         [BType, Path, Additional]),
 
-  [Path, Rssi, Integrity, Add_rest].
+  Data_bin = (bit_size(Payload) rem 8) =/= 0,
+  if Data_bin =:= false ->
+    Add = bit_size(Data_rest) rem 8,
+    <<_:Add, Data/binary>> = Data_rest,
+    [Path, Rssi, Integrity, Data];
+  true ->
+    [Path, Rssi, Integrity, Data_rest]
+  end.
 
 extract_payload(SM, Payload) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
