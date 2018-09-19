@@ -74,6 +74,7 @@
 
                 {transmit,
                  [{transmitted, sensing},
+                 {wait, sensing},
                  {path, sensing},
                  {reset, idle}
                  ]},
@@ -279,8 +280,6 @@ handle_sensing(_MM, SM, _Term) ->
       maybe_transmit_next(SM);
     relay ->
       maybe_pick(SM);
-    path ->
-      fsm:set_event(SM, eps);
     _ ->
       fsm:set_event(SM, eps)
   end.
@@ -380,9 +379,9 @@ try_transmit(SM, AT, Head) ->
       end
   end,
 
-  Transmittion_handler =
-  fun(LSM, nothing) -> LSM;
-     (LSM, _) ->
+  Transmission_handler =
+  fun(_LSM, blocked) -> fsm:set_event(SM, wait);
+     (_LSM, ok) ->
       [nl_hf:set_processing_time(__, transmitted, Head),
        nl_hf:decrease_retries(__, Head),
        nl_hf:update_received_TTL(__, Head),
@@ -390,11 +389,11 @@ try_transmit(SM, AT, Head) ->
        fsm:set_timeout(__, {ms, Sensing}, {sensing_timeout, Head}),
        Ack_handler(__),
        fsm:set_event(__, transmitted)
-      ](LSM)
+      ](SM)
   end,
 
   [fsm:set_event(__, eps),
-   fsm:maybe_send_at_command(__, AT, Transmittion_handler)
+   fsm:maybe_send_at_command(__, AT, Transmission_handler)
   ](SM).
 
 maybe_transmit_next(SM) ->
@@ -468,14 +467,14 @@ process_received_packet(SM, false, AT) ->
   Adressed = (Dst  =:= 255) or (NL_Dst =:= Local_address),
   PPid = ?PROTOCOL_NL_PID(share:get(SM, protocol_name)),
 
-  %try
+  try
     {Pid, _} = nl_hf:extract_payload_nl_header(SM, Payload),
-    packet_handler(SM, (PPid =:= Pid), Adressed, AT).
-  %catch error: Reason ->
+    packet_handler(SM, (PPid =:= Pid), Adressed, AT)
+  catch error: Reason ->
     % Got a message not for NL, no NL header
-  %  ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
-  %  fsm:set_event(SM, eps)
-  %end.
+    ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
+    fsm:set_event(SM, eps)
+  end.
 
 packet_handler(SM, false, _, AT) ->
   ?TRACE(?ID, "Message is not applicable with current protocol ~p ~n", [AT]),

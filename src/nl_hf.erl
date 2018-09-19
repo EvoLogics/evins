@@ -606,10 +606,10 @@ decrease_retries(SM, Tuple) ->
 
 decrease_rq_helper(SM, Tuple, not_inside, {[],[]}, {[],[]}) ->
   Local_Retries = share:get(SM, retries),
-  queue_push(SM, retriesq, {Local_Retries, Tuple}, ?RQ_SIZE);
+  queue_push(SM, retriesq, {Local_Retries - 1, Tuple}, ?RQ_SIZE);
 decrease_rq_helper(SM, Tuple, not_inside, {[],[]}, NQ) ->
   Local_Retries = share:get(SM, retries),
-  Q = queue_push(NQ, {Local_Retries, Tuple}, ?RQ_SIZE),
+  Q = queue_push(NQ, {Local_Retries - 1, Tuple}, ?RQ_SIZE),
   share:put(SM, retriesq, Q);
 decrease_rq_helper(SM, _Tuple, inside, {[],[]}, NQ) ->
   share:put(SM, retriesq, NQ);
