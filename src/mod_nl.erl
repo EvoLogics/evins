@@ -206,18 +206,6 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   NL_Protocol.
 
-% count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end) ->
-%   Count_waves     = 2,
-%   RMax_timeout     = round(max(Wwv_tmo_end, Wack_tmo_end)),
-%   Max_timeout =
-%   if RMax_timeout == 0 ->
-%     1;
-%   true ->
-%     RMax_timeout
-%   end,
-%   Max_hops * Count_waves * Max_timeout + Max_hops.
-
-
 count_RTT(Max_hops, Time) ->
   2 * Max_hops * (Time + 1).
 

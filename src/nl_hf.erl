@@ -46,8 +46,8 @@
 -export([decrease_retries/2, rand_float/2, update_states/1, count_flag_bits/1]).
 -export([create_response/8, create_ack_path/9, recreate_response/3, extract_response/1, extract_response/2, prepare_path/5, recreate_path/4]).
 -export([process_set_command/2, process_get_command/2, set_processing_time/3,fill_statistics/2, fill_statistics/3, fill_statistics/5]).
--export([update_path/2, update_routing/2, update_received/2, routing_exist/2]).
--export([getv/2, geta/1, replace/3]).
+-export([update_path/2, update_routing/2, update_received/2, routing_exist/2, routing_to_list/1]).
+-export([getv/2, geta/1, replace/3, drop_postponed/2]).
 -export([add_to_paths/6, get_stable_path/3, remove_old_paths/3, if_path_packet/1,has_path_packets/3, check_tranmission_path/2]).
 
 set_event_params(SM, Event_Parameter) ->
@@ -430,7 +430,7 @@ fill_transmission(SM, Type, Tuple) ->
         share:put(LSM, Qname, queue:in(Tuple, Q));
      (LSM, fifo) when not Has_path_packets->
         share:put(LSM, Qname, queue:in_r(Tuple, Q));
-      (LSM, fifo) ->
+     (LSM, fifo) ->
         NQ = shift_push(Q, Tuple, Has_path_packets),
         share:put(LSM, Qname, NQ)
   end,
@@ -446,6 +446,30 @@ fill_transmission(SM, Type, Tuple) ->
        Fill_handler(__, Type),
        set_event_params(__, {fill_tq, ok})
       ](SM)
+  end.
+
+drop_postponed(SM, Dst) ->
+  Q = share:get(SM, transmission),
+  drop_postponed(SM, Dst, Q).
+
+drop_postponed(SM, _, {[],[]}) ->
+  SM;
+drop_postponed(SM, Dst, Q) ->
+  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  [QID, QFlag, QDst] = getv([id, flag, dst], Q_Tuple),
+  ?INFO(?ID, "drop_postponed ~p dst ~p  ~p from Q ~p~n", [Q_Tuple, Dst, QDst, Q]),
+  if QDst == Dst ->
+    Cast_handler =
+    fun (LSM, data) ->
+        fsm:cast(LSM, nl_impl, {send, {nl, drop, QID}});
+        (LSM, _) -> LSM
+    end,
+    [Cast_handler(__, QFlag),
+     pop_transmission(__, Q_Tuple),
+     drop_postponed(__, Dst, Q_Tail)
+    ](SM);
+  true ->
+    drop_postponed(SM, Dst, Q_Tail)
   end.
 
 has_path_packets({[],[]}, false, _) -> false;
@@ -774,7 +798,7 @@ find_routing_helper([], _Address, Default) ->
   Default;
 find_routing_helper([H | T], Address, Default) ->
   case H of
-    {Address, To} -> find_routing_helper(To);
+    {Address, To, _} -> find_routing_helper(To);
     Default_address when not is_tuple(Default_address) ->
       find_routing_helper(T, Address, Default_address);
     _ -> find_routing_helper(T, Address, Default)
@@ -1387,7 +1411,7 @@ process_set_command(SM, Command) ->
     {routing, Routing} ->
       Routing_Format = lists:map(
                         fun({default, To}) -> To;
-                            (Other) -> Other
+                            ({From, To, _}) -> {From, To}
                         end, Routing),
       share:put(SM, routing_table, Routing_Format),
       {nl, routing, Routing};
@@ -1425,7 +1449,7 @@ delete_neighbour(SM, Address) ->
           NRouting_table =
           lists:filtermap(fun(X) ->
                 case X of
-                  {_, Address} -> false;
+                  {_, Address, _} -> false;
                   Address -> false;
                   _ -> {true, X}
           end end, Routing_table),
@@ -1470,8 +1494,8 @@ update_routing(SM, source, L) ->
   Reverse = lists:reverse(L),
   [Neighbour | T] = Reverse,
   ?TRACE(?ID, "update source ~p ~p~n", [Neighbour, T]),
-  [add_to_routing(__, {Neighbour, Neighbour}),
-   update_routing_helper(__, Neighbour, T)
+  [add_to_routing(__, {Neighbour, Neighbour, 1}),
+   update_routing_helper(__, Neighbour, T, 1)
   ](SM);
 update_routing(SM, destination, []) -> SM;
 update_routing(SM, destination, [H | T]) ->
@@ -1480,20 +1504,28 @@ update_routing(SM, destination, [H | T]) ->
   if Local_address == H ->
     update_routing(SM, destination, T);
   true ->
-    [add_to_routing(__, {H, H}),
-     update_routing_helper(__, H, T)
+    [add_to_routing(__, {H, H, 1}),
+     update_routing_helper(__, H, T, 1)
     ](SM)
   end.
 
-update_routing_helper(SM, _, []) ->
+update_routing_helper(SM, _, [], _) ->
   SM;
-update_routing_helper(SM, Neighbour, L = [H | T]) ->
+update_routing_helper(SM, Neighbour, L = [H | T], Hops) ->
   ?TRACE(?ID, "update_routing_helper ~p in ~p~n", [Neighbour, L]),
-  [add_to_routing(__, {H, Neighbour}),
-   update_routing_helper(__, Neighbour, T)
+  [add_to_routing(__, {H, Neighbour, Hops + 1}),
+   update_routing_helper(__, Neighbour, T, Hops + 1)
   ](SM).
 
-add_to_routing(SM, Tuple = {From, _To}) ->
+replace_rotuing(Tuple = {From, _, Hops}, Routing_table) ->
+  lists:foldr(
+    fun ({XFrom, _, XHops}, A) when XFrom == From, Hops =< XHops ->
+          [Tuple | A];
+        (X, A) ->
+          [X | A]
+    end, [], Routing_table).
+
+add_to_routing(SM, Tuple = {From, _, _}) ->
   Routing_table = share:get(SM, routing_table),
   ?TRACE(?ID, "add_to_routing ~p to ~p ~n", [Tuple, Routing_table]),
   Updated =
@@ -1503,7 +1535,7 @@ add_to_routing(SM, Tuple = {From, _To}) ->
     _ ->
       case lists:keyfind(From, 1, Routing_table) of
         false -> [Tuple | Routing_table];
-        _ -> Routing_table
+        _ -> replace_rotuing(Tuple, Routing_table)
       end
   end,
 
@@ -1518,8 +1550,8 @@ routing_to_list(SM) ->
       [{default,?ADDRESS_MAX}];
     _ ->
       lists:filtermap(
-        fun({From, To}) when From =/= Local_address -> {true, {From, To}};
-           ({_,_}) -> false;
+        fun({From, To, _}) when From =/= Local_address -> {true, {From, To}};
+           ({_,_,_}) -> false;
            (To) -> {true, {default, To}}
         end, Routing_table)
   end.
