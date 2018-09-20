@@ -679,33 +679,28 @@ process_destination(SM, Recv_tuple) ->
         ?TRACE(?ID, "extract ack ~p ~p ~p~n", [Hops, Ack_Pkg_ID, Payload]),
         Send_tuple = nl_hf:create_response(SM, dst_reached, MType, Ack_Pkg_ID, NL_Src, NL_Dst, 0, Payload),
         Wait_ack = fsm:check_timeout(SM, {ack_timeout, {Ack_Pkg_ID, NL_Dst, NL_Src}}),
-        [nl_hf:pop_transmission(__, Recv_tuple),
+        [nl_hf:fill_statistics(__, Recv_tuple),
+         nl_hf:pop_transmission(__, Recv_tuple),
          nl_hf:fill_transmission(__, fifo, Send_tuple),
          Ack_handler(__, Wait_ack, Ack_Pkg_ID, Hops)
         ](LSM);
       (LSM) when Ack_protocol ->
         Send_tuple = nl_hf:create_response(SM, ack, MType, Pkg_ID, NL_Src, NL_Dst, 0, Payload),
         ?TRACE(?ID, "create ack ~p~n", [Send_tuple]),
-        [Path_handler(__, MType),
+        [nl_hf:fill_statistics(__, Recv_tuple),
+         Path_handler(__, MType),
          nl_hf:fill_transmission(__, fifo, Send_tuple),
          fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, NL_Dst, Payload}})
         ](LSM);
       (LSM) ->
         Send_tuple = nl_hf:create_response(SM, dst_reached, MType, Pkg_ID, NL_Src, NL_Dst, 0, Payload),
-        [nl_hf:fill_transmission(__, fifo, Send_tuple),
+        [nl_hf:fill_statistics(__, Recv_tuple),
+         nl_hf:fill_transmission(__, fifo, Send_tuple),
          fsm:cast(__, nl_impl, {send, {nl, recv, NL_Src, NL_Dst, Payload}})
         ](LSM)
   end,
-  [nl_hf:fill_statistics(__, Recv_tuple),
-   Destination_handler(__)
-  ](SM).
+  Destination_handler(SM).
 
-% check if same package was received from other src
-% delete message, if received dst_reached wiht same pkgID and reverse src, dst
-%process_package(SM, path, Tuple) ->
-%  [nl_hf:postpone_queue(__),
-%   process_package(__, path_addit, Tuple)
-%  ](SM);
 process_package(SM, dst_reached, Tuple) ->
   [nl_hf:update_received(__, Tuple),
    nl_hf:pop_transmission(__, Tuple),
