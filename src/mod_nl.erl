@@ -114,7 +114,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
 parse_conf(Mod_ID, ArgS, Share) ->
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
   Addr_set      = [Addrs          || {local_addr, Addrs} <- ArgS],
-  Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
+  Blacklist_set = [Addrs          || {blacklist, Addrs} <- ArgS],
   Routing       = [Addrs          || {routing, Addrs} <- ArgS],
   Max_address_set = [Addrs        || {max_address, Addrs} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
@@ -136,7 +136,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   Max_TTL        = set_params(TTL_Set, 10),
   Local_Retries  = set_params(Local_Retries_Set, 3), % optimal 3, % optimal 4 for icrpr
-  {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 1}), % optimal aloha {0,1}
+  {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 3}), % optimal aloha {0,1}
                                                                             % optimal tlohi {1,5} / {0,4}
                                                                             % optimal for ack {0,3}
 
@@ -148,7 +148,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {1, 2}),
   {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
 
-  Blacklist                       = set_blacklist(Bll_addrs, []),
+  Blacklist                       = set_blacklist(Blacklist_set, []),
   Routing_table                   = set_routing(Routing, NL_Protocol, ?ADDRESS_MAX),
   Probability                     = set_params(Prob_set, {0.4, 0.9}),
 
@@ -162,7 +162,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   WTmo_path       = set_params(WTmo_path_set, RTT + RTT/2),
 
   Path_life       = set_params(Path_life_set, 2 * WTmo_path),
-  Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
+  Neighbour_life  = set_params(Neighbour_life_set, WTmo_path),
 
   Start_time = erlang:monotonic_time(milli_seconds),
   ShareID = #sm{share = Share},
@@ -249,11 +249,8 @@ get_nfield(Param) ->
       end, {nf, 1}, lists:reverse(?LIST_ALL_PARAMS)),
     FNumber + 1.
 
-set_blacklist(Bll_addrs, Default) ->
-  case Bll_addrs of
-    [] -> Default;
-    [Addrs] -> if is_tuple(Addrs) -> tuple_to_list(Addrs); true -> error end
-  end.
+set_blacklist([], Default) -> Default;
+set_blacklist([Blacklist], _) -> Blacklist.
 
 set_params(Param, Default) ->
   case Param of
