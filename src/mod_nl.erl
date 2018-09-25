@@ -136,9 +136,9 @@ parse_conf(Mod_ID, ArgS, Share) ->
 
   Max_TTL        = set_params(TTL_Set, 10),
   Local_Retries  = set_params(Local_Retries_Set, 3), % optimal 3, % optimal 4 for icrpr
-  {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 3}), % optimal aloha {0,1}
+  {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 1}), % optimal aloha {0,1}
                                                                             % optimal tlohi {1,5} / {0,4}
-                                                                            % optimal for ack {0,3}
+                                                                            % optimal for ack {2, 5}
 
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
@@ -203,6 +203,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ?TRACE(Mod_ID, "Path_life ~p ~n", [Path_life]),
   ?TRACE(Mod_ID, "Neighbour_life ~p ~n", [Neighbour_life]),
   ?TRACE(Mod_ID, "Pkg_life ~p ~n", [Pkg_life]),
+  ?TRACE(Mod_ID, "Retries ~p ~n", [Local_Retries]),
+  ?TRACE(Mod_ID, "Sensing time {~p,~p} ~n", [Tmo_sensing_start, Tmo_sensing_end]),
 
   NL_Protocol.
 

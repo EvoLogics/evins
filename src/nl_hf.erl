@@ -488,7 +488,7 @@ check_tranmission_path(SM, Tuple) ->
   check_tranmission_path(SM, Tuple, received).
 
 check_tranmission_path(SM, Tuple, Qname) ->
-  {Pkg_ID, NL_Src, NL_Dst, MType, _} = Tuple, 
+  {Pkg_ID, NL_Src, NL_Dst, MType, _} = Tuple,
   Q = share:get(SM, Qname),
   Ack_paths =
   lists:filtermap(
@@ -851,7 +851,7 @@ get_stable_path(SM, Src, Dst) ->
 get_stable_path_helper(_, _, _, [], 0, []) -> [];
 get_stable_path_helper(_, _, _, [], _, NP) -> NP;
 get_stable_path_helper(SM, Src, Dst, [ H | T], Max, NP) ->
-  case H of 
+  case H of
     {Src, Dst, Integrity, Path} when Integrity > Max ->
       get_stable_path_helper(SM, Src, Dst, T, Integrity, Path);
     _ ->
@@ -888,14 +888,16 @@ nl2at(SM, IDst, Tuple) when is_tuple(Tuple)->
   NLPPid = ?PROTOCOL_NL_PID(share:get(SM, protocol_name)),
   ?WARNING(?ID, ">>>>>>>> NLPPid: ~p~n", [NLPPid]),
   Payload = getv(payload, Tuple),
-  AT_Payload = create_payload_nl_header(SM, NLPPid, Tuple),
+  [AT_Payload, L] = create_payload_nl_header(SM, NLPPid, true, Tuple),
 
   IM = byte_size(Payload) < ?MAX_IM_LEN,
+  AT =
   if IM ->
     {at, {pid,PID}, "*SENDIM", IDst, noack, AT_Payload};
   true ->
     {at, {pid,PID}, "*SEND", IDst, AT_Payload}
-  end.
+  end,
+  [AT, L].
 
 %%------------------------- Extract functions ----------------------------------
 create_nl_at_command(SM, NL) ->
@@ -912,26 +914,18 @@ create_nl_at_command(SM, NL) ->
       ((Dst =:= ?ADDRESS_MAX) and Protocol_Config#pr_conf.br_na)) ->
       error;
   true ->
-      AT = nl2at(SM, MAC_Route_Addr, NL),
+      [AT, L] = nl2at(SM, MAC_Route_Addr, NL),
       Current_RTT = {rtt, Local_address, Dst},
       ?TRACE(?ID, "Current RTT ~p sending AT command ~p~n", [Current_RTT, AT]),
       fill_dets(SM, PkgID, Src, Dst),
-      AT
+      [AT, L]
   end.
 
 extract_response(Payload) ->
   C_Bits_PkgID = count_flag_bits(?PKG_ID_MAX),
   C_Bits_Hops = count_flag_bits(?MAX_LEN_PATH),
   <<Hops:C_Bits_Hops, PkgID:C_Bits_PkgID, Rest/bitstring>> = Payload,
-
-  Data_bin = (bit_size(Payload) rem 8) =/= 0,
-  Hash =
-  if Data_bin =:= false ->
-    Add = bit_size(Rest) rem 8,
-    <<_:Add, H/binary>> = Rest, H;
-  true -> Rest
-  end,
-
+  Hash = cut_add_bits(Rest),
   {Hops, PkgID, binary_to_integer(Hash)}.
 
 extract_response(Types, Payload) when is_list(Types) ->
@@ -1000,15 +994,19 @@ encode_response(Hops, Pkg_ID, Hash) ->
   B_PkgID = <<Pkg_ID:C_Bits_PkgID>>,
 
   Tmp_Data = <<B_Hops/bitstring, B_PkgID/bitstring, BHash/binary>>,
-  Data_Bin = is_binary(Tmp_Data) =:= false or ( (bit_size(Tmp_Data) rem 8) =/= 0),
-  if Data_Bin =:= false ->
-    Add = (8 - bit_size(Tmp_Data) rem 8) rem 8,
+  Is_binary = check_binary(Tmp_Data),
+  if not Is_binary ->
+    Add = add_bits(Tmp_Data),
     <<B_Hops/bitstring, B_PkgID/bitstring, 0:Add, BHash/binary>>;
   true ->
     Tmp_Data
   end.
 
 extract_payload_nl_header(SM, Payload) ->
+  extract_payload_nl_header(SM, Payload, []).
+
+extract_payload_nl_header(_, <<"">>, L) -> L;
+extract_payload_nl_header(SM, Payload, L) ->
   % 6 bits NL_Protocol_PID
   % 3 bits Flag
   % 6 bits PkgID
@@ -1024,28 +1022,25 @@ extract_payload_nl_header(SM, Payload) ->
   C_Bits_TTL = count_flag_bits(Max_TTL),
   C_Bits_Addr = count_flag_bits(?ADDRESS_MAX),
 
-  <<Pid:C_Bits_Pid, Flag_Num:C_Bits_Flag, PkgID:C_Bits_PkgID, TTL:C_Bits_TTL,
-    Src:C_Bits_Addr, Dst:C_Bits_Addr, Rest/bitstring>> = Payload,
+  ?INFO(?ID, "To extract Payload ~p ~p ~p ~p ~p ~p~n", [Payload, C_Bits_Pid, C_Bits_Flag, C_Bits_PkgID, C_Bits_TTL, C_Bits_Addr]),
 
-  Data_bin = (bit_size(Payload) rem 8) =/= 0,
-  Extract_payload =
-  if Data_bin =:= false ->
-    Add = bit_size(Rest) rem 8,
-    <<_:Add, Data/binary>> = Rest,
-    Data;
-  true ->
-    Rest
-  end,
+  <<Pid:C_Bits_Pid, Flag_Num:C_Bits_Flag, PkgID:C_Bits_PkgID, TTL:C_Bits_TTL,
+    Src:C_Bits_Addr, Dst:C_Bits_Addr, _Rest/bitstring>> = Payload,
+
+  Bits_header = C_Bits_Pid + C_Bits_Flag + C_Bits_PkgID + C_Bits_TTL + 2 * C_Bits_Addr,
+  Extract_payload = cut_add_bits(Bits_header, Payload),
 
   Flag = num2flag(Flag_Num, nl),
-  ?INFO(?ID, "To extract Payload ~p~n", [Extract_payload]),
-  [MType, Path, Rssi, Integrity, Splitted_Payload] = extract_payload(SM, Extract_payload),
+  [MType, Path, Rssi, Integrity, Splitted_Payload, Other_msg] = extract_payload(SM, Extract_payload),
+
+  NL = if L =/= [] -> {_, List} = L, List; true -> [] end,
+  ?INFO(?ID, "Rest extract Payload ~p~n", [Other_msg]),
   Tuple = create_default(SM),
   RTuple =
   replace(
-    [flag, id, ttl, src, dst, mtype, path, rssi, integrity, payload],
-    [Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity, Splitted_Payload], Tuple),
-  {Pid, RTuple}.
+  [flag, id, ttl, src, dst, mtype, path, rssi, integrity, payload],
+  [Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity, Splitted_Payload], Tuple),
+  extract_payload_nl_header(SM, Other_msg, {Pid, [RTuple | NL]}).
 
   % 6 bits NL_Protocol_PID
   % 3 bits Flag
@@ -1054,7 +1049,7 @@ extract_payload_nl_header(SM, Payload) ->
   % 6 bits SRC
   % 6 bits DST
   % rest bits reserved for later (+ 3)
-create_payload_nl_header(SM, Pid, Tuple) ->
+create_payload_nl_header(SM, Pid, Allowed, Tuple) ->
   [Flag, PkgID, TTL, Src, Dst, Mtype, Path, Rssi, Integrity, Data] =
     getv([flag, id, ttl, src, dst, mtype, path, rssi, integrity, payload], Tuple),
 
@@ -1086,14 +1081,90 @@ create_payload_nl_header(SM, Pid, Tuple) ->
 
   Tmp_Data = <<B_Pid/bitstring, B_Flag/bitstring, B_PkgID/bitstring, B_TTL/bitstring,
                B_Src/bitstring, B_Dst/bitstring, Coded_Payload/binary>>,
-  Data_Bin = is_binary(Tmp_Data) =:= false or ( (bit_size(Tmp_Data) rem 8) =/= 0),
 
-  if Data_Bin =:= false ->
-    Add = (8 - bit_size(Tmp_Data) rem 8) rem 8,
+  Is_binary = check_binary(Tmp_Data),
+  Data_to_Send =
+  if not Is_binary ->
+    Add = add_bits(Tmp_Data),
+    ?INFO(?ID, "Add ~p~n", [Add]),
+
     <<B_Pid/bitstring, B_Flag/bitstring, B_PkgID/bitstring, B_TTL/bitstring, B_Src/bitstring,
       B_Dst/bitstring, 0:Add, Coded_Payload/binary>>;
   true ->
     Tmp_Data
+  end,
+
+  Protocol_Name = share:get(SM, protocol_name),
+  Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
+  Ack_protocol = Protocol_Config#pr_conf.ack,
+  Combine = Ack_protocol and (byte_size(Data_to_Send) < 64) and Allowed,
+  ?INFO(?ID, "create_payload_nl_header ~p ~p ~p~n",
+    [Combine, Ack_protocol, byte_size(Data_to_Send)]),
+
+  if Combine ->
+    ?INFO(?ID, "try_combine_ack ~p~n", [byte_size(Data_to_Send)]),
+    try_combine_ack(SM, Pid, Tuple, Data_to_Send);
+  true ->
+    [Data_to_Send, [Tuple]]
+  end.
+
+check_binary(Data) ->
+  is_binary(Data) or
+  ((bit_size(Data) rem 8) == 0).
+
+add_bits(Data) ->
+  (8 - bit_size(Data) rem 8) rem 8.
+get_add_bits(Data) ->
+  bit_size(Data) rem 8.
+
+cut_add_bits(Count, Payload) ->
+  R = (8 - Count rem 8) rem 8,
+  Add = Count + R,
+  <<_:Add, Data/bitstring>> = Payload,
+  Data.
+cut_add_bits(Payload) ->
+  Is_binary = check_binary(Payload),
+  if not Is_binary ->
+    Add = get_add_bits(Payload),
+    <<_:Add, Data/binary>> = Payload,
+    Data;
+  true ->
+    Payload
+  end.
+
+try_combine_ack(SM, Pid, Tuple, Data) ->
+  Q = share:get(SM, transmission),
+  find_acks(SM, Pid, Tuple, Q, Data, [Tuple]).
+
+find_acks(_, _, _, {[],[]}, Data, Acks) -> [Data, Acks];
+find_acks(SM, Pid, Tuple, Q, Data, Acks) ->
+  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  [QPkgID, QFlag, MType, QDst] = getv([id, flag, mtype, dst], Q_Tuple),
+  [PkgID, TDst] = getv([id, dst], Tuple),
+  Dst = get_routing_address(SM, TDst),
+  QRoute = get_routing_address(SM, QDst),
+  Member = lists:member(Q_Tuple, Acks),
+  Same = Tuple == Q_Tuple,
+
+  ?INFO(?ID, "find_acks  TQ ~p~n", [Q]),
+  ?INFO(?ID, "find_acks ~p ~p ~p ~p ~p ~p~n",
+    [Member, Same, QFlag, Dst, QRoute, MType]),
+  %(QFlag == data) or
+  if not Member and not Same and
+     ((QFlag == ack) or (QFlag == dst_reached)) and
+     ((Dst == QRoute) or (Dst == ?ADDRESS_MAX)) and
+     ((MType == data) or (MType == path_data)) ->
+    [Ack_bin, _] = create_payload_nl_header(SM, Pid, false, Q_Tuple),
+    ?INFO(?ID, "find_acks ~p ~p~n", [byte_size(Ack_bin), byte_size(Data)]),
+    Len = byte_size(Ack_bin) + byte_size(Data),
+    if Len < 64 ->
+      ?INFO(?ID, "Combined ~p ~p ~p ~p~n", [QPkgID, PkgID, Data, Ack_bin]),
+      find_acks(SM, Pid, Tuple, Q_Tail, <<Data/binary, Ack_bin/binary>>, [Q_Tuple | Acks]);
+    true ->
+      find_acks(SM, Pid, Tuple, Q_Tail, Data, Acks)
+    end;
+  true ->
+    find_acks(SM, Pid, Tuple, Q_Tail, Data, Acks)
   end.
 
 %%----------------NL functions create/extract protocol header-------------------
@@ -1112,7 +1183,7 @@ fill_path_data_header(Path, TransmitLen, Data) ->
   BLenPath = <<LenPath:CBitsLenPath>>,
   BPath = code_header(path, Path),
   BHeader = <<BType/bitstring, BLenData/bitstring, BLenPath/bitstring, BPath/bitstring>>,
-  Add = (8 - (bit_size(BHeader)) rem 8) rem 8,
+  Add = add_bits(BHeader),
   <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 %-------> data
@@ -1127,7 +1198,7 @@ fill_data_header(Type, TransmitLen, Data) ->
   BLenData = <<TransmitLen:CBitsMaxLenData>>,
 
   BHeader = <<BType/bitstring, BLenData/bitstring>>,
-  Add = (8 - (bit_size(BHeader)) rem 8) rem 8,
+  Add = add_bits(BHeader),
   <<BHeader/bitstring, 0:Add, Data/binary>>.
 
 %%--------------- path_addit -------------------
@@ -1135,7 +1206,7 @@ fill_data_header(Type, TransmitLen, Data) ->
 %   3b        6b        LenPath * 6b    2b        LenAdd * 8b       REST till / 8
 %   TYPEMSG   LenPath   Path            LenAdd    Addtional Info     ADD
 fill_path_evo_header(Tuple) ->
-  {Path, Rssi, Integrity, Transmit_Len, Data} = Tuple,  
+  {Path, Rssi, Integrity, Transmit_Len, Data} = Tuple,
   LenPath = length(Path),
   LenAdd = length([Rssi, Integrity]),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
@@ -1152,10 +1223,11 @@ fill_path_evo_header(Tuple) ->
   BAdd = code_header(add, [Rssi, Integrity]),
   TmpData = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
             BLenAdd/bitstring, BAdd/bitstring>>,
-  Data_bin = is_binary(TmpData) =:= false or ( (bit_size(TmpData) rem 8) =/= 0),
+
+  Is_binary = check_binary(TmpData),
   Header =
-  if Data_bin =:= false ->
-     Add = (8 - bit_size(TmpData) rem 8) rem 8,
+  if not Is_binary ->
+     Add = add_bits(TmpData),
      <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
             BLenAdd/bitstring, BAdd/bitstring, 0:Add>>;
    true ->
@@ -1181,45 +1253,55 @@ extract_path_evo_header(SM, Payload) ->
   ?TRACE(?ID, "extract path addit BType ~p  Path ~p Additonal ~p~n",
         [BType, Path, Additional]),
 
-  Data_bin = (bit_size(Payload) rem 8) =/= 0,
-  if Data_bin =:= false ->
-    Add = bit_size(Data_rest) rem 8,
-    <<_:Add, Data/binary>> = Data_rest,
-    [Path, Rssi, Integrity, Data];
-  true ->
-    [Path, Rssi, Integrity, Data_rest]
-  end.
+  Data = cut_add_bits(Data_rest),
+  [Path, Rssi, Integrity, Data, <<"">>].
+
 
 extract_payload(SM, Payload) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
   CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
 
-  Data_bin = (bit_size(Payload) rem 8) =/= 0,
-  <<Type:CBitsTypeMsg, _LenData:CBitsMaxLenData, Path_payload/bitstring>> = Payload,
+  ?TRACE(?ID, "extract_payload message type ~p ~p ~p~n", [bit_size(Payload), CBitsTypeMsg, CBitsMaxLenData]),
+
+  <<Type:CBitsTypeMsg, Len:CBitsMaxLenData, Rest/bitstring>> = Payload,
 
   MType = ?NUM2TYPEMSG(Type),
   ?TRACE(?ID, "extract_payload message type ~p ~n", [MType]),
-  [Path, Rssi, Integrity, Rest] =
-  case ?NUM2TYPEMSG(Type) of
+  [Path, Rssi, Integrity, Parsed_data, Other_msg] =
+  case MType of
     % TODO: other types
     path_addit ->
       extract_path_evo_header(SM, Payload);
     path_data ->
-      {P, Add_rest} = extract_header(path, CBitsLenPath, CBitsLenPath, Path_payload),
-      [P, 0, 0, Add_rest];
+      {P, Path_payload} = extract_header(path, CBitsLenPath, CBitsLenPath, Rest),
+      ?TRACE(?ID, "extract_payload message type ~p ~p ~n", [P, Path_payload]),
+      [Data, Rest_payload] = decode_payload(SM, MType, Len, 0, Path_payload),
+      [P, 0, 0, Data, Rest_payload];
     data ->
-      [[], 0, 0, Path_payload]
+      Cut_len = CBitsTypeMsg + CBitsMaxLenData,
+      [Data, Rest_payload] = decode_payload(SM, MType, Len, Cut_len, Payload),
+      [[], 0, 0, Data, Rest_payload]
   end,
 
-  if Data_bin =:= false ->
-    Add = bit_size(Rest) rem 8,
-    <<_:Add, Data/binary>> = Rest,
-    [MType, Path, Rssi, Integrity, Data];
-  true ->
-    [MType, Path, Rssi, Integrity, Rest]
-  end.
+  [MType, Path, Rssi, Integrity, Parsed_data, Other_msg].
 
+decode_payload(SM, path_data, Len, _, Payload) ->
+  Data = cut_add_bits(Payload),
+  <<Path_payload:Len/binary, Rest_payload/binary>> = Data,
+  ?TRACE(?ID, "decode_payload ~p ~p~n", [Path_payload, Rest_payload]),
+  [Path_payload, Rest_payload];
+decode_payload(SM, data, Len, Cut_len, Payload) ->
+  Is_binary = (Cut_len rem 8) == 0,
+  Data =
+  if not Is_binary ->
+    cut_add_bits(Cut_len, Payload);
+  true -> Payload
+  end,
+
+  <<Path_payload:Len/binary, Rest_payload/binary>> = Data,
+  ?TRACE(?ID, "decode_payload ~p ~p~n", [Path_payload, Rest_payload]),
+  [Path_payload, Rest_payload].
 
 decode_header(neighbours, Neighbours) ->
   W = count_flag_bits(?MAX_LEN_NEIGBOURS),
