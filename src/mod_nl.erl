@@ -114,9 +114,9 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
 parse_conf(Mod_ID, ArgS, Share) ->
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
   Addr_set      = [Addrs          || {local_addr, Addrs} <- ArgS],
-  Bll_addrs     = [Addrs          || {bll_addrs, Addrs} <- ArgS],
-  Routing_addrs = [Addrs          || {routing, Addrs} <- ArgS],
-  Max_address_set   = [Addrs      || {max_address, Addrs} <- ArgS],
+  Blacklist_set = [Addrs          || {blacklist, Addrs} <- ArgS],
+  Routing       = [Addrs          || {routing, Addrs} <- ArgS],
+  Max_address_set = [Addrs        || {max_address, Addrs} <- ArgS],
   Prob_set      = [P              || {probability, P} <- ArgS],
   Max_hops_Set  = [Hops           || {max_hops, Hops} <- ArgS],
   Pkg_life_Set  = [Time           || {pkg_life, Time} <- ArgS],
@@ -130,6 +130,16 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Neighbour_life_set= [Time || {neighbour_life, Time} <- ArgS],
   Tmo_dbl_wv_set    = [Time || {tmo_dbl_wv, Time} <- ArgS],
 
+  Local_Retries_Set  = [C   || {retries, C} <- ArgS],
+  TTL_Set  = [C   || {ttl, C} <- ArgS],
+  Tmo_sensing  = [Time || {tmo_sensing, Time} <- ArgS],
+
+  Max_TTL        = set_params(TTL_Set, 10),
+  Local_Retries  = set_params(Local_Retries_Set, 3), % optimal 3, % optimal 4 for icrpr
+  {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 1}), % optimal aloha {0,1}
+                                                                            % optimal tlohi {1,5} / {0,4}
+                                                                            % optimal for ack {2, 5}
+
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
   Pkg_life        = set_params(Pkg_life_Set, 180), % in sek
@@ -138,12 +148,13 @@ parse_conf(Mod_ID, ArgS, Share) ->
   {Wack_tmo_start, Wack_tmo_end}  = set_timeouts(Tmo_wack, {1, 2}),
   {Spath_tmo_start, Spath_tmo_end}= set_timeouts(STmo_path, {1, 2}),
 
-  Blacklist                       = set_blacklist(Bll_addrs, []),
-  Routing_table                   = set_routing(Routing_addrs, NL_Protocol, ?ADDRESS_MAX),
+  Blacklist                       = set_blacklist(Blacklist_set, []),
+  Routing_table                   = set_routing(Routing, NL_Protocol, ?ADDRESS_MAX),
   Probability                     = set_params(Prob_set, {0.4, 0.9}),
 
-  Max_hops        = set_params(Max_hops_Set, 8),
-  RTT = count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end),
+  Max_hops = set_params(Max_hops_Set, 3),
+  %RTT = count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end),
+  RTT = count_RTT(Max_hops, Tmo_sensing_end),
 
   Default_Tmo_Neighbour = 5 + round(Spath_tmo_end),
   Tmo_Neighbour   = set_params(Tmo_Neighbour_set, Default_Tmo_Neighbour),
@@ -151,7 +162,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   WTmo_path       = set_params(WTmo_path_set, RTT + RTT/2),
 
   Path_life       = set_params(Path_life_set, 2 * WTmo_path),
-  Neighbour_life  = set_params(Neighbour_life_set, 2 * WTmo_path),
+  Neighbour_life  = set_params(Neighbour_life_set, WTmo_path),
 
   Start_time = erlang:monotonic_time(milli_seconds),
   ShareID = #sm{share = Share},
@@ -174,7 +185,10 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {rtt, RTT + RTT/2},
                       {send_wv_dbl_tmo, Tmo_dbl_wv},
                       {probability, Probability},
-                      {pkg_life, Pkg_life}
+                      {pkg_life, Pkg_life},
+                      {retries, Local_Retries},
+                      {ttl, Max_TTL},
+                      {tmo_sensing, {Tmo_sensing_start, Tmo_sensing_end}}
                      ]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
@@ -189,19 +203,13 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ?TRACE(Mod_ID, "Path_life ~p ~n", [Path_life]),
   ?TRACE(Mod_ID, "Neighbour_life ~p ~n", [Neighbour_life]),
   ?TRACE(Mod_ID, "Pkg_life ~p ~n", [Pkg_life]),
+  ?TRACE(Mod_ID, "Retries ~p ~n", [Local_Retries]),
+  ?TRACE(Mod_ID, "Sensing time {~p,~p} ~n", [Tmo_sensing_start, Tmo_sensing_end]),
 
   NL_Protocol.
 
-count_RTT(Max_hops, Wwv_tmo_end, Wack_tmo_end) ->
-  Count_waves     = 2,
-  RMax_timeout     = round(max(Wwv_tmo_end, Wack_tmo_end)),
-  Max_timeout =
-  if RMax_timeout == 0 ->
-    1;
-  true ->
-    RMax_timeout
-  end,
-  Max_hops * Count_waves * Max_timeout + Max_hops.
+count_RTT(Max_hops, Time) ->
+  2 * Max_hops * (Time + 1).
 
 conf_fsm(Protocol) ->
   [{_, Decr}] = lists:filter(fun({PN, _})-> PN =:= Protocol end, ?PROTOCOL_CONF),
@@ -210,7 +218,7 @@ conf_fsm(Protocol) ->
 conf_protocol(CurrentProtocol, Share, Protocol, Params, SMName) ->
   ShareID = #sm{share = Share},
   if (CurrentProtocol =:= Protocol) ->
-      share:put(ShareID, nlp, Protocol);
+      share:put(ShareID, protocol_name, Protocol);
     true -> nothing
   end,
   parse_pr_params(Share, Params, Protocol),
@@ -243,11 +251,8 @@ get_nfield(Param) ->
       end, {nf, 1}, lists:reverse(?LIST_ALL_PARAMS)),
     FNumber + 1.
 
-set_blacklist(Bll_addrs, Default) ->
-  case Bll_addrs of
-    [] -> Default;
-    [Addrs] -> if is_tuple(Addrs) -> tuple_to_list(Addrs); true -> error end
-  end.
+set_blacklist([], Default) -> Default;
+set_blacklist([Blacklist], _) -> Blacklist.
 
 set_params(Param, Default) ->
   case Param of
@@ -261,13 +266,13 @@ set_timeouts(Tmo, Defaults) ->
     [{Start, End}]-> {Start, End}
   end.
 
-set_routing(Routing_addrs, NL_Protocol, Default) ->
-  case NL_Protocol of
-    _ when ( ((NL_Protocol =:= staticr) or (NL_Protocol =:= staticrack)) and (Routing_addrs =:= [])) ->
+set_routing(Routing, Protocol, Default) ->
+  case Protocol of
+    _ when ( ((Protocol =:= staticr) or (Protocol =:= staticrack)) and (Routing =:= [])) ->
       io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a default value will be set 255 broadcast ~n",[]),
       Default;
-    _ when (Routing_addrs =/= []) ->
-      [TupleRouting] = Routing_addrs,
+    _ when (Routing =/= []) ->
+      [TupleRouting] = Routing,
       [{?ADDRESS_MAX, ?ADDRESS_MAX} | tuple_to_list(TupleRouting)];
     _ -> Default
   end.

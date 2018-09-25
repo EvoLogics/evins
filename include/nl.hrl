@@ -60,7 +60,8 @@
 -define(FLAG_MAX, 5).
 -define(TYPE_MSG_MAX, 5).
 -define(TTL, 3).
--define(PKG_ID_MAX, 63).
+-define(TRANSMISSION_QUEUE_SIZE, 30).
+-define(PKG_ID_MAX, 255).
 -define(ADDRESS_MAX, 63).
 -define(MAX_LEN_PATH, 63).
 -define(MAX_LEN_NEIGBOURS, 63).
@@ -69,7 +70,8 @@
 -define(MAX_DATA_LEN, 64).
 
 -define(MAX_IM_LEN, 50).
-
+-define(Q_STATISTICS_SIZE, 300).
+-define(RQ_SIZE, 100).
 -define(LIST_ALL_PROTOCOLS, [staticr,
            staticrack,
            sncfloodr,
@@ -133,21 +135,21 @@
   end).
 
 -define(PROTOCOL_CONF, [
-      {staticr, [{stat, ry_only}, fsm_nl_flood]}, % Simple static routing
-      {staticrack, [{stat, ry_only, br_na, ack}, fsm_nl_flood]},  % Simple static routing with acknowledgement
-      {sncfloodr, [{ry_only}, fsm_nl_flood]}, % Sequence number controlled flooding
-      {sncfloodrack, [{ry_only, br_na, ack}, fsm_nl_flood]},  % Sequence number controlled flooding with acknowledgement
-      {dpfloodr, [{ry_only, prob},    fsm_nl_flood]}, % Dynamic Probabilistic Flooding
-      {dpfloodrack, [{ry_only, prob, br_na, ack},fsm_nl_flood]},  % Dynamic Probabilistic Flooding with acknowledgement
-      {icrpr, [{ry_only, pf, br_na, ack},  fsm_nl_flood]},  % Information Carrying Routing Protocol
-      {sncfloodpfr, [{pf, brp, br_na}, fsm_nl_flood]},  % Pathfind and relay, based on sequence number controlled flooding
-      {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_nl_flood]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
-      {dblfloodpfr, [{pf, dbl, br_na}, fsm_nl_flood]},  % Double flooding path finder
-      {dblfloodpfrack,[{pf, dbl, br_na, ack}, fsm_nl_flood]}, % Double flooding path finder with acknowledgement
-      {evoicrppfr, [{pf, br_na, lo, evo}, fsm_nl_flood]}, % Evologics Information Carrying routing protocol
-      {evoicrppfrack, [{pf, br_na, lo, evo, ack}, fsm_nl_flood]}, % Evologics Information Carrying routing protocol with acknowledgement
-      {loarpr, [{pf, br_na, lo, rm}, fsm_nl_flood]},  % Low overhead routing protocol
-      {loarprack, [{pf, br_na, lo, rm, ack}, fsm_nl_flood]} % Low overhead routing protocol with acknowledgement
+      {staticr, [{stat, ry_only}, fsm_opportunistic_flooding]}, % Simple static routing
+      {staticrack, [{stat, ry_only, br_na, ack}, fsm_opportunistic_flooding]},  % Simple static routing with acknowledgement
+      {sncfloodr, [{ry_only}, fsm_opportunistic_flooding]}, % Sequence number controlled flooding
+      {sncfloodrack, [{ry_only, br_na, ack}, fsm_opportunistic_flooding]},  % Sequence number controlled flooding with acknowledgement
+      {dpfloodr, [{ry_only, prob},    fsm_opportunistic_flooding]}, % Dynamic Probabilistic Flooding
+      {dpfloodrack, [{ry_only, prob, br_na, ack},fsm_opportunistic_flooding]},  % Dynamic Probabilistic Flooding with acknowledgement
+      {icrpr, [{ry_only, pf, br_na, ack},  fsm_opportunistic_flooding]},  % Information Carrying Routing Protocol
+      {sncfloodpfr, [{pf, brp, br_na}, fsm_opportunistic_flooding]},  % Pathfind and relay, based on sequence number controlled flooding
+      {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_opportunistic_flooding]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
+      {dblfloodpfr, [{pf, dbl, br_na}, fsm_opportunistic_flooding]},  % Double flooding path finder
+      {dblfloodpfrack,[{pf, dbl, br_na, ack}, fsm_opportunistic_flooding]}, % Double flooding path finder with acknowledgement
+      {evoicrppfr, [{pf, br_na, lo, evo}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol
+      {evoicrppfrack, [{pf, br_na, lo, evo, ack}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol with acknowledgement
+      {loarpr, [{pf, br_na, lo, rm}, fsm_opportunistic_flooding]},  % Low overhead routing protocol
+      {loarprack, [{pf, br_na, lo, rm, ack}, fsm_opportunistic_flooding]} % Low overhead routing protocol with acknowledgement
            ]).
 
 -define(PROTOCOL_DESCR, ["\n",
@@ -211,17 +213,23 @@
        "======================== Statistics commands for protocols of all types ========================\n",
        "NL,get,statistics,neighbours\t\t\t- Get statistics of all neighbours from start of program till the current time
        \t\t\tAnswer:
-       \t\t\t<Role : relay or source><Neighbours><Duration find path><Count found this path><Total count try findpath>\n"
+       \t\t\tneighbour:<Neighbour>nast update:<Time>count:<Count>Total count:<Total count>\n"
        "\n",
        "================== Statistics commands only for protocols of path finding type ==================\n",
        "NL,get,statistics,paths\t\t\t\t- Get statistics of all paths from start of program till the current time
        \t\t\tAnswer:
-       \t\t\t<Role : relay or source><Path><Duration find path><Count found this path><Total count try findpath>\n"
+       \t\t\t<Path><Duration find path><Count found this path><Total count try findpath>\n
+       \t\t\t<Path><Count found this path><Total count try findpath>\n"
        "\n",
+       "========================= Statistics commands only for protocols without ack ========================\n",
+       "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time
+       \t\t\tAnswer:
+       \t\t\t<relay/source/destination><Data> send_time:<Time> recv_time:<Time> src:<Address> dst:<Address> last_ttl:<TTL>"
+       "\n\n\n",
        "========================= Statistics commands only for protocols with ack ========================\n",
        "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time
        \t\t\tAnswer:
-       \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
+       \t\t\t<relay or source> data:<Data> len:<Len> duration:<Time between data transmission and getting ack> state:<Delivered/Failed> total:<Tries> dst:<Adderss> hops:<Hops>"
        "\n\n\n",
        "========================= Time commands ========================\n",
        "NL,get,time,monotonic\t\t\t\t-Get monotonic time, time in milliseconds from the start\n"

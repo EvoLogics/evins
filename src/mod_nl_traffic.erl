@@ -1,4 +1,4 @@
-%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
+%% Copyright (c) 2018, Veronika Kebkal <veronika.kebkal@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -25,59 +25,49 @@
 %% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 %% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
--module(mod_polling).
+-module(mod_nl_traffic).
 -behaviour(fsm_worker).
 
 -include("fsm.hrl").
 
 -export([start/4, register_fsms/4]).
 
-% pt - packet transmission
-% pc - packet counter
-% sq - sensitive queue
-% st - tolernat queue
-
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-    fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+  fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   parse_conf(Mod_ID, ArgS, Share),
-  Roles = fsm_worker:role_info(Role_IDs, [at, nl_impl, nmea]),
-  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_polling_mux}].
+  Roles = fsm_worker:role_info(Role_IDs, [nl_impl, nl]),
+  [#sm{roles = Roles, module = fsm_nl_traffic}].
 
 parse_conf(_Mod_ID, ArgS, Share) ->
+  Generators_Set  = [G  || {generators, G} <- ArgS],
+  Destinations_Set = [D  || {destinations, D} <- ArgS],
+  Transmit_Tmo = [Time || {transmit_tmo, Time} <- ArgS],
+  Traffic_Time_Set = [Time || {traffic_time_max, Time} <- ArgS],
+
+  Generators  = set_params(Generators_Set, [1]),
+  Destinations = set_params(Destinations_Set, [7]),
+  Traffic_Time = set_params(Traffic_Time_Set, 1), % minutes
+  {Transmit_Tmo_Start, Transmit_Tmo_End} = set_timeouts(Transmit_Tmo, {2, 2}),
+
+  Start_time = erlang:monotonic_time(milli_seconds),
   ShareID = #sm{share = Share},
+  share:put(ShareID, [{start_time, Start_time},
+                      {generators, Generators},
+                      {destinations, Destinations},
+                      {traffic_time_max, Traffic_Time},
+                      {transmit_tmo, {Transmit_Tmo_Start, Transmit_Tmo_End}}]).
 
-  [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
-
-  Time_wait_data_set  = [Time  || {wait_data_tmo, Time} <- ArgS],
-  Max_sq_set  = [Max  || {max_sensitive_queue, Max} <- ArgS],
-  Max_pt_sens_set  = [Max  || {max_pt_sensitive, Max} <- ArgS],
-  Max_pt_tolerant_set  = [Max  || {max_pt_tolerant, Max} <- ArgS],
-  Max_burst_len_set  = [Max  || {max_burst_len, Max} <- ArgS],
-
-  Time_wait_data  = set_params(Time_wait_data_set, 20), %s
-  Max_sensitive_queue  = set_params(Max_sq_set, 3),
-  Max_pt_sensitive  = set_params(Max_pt_sens_set, 3),
-  Max_pt_tolerant  = set_params(Max_pt_tolerant_set, 3),
-  Max_burst_len  = set_params(Max_burst_len_set, (Max_pt_sensitive + Max_pt_tolerant) * 1000),
-
-  Ref =
-    case [{LatRef, LonRef} || {reference_position, {LatRef, LonRef}} <- ArgS] of
-      [{Lat, Lon}] -> {Lat, Lon};
-      _ -> {63.444158, 10.365286}
-    end,
-
-  share:put(ShareID, reference_position, Ref),
-  share:put(ShareID, [{nl_protocol, NL_Protocol}]),
-  share:put(ShareID, [{wait_data_tmo, Time_wait_data}]),
-  share:put(ShareID, [{max_burst_len, Max_burst_len}]),
-  share:put(ShareID, [{max_sensitive_queue, Max_sensitive_queue}]),
-  share:put(ShareID, [{max_pt_sensitive, Max_pt_sensitive}]),
-  share:put(ShareID, [{max_pt_tolerant, Max_pt_tolerant}]).
 
 set_params(Param, Default) ->
   case Param of
     []     -> Default;
     [Value]-> Value
+  end.
+
+set_timeouts(Tmo, Defaults) ->
+  case Tmo of
+    [] -> Defaults;
+    [{Start, End}]-> {Start, End}
   end.
