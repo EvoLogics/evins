@@ -516,9 +516,7 @@ parse_packet_handler(SM, _, _, []) ->
   end;
 parse_packet_handler(SM, Adressed, Channel, [Tuple | Tail]) ->
   ?TRACE(?ID, "Extracted message  ~p ~n", [Tuple]),
-  Flag = nl_hf:getv(flag, Tuple),
-  [process_package(__, Flag, Tuple),
-   packet_handler_helper(__, Adressed, Channel, Tuple),
+  [packet_handler_helper(__, Adressed, Channel, Tuple),
    parse_packet_handler(__, Adressed, Channel, Tail)
   ](SM).
 
@@ -528,7 +526,9 @@ packet_handler_helper(SM, false, _, Tuple) ->
 packet_handler_helper(SM, true, Channel, Tuple) ->
   {NL_AT_Src, _, AT_Rssi, AT_Integrity} = Channel,
   Time = share:get(SM, neighbour_life),
-  [check_if_processed(__, Tuple, Channel),
+  Flag = nl_hf:getv(flag, Tuple),
+  [process_package(__, Flag, Tuple),
+   check_if_processed(__, Tuple, Channel),
    nl_hf:set_processing_time(__, received, Tuple),
    fsm:set_timeout(__, {s, Time}, {neighbour_life, NL_AT_Src}),
    nl_hf:add_neighbours(__, NL_AT_Src, {AT_Rssi, AT_Integrity}),

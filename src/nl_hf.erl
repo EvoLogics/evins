@@ -846,13 +846,15 @@ add_to_paths(SM, Src, Dst, Path, Integrity, _Rssi) ->
 get_stable_path(SM, Src, Dst) ->
   Paths = share:get(SM, nothing, stable_paths, []),
   ?INFO(?ID, "Choose between paths ~p~n", [Paths]),
-  get_stable_path_helper(SM, Src, Dst, Paths, 0, []).
+  get_stable_path_helper(SM, Src, Dst, Paths, -1, []).
 
-get_stable_path_helper(_, _, _, [], 0, []) -> [];
+get_stable_path_helper(_, _, _, [], -1, []) -> [];
 get_stable_path_helper(_, _, _, [], _, NP) -> NP;
 get_stable_path_helper(SM, Src, Dst, [ H | T], Max, NP) ->
   case H of
-    {Src, Dst, Integrity, Path} when Integrity > Max ->
+    {Src, Dst, 0, Path} ->
+      get_stable_path_helper(SM, Src, Dst, T, 0, Path);
+    {Src, Dst, Integrity, Path} when Integrity > Max, Max =/= 0 ->
       get_stable_path_helper(SM, Src, Dst, T, Integrity, Path);
     _ ->
       get_stable_path_helper(SM, Src, Dst, T, Max, NP)
