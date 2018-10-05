@@ -376,19 +376,19 @@ try_transmit(SM, AT, L, Head) ->
   fun(_LSM, blocked) -> fsm:set_event(SM, wait);
      (_LSM, ok) ->
       ?INFO(?ID, "Transmit tuples ~p~n", [L]),
-      transmit_combined(SM, Head, L)
+      transmit_combined(SM, AT, Head, L)
   end,
 
   [fsm:set_event(__, eps),
    fsm:maybe_send_at_command(__, AT, Transmission_handler)
   ](SM).
 
-transmit_combined(SM, Head, []) ->
+transmit_combined(SM, _, Head, []) ->
   Sensing = nl_hf:rand_float(SM, tmo_sensing),
   [fsm:set_event(__, transmitted),
    fsm:set_timeout(__, {ms, Sensing}, {sensing_timeout, Head})
   ](SM);
-transmit_combined(SM, Tuple, [Head | Tail]) ->
+transmit_combined(SM, AT, Tuple, [Head | Tail]) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Ack_protocol = Protocol_Config#pr_conf.ack,
@@ -404,12 +404,28 @@ transmit_combined(SM, Tuple, [Head | Tail]) ->
       end
   end,
 
+  Combined_ack_handler =
+  fun (LSM, H) ->
+    % decrease retries of packet, only if dst is the same
+    % or broadcast
+    Dst = nl_hf:getv(dst, H),
+    Exist = nl_hf:routing_exist(SM, Dst),
+    AT_Dst = nl_hf:get_at_dst(AT),
+    NL_Dst  = nl_hf:mac2nl_address(AT_Dst),
+    Not_decrease = Exist and (NL_Dst =/= Dst),
+    if Not_decrease ->
+      LSM;
+    true ->
+       nl_hf:decrease_retries(LSM, H)
+    end
+  end,
+
   [nl_hf:set_processing_time(__, transmitted, Head),
-   nl_hf:decrease_retries(__, Head),
+   Combined_ack_handler(__, Head),
    nl_hf:update_received_TTL(__, Head),
    nl_hf:update_received(__, Head),
    Ack_handler(__, Head),
-   transmit_combined(__, Tuple, Tail)
+   transmit_combined(__, AT, Tuple, Tail)
   ](SM).
 
 maybe_transmit_next(SM) ->
@@ -522,7 +538,14 @@ parse_packet_handler(SM, Adressed, Channel, [Tuple | Tail]) ->
 
 packet_handler_helper(SM, false, _, Tuple) ->
   ?INFO(?ID, "Handle packet, but not relay ~p~n", [Tuple]),
-  fsm:set_event(SM, relay);
+  Pop_handler =
+  fun (LSM, Type) when Type == data; Type == path_data ->
+        nl_hf:pop_transmission(LSM, Tuple);
+      (LSM, _) -> LSM
+  end,
+  [Pop_handler(__, nl_hf:getv(mtype, Tuple)),
+   fsm:set_event(__, relay)
+  ](SM);
 packet_handler_helper(SM, true, Channel, Tuple) ->
   {NL_AT_Src, _, AT_Rssi, AT_Integrity} = Channel,
   Time = share:get(SM, neighbour_life),
@@ -613,11 +636,17 @@ check_if_processed(SM, Tuple, Channel) ->
         Routing_handler(SM)
   end.
 
+check_path_timeout(#sm{timeouts = Timeouts}, Src, Dst) ->
+  length(lists:filter(
+    fun({E, {_, S, D, _, _}}) -> ((E == choose_path) and (S == Src) and (D == Dst));
+       ({_, _}) -> false
+    end, Timeouts)) =:= 1.
+
 choose_stable(SM, Recv_tuple) ->
   [Pkg_ID, NL_Src, NL_Dst, MType, Path, Integrity, Rssi, Payload] =
     nl_hf:getv([id, src, dst, mtype, path, integrity, rssi, payload], Recv_tuple),
   Timeout_tuple = {Pkg_ID, NL_Src, NL_Dst, MType, Payload},
-  Path_timeout = fsm:check_timeout(SM, {choose_path, Timeout_tuple}),
+  Path_timeout = check_path_timeout(SM, NL_Src, NL_Dst),
   Check_path = nl_hf:check_tranmission_path(SM, Timeout_tuple),
   ?INFO(?ID, "choose_stable ~p ~p~n",  [Path_timeout, Check_path]),
 
@@ -633,8 +662,13 @@ choose_stable(SM, Recv_tuple) ->
   Set_path_timeout(SM, Path_timeout).
 
 set_stable_path(SM, Tuple) ->
-  {Pkg_ID, NL_Src, NL_Dst, MType, Payload} = Tuple,
+  {_, NL_Src, NL_Dst, _, _} = Tuple,
   Stable_path = nl_hf:get_stable_path(SM, NL_Src, NL_Dst),
+  set_stable_path(SM, Tuple, Stable_path).
+
+set_stable_path(SM, _, nothing) -> SM;
+set_stable_path(SM, Tuple, Stable_path) ->
+  {Pkg_ID, NL_Src, NL_Dst, MType, Payload} = Tuple,
   New_path = nl_hf:update_path(SM, Stable_path),
   Send_tuple = nl_hf:create_ack_path(SM, ack, MType, Pkg_ID, NL_Src, NL_Dst, 0, Payload, New_path),
   ?TRACE(?ID, " ~p Stable Path ~p~n", [Send_tuple, New_path]),

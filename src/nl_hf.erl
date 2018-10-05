@@ -42,7 +42,7 @@
          pop_transmission/3, pop_transmission/2, decrease_TTL/1, delete_neighbour/2]).
 -export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, clear_event_params/2, clear_spec_event_params/2]).
 -export([add_event_params/2, find_event_params/3, find_event_params/2]).
--export([nl2mac_address/1, get_routing_address/2, nl2at/3, flag2num/1, queue_push/4, queue_push/3]).
+-export([nl2mac_address/1, get_routing_address/2, nl2at/3, get_at_dst/1, flag2num/1, queue_push/4, queue_push/3]).
 -export([decrease_retries/2, rand_float/2, update_states/1, count_flag_bits/1]).
 -export([create_response/8, create_ack_path/9, recreate_response/3, extract_response/1, extract_response/2, prepare_path/5, recreate_path/4]).
 -export([process_set_command/2, process_get_command/2, set_processing_time/3,fill_statistics/2, fill_statistics/3, fill_statistics/5]).
@@ -841,14 +841,16 @@ strip_path(Address, Path, [_ | T]) ->
 
 add_to_paths(SM, Src, Dst, Path, Integrity, _Rssi) ->
   Paths = share:get(SM, nothing, stable_paths, []),
-  share:put(SM, stable_paths, [ {Src, Dst, Integrity, Path} | Paths]).
+  Tuple = {Src, Dst, Integrity, Path},
+  ?INFO(?ID, "Add ~p to paths ~p~n", [Tuple, Paths]),
+  share:put(SM, stable_paths, [ Tuple | Paths]).
 
 get_stable_path(SM, Src, Dst) ->
   Paths = share:get(SM, nothing, stable_paths, []),
   ?INFO(?ID, "Choose between paths ~p~n", [Paths]),
   get_stable_path_helper(SM, Src, Dst, Paths, -1, []).
 
-get_stable_path_helper(_, _, _, [], -1, []) -> [];
+get_stable_path_helper(_, _, _, [], -1, []) -> nothing;
 get_stable_path_helper(_, _, _, [], _, NP) -> NP;
 get_stable_path_helper(SM, Src, Dst, [ H | T], Max, NP) ->
   case H of
@@ -867,6 +869,7 @@ remove_old_paths(SM, Src, Dst) ->
     ({XSrc, XDst, _, _}, A) when XSrc == Src, XDst == Dst -> A;
     (X, A) -> [X | A]
   end, [], Paths),
+  ?INFO(?ID, "remove_old_paths ~p ~p : ~p ~p~n", [Src, Dst, Paths, L]),
   share:put(SM, stable_paths, L).
 %%----------------------------Parse NL functions -------------------------------
 fill_protocol_info_header(icrpr, _, data, _, {Path, _, _, Transmit_Len, Data}) ->
@@ -885,7 +888,7 @@ fill_protocol_info_header(_, _, _, MType, {_, _, _, Transmit_Len, Data}) ->
 % fill_msg(path_addit, {Path, Additional}) ->
 %   create_path_addit(Path, Additional).
 
-nl2at(SM, IDst, Tuple) when is_tuple(Tuple)->
+nl2at(SM, IDst, Tuple) when is_tuple(Tuple) ->
   PID = share:get(SM, pid),
   NLPPid = ?PROTOCOL_NL_PID(share:get(SM, protocol_name)),
   ?WARNING(?ID, ">>>>>>>> NLPPid: ~p~n", [NLPPid]),
@@ -900,6 +903,12 @@ nl2at(SM, IDst, Tuple) when is_tuple(Tuple)->
     {at, {pid,PID}, "*SEND", IDst, AT_Payload}
   end,
   [AT, L].
+
+get_at_dst(Tuple) ->
+  case Tuple of
+    {at, _, "*SENDIM", IDst, _, _} -> IDst;
+    {at, _, "*SEND", IDst, _} -> IDst
+  end.
 
 %%------------------------- Extract functions ----------------------------------
 create_nl_at_command(SM, NL) ->
@@ -1154,7 +1163,7 @@ find_acks(SM, Pid, Tuple, Q, Data, Acks) ->
   %(QFlag == data) or
   if not Member and not Same and
      ((QFlag == ack) or (QFlag == dst_reached)) and
-     ((Dst == QRoute) or (Dst == ?ADDRESS_MAX)) and
+     %((Dst == QRoute) or (Dst == ?ADDRESS_MAX)) and
      ((MType == data) or (MType == path_data)) ->
     [Ack_bin, _] = create_payload_nl_header(SM, Pid, false, Q_Tuple),
     ?INFO(?ID, "find_acks ~p ~p~n", [byte_size(Ack_bin), byte_size(Data)]),
