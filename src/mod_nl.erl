@@ -134,7 +134,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   TTL_Set  = [C   || {ttl, C} <- ArgS],
   Tmo_sensing  = [Time || {tmo_sensing, Time} <- ArgS],
 
-  Max_TTL        = set_params(TTL_Set, 10),
+  Max_TTL        = set_params(TTL_Set, 20),
   Local_Retries  = set_params(Local_Retries_Set, 3), % optimal 3, % optimal 4 for icrpr
   {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 1}), % optimal aloha {0,1}
                                                                             % optimal tlohi {1,5} / {0,4}

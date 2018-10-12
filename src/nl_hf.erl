@@ -429,15 +429,14 @@ fill_transmission(SM, Type, Tuple) ->
   Is_path = if_path_packet(Tuple),
   Has_path_packets = has_path_packets(Q, false, 0),
   ?INFO(?ID, "Has_path_packets ~p ~n", [Has_path_packets]),
-
   Fill_handler =
   fun(LSM, path) ->
         share:put(LSM, Qname, queue:in_r(Tuple, Q));
      (LSM, filo) ->
         share:put(LSM, Qname, queue:in(Tuple, Q));
-      (LSM, combination) ->
+     (LSM, combination) ->
         share:put(LSM, Qname, queue:in(Tuple, Q));
-     (LSM, fifo) when not Has_path_packets->
+     (LSM, fifo) when not Has_path_packets ->
         share:put(LSM, Qname, queue:in_r(Tuple, Q));
      (LSM, fifo) ->
         NQ = shift_push(Q, Tuple, Has_path_packets),
@@ -1176,7 +1175,6 @@ create_payload_nl_header(SM, Pid, Allowed, Tuple) ->
   true ->
     [Data_to_Send, [Tuple]]
   end.
-
 check_binary(Data) ->
   is_binary(Data) or
   ((bit_size(Data) rem 8) == 0).
@@ -1205,7 +1203,7 @@ try_combine_ack(SM, Pid, Tuple, Data) ->
   Q = share:get(SM, transmission),
   ?INFO(?ID, "try_combine_ack ~p~n", [Q]),
   Flag = getv(flag, Tuple),
-  Add_data = (Flag == ack),
+  Add_data = ((Flag == ack) or (Flag == dst_reached)),
   find_acks(SM, Pid, Tuple, Q, Data, [Tuple], Add_data).
 
 find_acks(_, _, _, {[],[]}, Data, Acks, _) -> [Data, Acks];
