@@ -47,8 +47,8 @@
 %   3b        6b            6b      LenPath * 6b   REST till / 8
 %   TYPEMSG   MAX_DATA_LEN  LenPath   Path           ADD
 %-------> neighbour_path
-%   3b        6b                LenNeighbours * 6b    6b        LenPath * 6b      REST till / 8
-%   TYPEMSG   LenNeighbours     Neighbours            LenPath   Path              ADD
+%   3b        6b        LenPath * 6b    6b                LenNeighbours * 6b          REST till / 8
+%   TYPEMSG   LenPath   Path            LenNeighbours     Neighbours                  ADD
 %-------> path_addit
 %   3b        6b        LenPath * 6b    2b        LenAdd * 8b       REST till / 8
 %   TYPEMSG   LenPath   Path            LenAdd    Addtional Info    ADD
@@ -84,9 +84,8 @@
            dblfloodpfr,
            dblfloodpfrack,
            evoicrppfr,
-           evoicrppfrack,
-           loarpr,
-           loarprack]).
+           evoicrppfrack
+          ]).
 
 -record(pr_conf,{stat=false, brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, dbl=false, evo=false, lo=false, rm=false}).
 
@@ -102,7 +101,6 @@
         prob,   % probabilsitic flooding
         dbl,    % double waves (two flooding waves)
         evo,    % evologics special type, to add info like Rssi and Integrity
-        lo,   % low overhead
         rm]).   % route maintenance
 
 
@@ -120,15 +118,13 @@
     dblfloodpfr     -> 9;
     dblfloodpfrack  -> 10;
     evoicrppfr      -> 11;
-    evoicrppfrack   -> 12;
-    loarpr          -> 13;
-    loarprack       -> 14
+    evoicrppfrack   -> 12
   end).
 
 -define(PROTOCOL_MAC_PID(P),
   case P of
     mac_burst  -> 0;
-    csma_alh   -> 1;
+    csma_aloha -> 1;
     cut_lohi   -> 2;
     aut_lohi   -> 3;
     dacap      -> 4
@@ -146,11 +142,9 @@
       {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_opportunistic_flooding]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
       {dblfloodpfr, [{pf, dbl, br_na}, fsm_opportunistic_flooding]},  % Double flooding path finder
       {dblfloodpfrack,[{pf, dbl, br_na, ack}, fsm_opportunistic_flooding]}, % Double flooding path finder with acknowledgement
-      {evoicrppfr, [{pf, br_na, lo, evo}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol
-      {evoicrppfrack, [{pf, br_na, lo, evo, ack}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol with acknowledgement
-      {loarpr, [{pf, br_na, lo, rm}, fsm_opportunistic_flooding]},  % Low overhead routing protocol
-      {loarprack, [{pf, br_na, lo, rm, ack}, fsm_opportunistic_flooding]} % Low overhead routing protocol with acknowledgement
-           ]).
+      {evoicrppfr, [{pf, br_na, evo}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol
+      {evoicrppfrack, [{pf, br_na, evo, ack}, fsm_opportunistic_flooding]} % Evologics Information Carrying routing protocol with acknowledgement
+    ]).
 
 -define(PROTOCOL_DESCR, ["\n",
        "staticr        - simple static routing, in config file f.e. {routing,{{7,1},2}}\n",
@@ -323,7 +317,7 @@
       %% NL layer
       0        -> neighbours; % n:(.*)
       1        -> path_data;  % p:(.*),d:(.*)
-      2        -> neighbours_path; % n:(.*),p:(.*)
+      2        -> path_neighbours; % n:(.*),p:(.*)
       3        -> path_addit; % p:(.*),a:(.*)
       4        -> data
   end).
@@ -333,7 +327,7 @@
       %% NL layer
       neighbours  -> 0;
       path_data   -> 1;
-      neighbours_path -> 2;
+      path_neighbours -> 2;
       path_addit -> 3;
       data -> 4
   end).

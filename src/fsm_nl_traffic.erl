@@ -152,6 +152,8 @@ handle_event(MM, SM, Term) ->
       async_counter(SM, failed, Term);
     {nl, failed, _, _Src, _Dst} ->
       async_counter(SM, failed, Term);
+    {nl, routing, Routing} ->
+      fsm:cast(SM, nl_impl, {send, {nl, routing, Routing}});
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM

@@ -48,7 +48,7 @@
 %% Extract functions
 -export([extract_payload_mac_flag/1, extract_payload_nl_flag/1, create_ack/1, extract_ack/2]).
 %% Extract/create header functions
--export([extract_neighbours_path/2]).
+-export([extract_path_neighbours/2]).
 %% Send NL functions
 -export([send_nl_command/4, send_ack/3, send_path/2, send_helpers/4, send_cts/6, send_mac/4, fill_msg/2]).
 %% Parse NL functions
@@ -185,7 +185,7 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {nl, recv, Real_
       [SMN, BMsg] =
       case Flag of
         neighbours ->
-          [SM, fill_msg(neighbours_path, {BCN, [MAC_addr]})];
+          [SM, fill_msg(path_neighbours, {BCN, [MAC_addr]})];
         Flag ->
           [SMNTmp, ExtrListPath] =
           case Flag of
@@ -194,7 +194,7 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {nl, recv, Real_
               NPathTuple = {[DIRssi, DIIntegr], ListPath},
               parse_path(SM,  NPathTuple, {Real_src, Real_dst});
             path     ->
-              [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
+              [ListNeighbours, ListPath] = extract_path_neighbours(SM, Payload),
               NPathTuple = {ListNeighbours, ListPath},
               parse_path(SM, NPathTuple, {Real_src, Real_dst})
           end,
@@ -205,7 +205,7 @@ send_path(SM, {send_path, {Flag, [Packet_id, _, _PAdditional]}, {nl, recv, Real_
           % FIXME: below lost updated SM value
           SM1 = process_and_update_path(SMNTmp, {Real_src, Real_dst, RCheckDblPath} ),
           analyse(SMNTmp, paths, RCheckDblPath, {Real_src, Real_dst}),
-          [SM1, fill_msg(neighbours_path, {BCN, RCheckDblPath})]
+          [SM1, fill_msg(path_neighbours, {BCN, RCheckDblPath})]
       end,
       send_nl_command(SMN, at, {path, [Packet_id, Real_src, []]}, {nl, send, Real_dst, BMsg})
   end.
@@ -538,13 +538,13 @@ create_neighbours(Neighbours) ->
      TmpData
   end.
 
-create_neighbours_path(Neighbours, Path) ->
+create_path_neighbours(Neighbours, Path) ->
   LenNeighbours = length(Neighbours),
   LenPath = length(Path),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenNeigbours = count_flag_bits(?MAX_LEN_NEIGBOURS),
   CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
-  TypeNum = ?TYPEMSG2NUM(neighbours_path),
+  TypeNum = ?TYPEMSG2NUM(path_neighbours),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
 
@@ -565,7 +565,7 @@ create_neighbours_path(Neighbours, Path) ->
      TmpData
   end.
 
-extract_neighbours_path(SM, Payl) ->
+extract_path_neighbours(SM, Payl) ->
   try
     CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
     CBitsLenNeigbours = count_flag_bits(?MAX_LEN_NEIGBOURS),
@@ -573,7 +573,7 @@ extract_neighbours_path(SM, Payl) ->
 
     <<BType:CBitsTypeMsg, NeighboursRest/bitstring>> = Payl,
 
-    neighbours_path = ?NUM2TYPEMSG(BType),
+    path_neighbours = ?NUM2TYPEMSG(BType),
 
     {Neighbours, PathRest} = extract_header(neighbours, CBitsLenNeigbours, CBitsLenNeigbours, NeighboursRest),
     {Path, _} = extract_header(path, CBitsLenPath, CBitsLenPath, PathRest),
@@ -741,8 +741,8 @@ fill_msg(data, {TransmitLen, Data}) ->
   create_data(TransmitLen, Data);
 fill_msg(neighbours, Tuple) ->
   create_neighbours(Tuple);
-fill_msg(neighbours_path, {Neighbours, Path}) ->
-  create_neighbours_path(Neighbours, Path);
+fill_msg(path_neighbours, {Neighbours, Path}) ->
+  create_path_neighbours(Neighbours, Path);
 fill_msg(path_data, {TransmitLen, Data, Path}) ->
   create_path_data(Path, TransmitLen, Data);
 fill_msg(path_addit, {Path, Additional}) ->
@@ -753,7 +753,7 @@ prepare_send_path(SM, [_ , _, PAdditional], {nl, recv, Real_dst, Real_src, Paylo
   {nl, send, IDst, Data} = share:get(SM, current_pkg),
   CurrentLen = byte_size(Data),
   
-  [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
+  [ListNeighbours, ListPath] = extract_path_neighbours(SM, Payload),
   NPathTuple = {ListNeighbours, ListPath},
   [SM1, BPath] = parse_path(SM, NPathTuple, {Real_src, Real_dst}),
   NPath = [MAC_addr | BPath],
@@ -883,7 +883,7 @@ process_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
         [] -> [SM, not_relay];
         _ ->
           Local_address = share:get(SM, local_address),
-          [ListNeighbours, ListPath] = extract_neighbours_path(SM, Payload),
+          [ListNeighbours, ListPath] = extract_path_neighbours(SM, Payload),
           NPathTuple = {ListNeighbours, ListPath},
           %% save path and set path life
           [SMN, _] = parse_path(SM, NPathTuple, {ISrc, IDst}),
@@ -891,13 +891,13 @@ process_relay(SM, Tuple = {send, Params, {nl, send, IDst, Payload}}) ->
           Check_path = check_path(SM, ISrc, IDst, ListPath),
           case (lists:member(MAC_addr, ListNeighbours)) of
             true when ((ISrc =/= Local_address) and (Protocol#pr_conf.lo or Protocol#pr_conf.dbl) and Check_path) ->
-              NewPayload = fill_msg(neighbours_path, {LNeighbours, ListPath}),
+              NewPayload = fill_msg(path_neighbours, {LNeighbours, ListPath}),
               [SMN, {send, Params, {nl, send, IDst, NewPayload}}];
             _ ->
               case (lists:member(MAC_addr, ListNeighbours) and not(lists:member(MAC_addr, ListPath))) of
                 true  when (ISrc =/= Local_address) ->
                   DublListPath = check_dubl_in_path(ListPath, MAC_addr),
-                  NewPayload = fill_msg(neighbours_path, {LNeighbours, DublListPath}),
+                  NewPayload = fill_msg(path_neighbours, {LNeighbours, DublListPath}),
                   [SMN, {send, Params, {nl, send, IDst, NewPayload}}];
                 _ -> [SMN, not_relay]
               end
