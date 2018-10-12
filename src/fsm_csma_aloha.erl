@@ -266,7 +266,7 @@ handle_event(MM, SM, Term) ->
     {at,{pid,P},"*SENDIM",Dst,noack,Bin} ->
       case env:get(SM, connection) of
         allowed ->
-          Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to nl_mac_hf?
+          Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to mac_hf?
           Tx = {at,{pid,P},"*SENDIM",Dst,noack,<<Hdr/binary,Bin/binary>>},
           share:put(SM, tx, Tx), 
           fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", "OK"}}),
@@ -282,8 +282,8 @@ handle_event(MM, SM, Term) ->
       run_hook_handler(MM, SM, Term, eps);
     {async, {pid, Pid}, {recvim, Len, P1, P2, P3, P4, P5, P6, P7, Bin} = Tuple} ->
       ?TRACE(?ID, "MAC_AT_RECV ~p~n", [Tuple]),
-      [_, Flag_code, Data, HLen] = nl_mac_hf:extract_payload_mac_flag(Bin),
-      Flag = nl_mac_hf:num2flag(Flag_code, mac),
+      [_, Flag_code, Data, HLen] = mac_hf:extract_payload_mac_flag(Bin),
+      Flag = mac_hf:num2flag(Flag_code, mac),
       Extracted = {recvim, Len - HLen, P1, P2, P3, P4, P5, P6, P7, Data},
       case Flag of
         data ->

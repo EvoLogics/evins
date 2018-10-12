@@ -284,7 +284,7 @@ handle_event(MM, SM, Term) ->
       fsm:maybe_send_at_command(SM, Term, Handle_cache);
     {at,{pid,P},"*SENDIM",Dst,noack,Bin} ->
       %% TODO: check whether connected to at
-      Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to nl_mac_hf?
+      Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to mac_hf?
       Tx = {at,{pid,P},"*SENDIM",Dst,noack,<<Hdr/binary,Bin/binary>>},
       share:put(SM, tx, Tx),
       fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", "OK"}}),
@@ -306,8 +306,8 @@ handle_event(MM, SM, Term) ->
       run_hook_handler(MM, SM, Term, eps);
     {async, {pid, Pid}, {recvim, Len, P1, P2, P3, P4, P5, P6, P7, Bin}} ->
       %% TODO: generate tone as <<_:5,1:3>>
-      [_, Flag_code, Data, HLen] = nl_mac_hf:extract_payload_mac_flag(Bin),
-      Flag = nl_mac_hf:num2flag(Flag_code, mac),
+      [_, Flag_code, Data, HLen] = mac_hf:extract_payload_mac_flag(Bin),
+      Flag = mac_hf:num2flag(Flag_code, mac),
       Extracted = {recvim, Len - HLen, P1, P2, P3, P4, P5, P6, P7, Data},
       case Flag of
         tone -> SM;
@@ -390,7 +390,7 @@ handle_contention(_MM, SM, _Term) ->
     E when E == content; E == backoff_timeout; E == precontent_timeout ->
       share:put(SM, ctc, 0),
       Pid = share:get(SM, pid),
-      Hdr = <<0:5,(?FLAG2NUM(tone)):3>>, %% TODO: move to nl_mac_hf?
+      Hdr = <<0:5,(?FLAG2NUM(tone)):3>>, %% TODO: move to mac_hf?
       Term = {at,{pid,Pid},"*SENDIM",255,noack,Hdr},
 
       Transmittion_handler =
