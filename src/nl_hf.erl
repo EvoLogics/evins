@@ -42,13 +42,14 @@
          pop_transmission/3, pop_transmission/2, decrease_TTL/1, delete_neighbour/2]).
 -export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, clear_event_params/2, clear_spec_event_params/2]).
 -export([add_event_params/2, find_event_params/3, find_event_params/2]).
--export([nl2mac_address/1, get_routing_address/2, nl2at/3, flag2num/1, queue_push/4, queue_push/3]).
+-export([nl2mac_address/1, get_routing_address/2, nl2at/3, get_at_dst/1, flag2num/1, queue_push/4, queue_push/3]).
 -export([decrease_retries/2, rand_float/2, update_states/1, count_flag_bits/1]).
--export([create_response/8, create_ack_path/9, recreate_response/3, extract_response/1, extract_response/2, prepare_path/5, recreate_path/4]).
+-export([create_response/8, create_ack_path/9, recreate_response/5, extract_response/1, extract_response/2, prepare_path/5,
+         recreate_path_evo/5, recreate_path_neighbours/2, update_stable_path/5, get_prev_neighbour/2]).
 -export([process_set_command/2, process_get_command/2, set_processing_time/3,fill_statistics/2, fill_statistics/3, fill_statistics/5]).
 -export([update_path/2, update_routing/2, update_received/2, routing_exist/2, routing_to_list/1]).
 -export([getv/2, geta/1, replace/3, drop_postponed/2]).
--export([add_to_paths/6, get_stable_path/3, remove_old_paths/3, if_path_packet/1,has_path_packets/3, check_tranmission_path/2]).
+-export([add_to_paths/7, get_stable_path/4, get_stable_path/3, remove_old_paths/3, if_path_packet/1,has_path_packets/3, check_tranmission_path/2]).
 
 set_event_params(SM, Event_Parameter) ->
   SM#sm{event_params = Event_Parameter}.
@@ -145,7 +146,6 @@ get_params_timeout(SM, Spec) ->
   end, SM#sm.timeouts).
 
 code_send_tuple(SM, Tuple) ->
-  % TODO: change, using also other protocols
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   TTL = share:get(SM, ttl),
@@ -212,18 +212,19 @@ queue_push(Q, Item, Max) ->
 
 %--------------------------------- Get from tuple -------------------------------------------
 geta(Tuple) ->
-  getv([flag, id, ttl, src, dst, mtype, path, rssi, integrity, payload], Tuple).
+  getv([flag, id, ttl, src, dst, mtype, path, rssi, integrity, min_integrity, neighbours, payload], Tuple).
+getv(_, empty) -> nothing;
 getv(Types, Tuple) when is_list(Types) ->
   lists:foldr(fun(Type, L) -> [getv(Type, Tuple) | L] end, [], Types);
 getv(Type, Tuple) when is_atom(Type) ->
   PT =
   case Tuple of {_Retries, T} -> T; _-> Tuple end,
-  {Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity, Payload} = PT,
+  {Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity, Min_integrity, Neighbours, Payload} = PT,
 
   Structure =
   [{flag, Flag}, {id, PkgID}, {ttl, TTL}, {src, Src}, {dst, Dst},
    {mtype, MType}, {path, Path}, {rssi, Rssi}, {integrity, Integrity},
-   {payload, Payload}
+   {min_integrity, Min_integrity}, {neighbours, Neighbours}, {payload, Payload}
   ],
   Map = maps:from_list(Structure),
   {ok, Val} = maps:find(Type, Map),
@@ -231,16 +232,16 @@ getv(Type, Tuple) when is_atom(Type) ->
 
 create_default(SM) ->
   Max_ttl = share:get(SM, ttl),
-  {data, 0, Max_ttl, 0, 0, data, [], 0, 0, <<"">>}.
+  {data, 0, Max_ttl, 0, 0, data, [], 0, 0, 0, [], <<"">>}.
 
 replace(Types, Values, Tuple) when is_list(Types) ->
   replace_helper(Types, Values, Tuple);
 replace(Type, Value, Tuple) when is_atom(Type) ->
-  {Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity,  Payload} = Tuple,
+  {Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity, Min_integrity, Neighbours, Payload} = Tuple,
   Structure =
   [{flag, Flag}, {id, PkgID}, {ttl, TTL}, {src, Src}, {dst, Dst},
    {mtype, MType}, {path, Path}, {rssi, Rssi}, {integrity, Integrity},
-   {payload, Payload}
+   {min_integrity, Min_integrity}, {neighbours, Neighbours}, {payload, Payload}
   ],
   list_to_tuple(lists:foldr(
   fun({X, _V}, L) when X == Type -> [Value | L];
@@ -360,6 +361,11 @@ is_same(ack, ack, path_addit, path_addit, Tuple1, Tuple2) ->
   [PkgID2, Src2, Dst2, MType2] = getv([id, src, dst, mtype], Tuple2),
   (PkgID1 == PkgID2) and (Src1 == Src2)
   and (Dst1 == Dst2) and (MType1 == MType2);
+is_same(ack, ack, path_neighbours, path_neighbours, Tuple1, Tuple2) ->
+  [PkgID1, Src1, Dst1, MType1] = getv([id, src, dst, mtype], Tuple1),
+  [PkgID2, Src2, Dst2, MType2] = getv([id, src, dst, mtype], Tuple2),
+  (PkgID1 == PkgID2) and (Src1 == Src2)
+  and (Dst1 == Dst2) and (MType1 == MType2);
 is_same(ack, ack, MType1, MType2, Tuple1, Tuple2) ->
   [PkgID1, Src1, Dst1, MType1, Payload1] =
     getv([id, src, dst, mtype, payload], Tuple1),
@@ -407,8 +413,8 @@ data_reached(_, _, _, _, _) ->
 if_path_packet(empty) -> false;
 if_path_packet(Tuple) ->
   [Flag, MType] = getv([flag, mtype], Tuple),
-  if Flag == path, MType == path_addit;
-     Flag == ack, MType == path_addit -> true;
+  if (((Flag == path) or (Flag == ack)) and
+     ((MType == path_addit) or (MType == path_neighbours))) -> true;
   true -> false
   end.
 % -------------------------------- Message queues handling functions -------------------------------------
@@ -422,13 +428,14 @@ fill_transmission(SM, Type, Tuple) ->
   Is_path = if_path_packet(Tuple),
   Has_path_packets = has_path_packets(Q, false, 0),
   ?INFO(?ID, "Has_path_packets ~p ~n", [Has_path_packets]),
-
   Fill_handler =
   fun(LSM, path) ->
         share:put(LSM, Qname, queue:in_r(Tuple, Q));
      (LSM, filo) ->
         share:put(LSM, Qname, queue:in(Tuple, Q));
-     (LSM, fifo) when not Has_path_packets->
+     (LSM, combination) ->
+        share:put(LSM, Qname, queue:in(Tuple, Q));
+     (LSM, fifo) when not Has_path_packets ->
         share:put(LSM, Qname, queue:in_r(Tuple, Q));
      (LSM, fifo) ->
         NQ = shift_push(Q, Tuple, Has_path_packets),
@@ -807,6 +814,7 @@ find_routing_helper([H | T], Address, Default) ->
 %get_routing_address(_SM, _Flag, _Address) -> 255.
 get_routing_address(SM, Address) ->
   Routing = share:get(SM, nothing, routing_table, []),
+  ?INFO(?ID, "get_routing_address ~p ~p~n", [Routing, Address]),
   find_routing(Routing, Address).
 
 routing_exist(_SM, empty) ->
@@ -839,25 +847,67 @@ strip_path(Address, Path, [H | T]) when H == Address ->
 strip_path(Address, Path, [_ | T]) ->
   strip_path(Address, Path, T).
 
-add_to_paths(SM, Src, Dst, Path, Integrity, _Rssi) ->
+add_to_paths(SM, Src, Dst, Path, Integrity, Min_integrity, _Rssi) ->
   Paths = share:get(SM, nothing, stable_paths, []),
-  share:put(SM, stable_paths, [ {Src, Dst, Integrity, Path} | Paths]).
+  Tuple = {Src, Dst, Integrity, Min_integrity, Path},
+  ?INFO(?ID, "Add ~p to paths ~p~n", [Tuple, Paths]),
+  share:put(SM, stable_paths, [ Tuple | Paths]).
+
+update_stable_path(SM, AT_Src, AT_Dst, NL_Src, NL_Dst) ->
+  Local_address = share:get(SM, local_address),
+  Paths = share:get(SM, nothing, stable_paths, []),
+  ?INFO(?ID, "update_stable_path ~p ~p~n", [AT_Src, Paths]),
+  Update_handler =
+  fun (LSM) when  Local_address == AT_Dst ->
+        update_stable_path(LSM, AT_Src, Paths);
+      (LSM) -> LSM
+  end,
+
+  [Update_handler(__),
+   remove_old_paths(__, NL_Src, NL_Dst)
+  ](SM).
+
+update_stable_path(SM, _, []) -> SM;
+update_stable_path(SM, Src, [H | Paths]) ->
+  Routing_handler =
+  fun (LSM, S, P) ->
+      Member = lists:member(S, P),
+      if Member ->
+        update_routing(LSM, P);
+      true -> LSM end
+  end,
+  {_, _, _, _, Path}  = H,
+  New_path = update_path(SM, Path),
+  [Routing_handler(__, Src, New_path),
+   update_stable_path(__, Src, Paths)
+  ](SM).
 
 get_stable_path(SM, Src, Dst) ->
   Paths = share:get(SM, nothing, stable_paths, []),
   ?INFO(?ID, "Choose between paths ~p~n", [Paths]),
-  get_stable_path_helper(SM, Src, Dst, Paths, -1, []).
+  get_stable_path_helper(SM, Src, Dst, lists:reverse(Paths), -1, -1, []).
 
-get_stable_path_helper(_, _, _, [], -1, []) -> [];
-get_stable_path_helper(_, _, _, [], _, NP) -> NP;
-get_stable_path_helper(SM, Src, Dst, [ H | T], Max, NP) ->
+get_stable_path(SM, path_neighbours, _Src, _Dst) ->
+  Local_address = share:get(SM, local_address),
+  [Local_address];
+get_stable_path(SM, path_addit, Src, Dst) ->
+  get_stable_path(SM, Src, Dst).
+
+get_stable_path_helper(_, _, _, [], -1, -1, []) -> nothing;
+get_stable_path_helper(_, _, _, [], _, _, NP) -> NP;
+get_stable_path_helper(SM, Src, Dst, [ H | T], Max, Max_min, NP) ->
   case H of
-    {Src, Dst, 0, Path} ->
-      get_stable_path_helper(SM, Src, Dst, T, 0, Path);
-    {Src, Dst, Integrity, Path} when Integrity > Max, Max =/= 0 ->
-      get_stable_path_helper(SM, Src, Dst, T, Integrity, Path);
+    {Src, Dst, 0, 0, Path} ->
+      get_stable_path_helper(SM, Src, Dst, T, 0, 0, Path);
+    {Src, Dst, Integrity, Min_integrity, Path} when Min_integrity >= Max_min, Max_min =/= 0 ->
+      Aver_integrity = (Integrity > Max) and (Max =/= 0),
+      if Aver_integrity ->
+        get_stable_path_helper(SM, Src, Dst, T, Integrity, Min_integrity, Path);
+      true ->
+        get_stable_path_helper(SM, Src, Dst, T, Max, Min_integrity, NP)
+      end;
     _ ->
-      get_stable_path_helper(SM, Src, Dst, T, Max, NP)
+      get_stable_path_helper(SM, Src, Dst, T, Max, Max_min, NP)
   end.
 
 remove_old_paths(SM, Src, Dst) ->
@@ -867,25 +917,19 @@ remove_old_paths(SM, Src, Dst) ->
     ({XSrc, XDst, _, _}, A) when XSrc == Src, XDst == Dst -> A;
     (X, A) -> [X | A]
   end, [], Paths),
+  ?INFO(?ID, "remove_old_paths ~p ~p : ~p ~p~n", [Src, Dst, Paths, L]),
   share:put(SM, stable_paths, L).
 %%----------------------------Parse NL functions -------------------------------
-fill_protocol_info_header(icrpr, _, data, _, {Path, _, _, Transmit_Len, Data}) ->
+fill_protocol_info_header(icrpr, _, data, _, {Path, _, _, _, _, Transmit_Len, Data}) ->
   fill_path_data_header(Path, Transmit_Len, Data);
 fill_protocol_info_header(_, Protocol_Config, _, path_addit, Tuple) when Protocol_Config#pr_conf.evo->
   fill_path_evo_header(Tuple);
-fill_protocol_info_header(_, _, _, MType, {_, _, _, Transmit_Len, Data}) ->
+fill_protocol_info_header(_, Protocol_Config, _, path_neighbours, Tuple) when Protocol_Config#pr_conf.pf ->
+  fill_path_neighbours_header(Tuple);
+fill_protocol_info_header(_, _, _, MType, {_, _, _, _, _, Transmit_Len, Data}) ->
   fill_data_header(MType, Transmit_Len, Data).
 
-% fill_msg(neighbours, Tuple) ->
-%   create_neighbours(Tuple);
-% fill_msg(neighbours_path, {Neighbours, Path}) ->
-%   create_neighbours_path(Neighbours, Path);
-% fill_msg(path_data, {TransmitLen, Data, Path}) ->
-%   create_path_data(Path, TransmitLen, Data);
-% fill_msg(path_addit, {Path, Additional}) ->
-%   create_path_addit(Path, Additional).
-
-nl2at(SM, IDst, Tuple) when is_tuple(Tuple)->
+nl2at(SM, IDst, Tuple) when is_tuple(Tuple) ->
   PID = share:get(SM, pid),
   NLPPid = ?PROTOCOL_NL_PID(share:get(SM, protocol_name)),
   ?WARNING(?ID, ">>>>>>>> NLPPid: ~p~n", [NLPPid]),
@@ -900,6 +944,12 @@ nl2at(SM, IDst, Tuple) when is_tuple(Tuple)->
     {at, {pid,PID}, "*SEND", IDst, AT_Payload}
   end,
   [AT, L].
+
+get_at_dst(Tuple) ->
+  case Tuple of
+    {at, _, "*SENDIM", IDst, _, _} -> IDst;
+    {at, _, "*SEND", IDst, _} -> IDst
+  end.
 
 %%------------------------- Extract functions ----------------------------------
 create_nl_at_command(SM, NL) ->
@@ -946,7 +996,26 @@ create_response(SM, ack, MType, Pkg_ID, Src, Dst, Hops, Payload) ->
   Max_ttl = share:get(SM, ttl),
   create_response(SM, ack, MType, Pkg_ID, Src, Dst, Max_ttl, Hops, Payload).
 
-recreate_response(SM, Flag = ack, Tuple) ->
+recreate_response(SM, path_neighbours, Flag = ack, Tuple, Channel) ->
+  {_, _, _, Integrity} = Channel,
+  [Path, Path_integrity, Min_integrity, Payload] =
+    getv([path, integrity, min_integrity, payload], Tuple),
+
+  Aver_Integrity = get_average(Integrity, Path_integrity),
+  Is_min = (Min_integrity =/= 0) and (Min_integrity < Integrity),
+  Processed =
+  if Is_min -> Min_integrity;
+  true -> Integrity
+  end,
+  New_path = update_path(SM, Path),
+  Neighbours = share:get(SM, current_neighbours),
+  [Hops, Ack_Pkg_ID, Hash] = extract_response([hops, id, hash], Payload),
+  Coded_payload = encode_response(Hops + 1, Ack_Pkg_ID, Hash),
+  ?TRACE(?ID, "recreate_response ~p Hops ~p ~p ~p ~p~n",
+    [Flag, Hops, New_path, Neighbours, Coded_payload]),
+  replace([path, integrity, min_integrity, neighbours, payload],
+          [New_path, Aver_Integrity, Processed, Neighbours, Coded_payload], Tuple);
+recreate_response(SM, _, Flag = ack, Tuple, _) ->
   Payload = getv(payload, Tuple),
   [Hops, Ack_Pkg_ID, Hash] = extract_response([hops, id, hash], Payload),
   Coded_payload = encode_response(Hops + 1, Ack_Pkg_ID, Hash),
@@ -957,7 +1026,11 @@ recreate_response(SM, Flag = ack, Tuple) ->
 create_ack_path(SM, ack, MType, Pkg_ID, Src, Dst, Hops, Payload, Path) ->
   Max_ttl = share:get(SM, ttl),
   Tuple = create_response(SM, ack, MType, Pkg_ID, Src, Dst, Max_ttl, Hops, Payload),
-  replace(path, Path, Tuple).
+  Path_replaced = replace(path, Path, Tuple),
+  if MType == path_neighbours ->
+    Neighbours = share:get(SM, current_neighbours),
+    replace(neighbours, Neighbours, Path_replaced);
+  true -> Path_replaced end.
 
 create_response(SM, Flag, MType, Pkg_ID, Src, Dst, TTL, Hops, Payload) ->
   <<Hash:16, _/binary>> = crypto:hash(md5, Payload),
@@ -968,14 +1041,28 @@ create_response(SM, Flag, MType, Pkg_ID, Src, Dst, TTL, Hops, Payload) ->
     [flag, id, ttl, src, dst, mtype, payload],
     [Flag, Incereased, TTL, Dst, Src, MType, Coded_payload], Tuple).
 
-recreate_path(SM,  Rssi, Integrity, Tuple) ->
+recreate_path_evo(SM,  Rssi, Integrity, Min_integrity, Tuple) ->
   [Path, Path_rssi, Path_integrity] = getv([path, rssi, integrity], Tuple),
   Aver_Rssi = get_average(Rssi, Path_rssi),
   Aver_Integrity = get_average(Integrity, Path_integrity),
+  Is_min = (Min_integrity =/= 0) and (Min_integrity < Integrity),
+  Processed =
+  if Is_min -> Min_integrity;
+  true -> Integrity
+  end,
   New_path = update_path(SM, Path),
   replace(
-    [path, rssi, integrity],
-    [New_path, Aver_Rssi, Aver_Integrity],
+    [path, rssi, integrity, min_integrity],
+    [New_path, Aver_Rssi, Aver_Integrity, Processed],
+    Tuple).
+
+recreate_path_neighbours(SM, Tuple) ->
+  Neighbours = share:get(SM, current_neighbours),
+  [Path, _] = getv([path, neighbours], Tuple),
+  New_path = update_path(SM, Path),
+  replace(
+    [path, neighbours],
+    [New_path, Neighbours],
     Tuple).
 
 prepare_path(SM, Flag, MType, Src, Dst) ->
@@ -987,7 +1074,6 @@ prepare_path(SM, Flag, MType, Src, Dst) ->
     [flag, id, ttl, src, dst, mtype, path],
     [Flag, PkgID, Max_ttl, Src, Dst, MType, New_path], Tuple).
 
-% TODO: send binary encoded hash
 encode_response(Hops, Pkg_ID, Hash) ->
   BHash = integer_to_binary(Hash),
   C_Bits_PkgID = count_flag_bits(?PKG_ID_MAX),
@@ -1033,15 +1119,15 @@ extract_payload_nl_header(SM, Payload, L) ->
   Extract_payload = cut_add_bits(Bits_header, Payload),
 
   Flag = num2flag(Flag_Num, nl),
-  [MType, Path, Rssi, Integrity, Splitted_Payload, Other_msg] = extract_payload(SM, Extract_payload),
+  [MType, Path, Rssi, Integrity, Min_integrity, Neighbours, Splitted_Payload, Other_msg] = extract_payload(SM, Extract_payload),
 
   NL = if L =/= [] -> {_, List} = L, List; true -> [] end,
   ?INFO(?ID, "Rest extract Payload ~p~n", [Other_msg]),
   Tuple = create_default(SM),
   RTuple =
   replace(
-  [flag, id, ttl, src, dst, mtype, path, rssi, integrity, payload],
-  [Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity, Splitted_Payload], Tuple),
+  [flag, id, ttl, src, dst, mtype, path, rssi, integrity, min_integrity, neighbours, payload],
+  [Flag, PkgID, TTL, Src, Dst, MType, Path, Rssi, Integrity, Min_integrity, Neighbours, Splitted_Payload], Tuple),
   extract_payload_nl_header(SM, Other_msg, {Pid, [RTuple | NL]}).
 
   % 6 bits NL_Protocol_PID
@@ -1052,8 +1138,7 @@ extract_payload_nl_header(SM, Payload, L) ->
   % 6 bits DST
   % rest bits reserved for later (+ 3)
 create_payload_nl_header(SM, Pid, Allowed, Tuple) ->
-  [Flag, PkgID, TTL, Src, Dst, Mtype, Path, Rssi, Integrity, Data] =
-    getv([flag, id, ttl, src, dst, mtype, path, rssi, integrity, payload], Tuple),
+  [Flag, PkgID, TTL, Src, Dst, Mtype, Path, Rssi, Integrity, Min_integrity, Neighbours, Data] = geta(Tuple),
 
   Max_TTL = share:get(SM, ttl),
   C_Bits_Pid = count_flag_bits(?NL_PID_MAX),
@@ -1075,9 +1160,8 @@ create_payload_nl_header(SM, Pid, Allowed, Tuple) ->
   Transmit_Len = byte_size(Data),
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
-  CTuple = {Path, Rssi, Integrity, Transmit_Len, Data},
+  CTuple = {Path, Rssi, Integrity, Min_integrity, Neighbours, Transmit_Len, Data},
 
-  % TODO: check if Mtype needed
   ?INFO(?ID, "Code Payload ~p ~p ~p ~p ~p~n", [Protocol_Name, Protocol_Config, Flag, Mtype, CTuple]),
   Coded_Payload = fill_protocol_info_header(Protocol_Name, Protocol_Config, Flag, Mtype, CTuple),
 
@@ -1099,7 +1183,8 @@ create_payload_nl_header(SM, Pid, Allowed, Tuple) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Ack_protocol = Protocol_Config#pr_conf.ack,
-  Combine = Ack_protocol and (byte_size(Data_to_Send) < 64) and Allowed,
+  Combine = Ack_protocol and (byte_size(Data_to_Send) < 64) and Allowed
+            and ((Flag == data) or (Mtype == data) or (Mtype == path_data)),
   ?INFO(?ID, "create_payload_nl_header ~p ~p ~p~n",
     [Combine, Ack_protocol, byte_size(Data_to_Send)]),
 
@@ -1109,7 +1194,6 @@ create_payload_nl_header(SM, Pid, Allowed, Tuple) ->
   true ->
     [Data_to_Send, [Tuple]]
   end.
-
 check_binary(Data) ->
   is_binary(Data) or
   ((bit_size(Data) rem 8) == 0).
@@ -1136,37 +1220,51 @@ cut_add_bits(Payload) ->
 
 try_combine_ack(SM, Pid, Tuple, Data) ->
   Q = share:get(SM, transmission),
-  find_acks(SM, Pid, Tuple, Q, Data, [Tuple]).
+  ?INFO(?ID, "try_combine_ack ~p~n", [Q]),
+  Flag = getv(flag, Tuple),
+  Add_data = ((Flag == ack) or (Flag == dst_reached)),
+  find_acks(SM, Pid, Tuple, Q, Data, [Tuple], Add_data).
 
-find_acks(_, _, _, {[],[]}, Data, Acks) -> [Data, Acks];
-find_acks(SM, Pid, Tuple, Q, Data, Acks) ->
+find_acks(_, _, _, {[],[]}, Data, Acks, _) -> [Data, Acks];
+find_acks(SM, Pid, Tuple, Q, Ack_bin, Acks, true) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  [QPkgID, QFlag, MType, QDst] = getv([id, flag, mtype, dst], Q_Tuple),
-  [PkgID, TDst] = getv([id, dst], Tuple),
+  TDst = getv(dst, Tuple),
+  QDst = getv(dst, Q_Tuple),
   Dst = get_routing_address(SM, TDst),
   QRoute = get_routing_address(SM, QDst),
+  Same = Tuple == Q_Tuple,
+  if not Same and ((Dst == QRoute) or (Dst == ?ADDRESS_MAX)) ->
+    [Data_bin, _] = create_payload_nl_header(SM, Pid, false, Q_Tuple),
+    Len = byte_size(Data_bin) + byte_size(Ack_bin),
+    if Len < 64 ->
+      find_acks(SM, Pid, Tuple, Q_Tail, <<Data_bin/binary, Ack_bin/binary>>, [Q_Tuple | Acks], false);
+    true ->
+      find_acks(SM, Pid, Tuple, Q_Tail, Ack_bin, Acks, true)
+    end;
+  true ->
+    find_acks(SM, Pid, Tuple, Q_Tail, Ack_bin, Acks, true)
+  end;
+find_acks(SM, Pid, Tuple, Q, Data, Acks, false) ->
+  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  [QPkgID, QFlag, QMType] = getv([id, flag, mtype], Q_Tuple),
+  PkgID = getv(id, Tuple),
   Member = lists:member(Q_Tuple, Acks),
   Same = Tuple == Q_Tuple,
 
-  ?INFO(?ID, "find_acks  TQ ~p~n", [Q]),
-  ?INFO(?ID, "find_acks ~p ~p ~p ~p ~p ~p~n",
-    [Member, Same, QFlag, Dst, QRoute, MType]),
-  %(QFlag == data) or
   if not Member and not Same and
      ((QFlag == ack) or (QFlag == dst_reached)) and
-     ((Dst == QRoute) or (Dst == ?ADDRESS_MAX)) and
-     ((MType == data) or (MType == path_data)) ->
+     ((QMType == data) or (QMType == path_data)) ->
     [Ack_bin, _] = create_payload_nl_header(SM, Pid, false, Q_Tuple),
     ?INFO(?ID, "find_acks ~p ~p~n", [byte_size(Ack_bin), byte_size(Data)]),
     Len = byte_size(Ack_bin) + byte_size(Data),
     if Len < 64 ->
       ?INFO(?ID, "Combined ~p ~p ~p ~p~n", [QPkgID, PkgID, Data, Ack_bin]),
-      find_acks(SM, Pid, Tuple, Q_Tail, <<Data/binary, Ack_bin/binary>>, [Q_Tuple | Acks]);
+      find_acks(SM, Pid, Tuple, Q_Tail, <<Data/binary, Ack_bin/binary>>, [Q_Tuple | Acks], false);
     true ->
-      find_acks(SM, Pid, Tuple, Q_Tail, Data, Acks)
+      find_acks(SM, Pid, Tuple, Q_Tail, Data, Acks, false)
     end;
   true ->
-    find_acks(SM, Pid, Tuple, Q_Tail, Data, Acks)
+    find_acks(SM, Pid, Tuple, Q_Tail, Data, Acks, false)
   end.
 
 %%----------------NL functions create/extract protocol header-------------------
@@ -1208,12 +1306,13 @@ fill_data_header(Type, TransmitLen, Data) ->
 %   3b        6b        LenPath * 6b    2b        LenAdd * 8b       REST till / 8
 %   TYPEMSG   LenPath   Path            LenAdd    Addtional Info     ADD
 fill_path_evo_header(Tuple) ->
-  {Path, Rssi, Integrity, Transmit_Len, Data} = Tuple,
+  {Path, Rssi, Integrity, Min_integrity, _, TransmitLen, Data} = Tuple,
   LenPath = length(Path),
-  LenAdd = length([Rssi, Integrity]),
+  LenAdd = length([Rssi, Integrity, Min_integrity]),
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
   CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
   CBitsLenAdd = count_flag_bits(?LEN_ADD),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
   TypeNum = ?TYPEMSG2NUM(path_addit),
 
   BType = <<TypeNum:CBitsTypeMsg>>,
@@ -1222,21 +1321,101 @@ fill_path_evo_header(Tuple) ->
   BPath = code_header(path, Path),
 
   BLenAdd = <<LenAdd:CBitsLenAdd>>,
-  BAdd = code_header(add, [Rssi, Integrity]),
-  TmpData = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
-            BLenAdd/bitstring, BAdd/bitstring>>,
+  BAdd = code_header(add, [Rssi, Integrity, Min_integrity]),
+  BLenData = <<TransmitLen:CBitsMaxLenData>>,
 
+  TmpData =
+  <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
+  BLenAdd/bitstring, BAdd/bitstring, BLenData/bitstring>>,
+  Is_binary = check_binary(TmpData),
+
+  Header =
+  if not Is_binary ->
+     Add = add_bits(TmpData),
+     <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
+       BLenAdd/bitstring, BAdd/bitstring, BLenData/bitstring, 0:Add>>;
+   true ->
+     TmpData
+  end,
+  if (TransmitLen > 0) ->
+      <<Header/bitstring, Data/binary>>;
+    true -> Header
+  end.
+
+%%--------------- neighbour_path -------------------
+%-------> neighbour_path
+%   3b        6b        LenPath * 6b    6b                LenNeighbours * 6b          REST till / 8
+%   TYPEMSG   LenPath   Path            LenNeighbours     Neighbours                  ADD
+
+fill_path_neighbours_header(Tuple) ->
+  {Path, _, Integrity, Min_integrity, Neighbours, TransmitLen, Data} = Tuple,
+  LenNeighbours = length(Neighbours),
+  LenPath = length(Path),
+  LenAdd = length([Integrity, Min_integrity]),
+  CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
+  CBitsLenNeigbours = count_flag_bits(?MAX_LEN_NEIGBOURS),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
+  CBitsLenAdd = count_flag_bits(?LEN_ADD),
+  TypeNum = ?TYPEMSG2NUM(path_neighbours),
+
+  BType = <<TypeNum:CBitsTypeMsg>>,
+
+  BLenPath = <<LenPath:CBitsLenPath>>,
+  BPath = code_header(path, Path),
+
+  BLenNeigbours = <<LenNeighbours:CBitsLenNeigbours>>,
+  BNeighbours = code_header(neighbours, Neighbours),
+  BLenData = <<TransmitLen:CBitsMaxLenData>>,
+
+  BLenAdd = <<LenAdd:CBitsLenAdd>>,
+  BAdd = code_header(add, [Integrity, Min_integrity]),
+
+  TmpData = <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
+              BLenNeigbours/bitstring, BNeighbours/bitstring,
+              BLenAdd/bitstring, BAdd/bitstring, BLenData/bitstring>>,
   Is_binary = check_binary(TmpData),
   Header =
   if not Is_binary ->
      Add = add_bits(TmpData),
      <<BType/bitstring, BLenPath/bitstring, BPath/bitstring,
-            BLenAdd/bitstring, BAdd/bitstring, 0:Add>>;
+       BLenNeigbours/bitstring, BNeighbours/bitstring,
+       BLenAdd/bitstring, BAdd/bitstring, BLenData/bitstring, 0:Add>>;
    true ->
      TmpData
   end,
-  if (Transmit_Len > 0) -> <<Header/binary, Data/binary>>;
+  if (TransmitLen > 0) ->
+      <<Header/bitstring, Data/binary>>;
     true -> Header
+  end.
+
+extract_path_neighbours_header(SM, Payload) ->
+  CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
+  CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
+  CBitsLenNeigbours = count_flag_bits(?MAX_LEN_NEIGBOURS),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
+  CBitsLenAdd = count_flag_bits(?LEN_ADD),
+  CBitsAdd = count_flag_bits(?ADD_INFO_MAX),
+  <<BType:CBitsTypeMsg, PathRest/bitstring>> = Payload,
+
+  {Path, Neighbours_rest} = extract_header(path, CBitsLenPath, CBitsLenPath, PathRest),
+  {Neighbours, Add_rest} = extract_header(neighbours, CBitsLenNeigbours, CBitsLenNeigbours, Neighbours_rest),
+  {Additional, Data_rest} = extract_header(add, CBitsLenAdd, CBitsAdd, Add_rest),
+  [Integrity, Min_integrity] = Additional,
+
+  path_neighbours = ?NUM2TYPEMSG(BType),
+
+  <<Len:CBitsMaxLenData, Rest/bitstring>> = Data_rest,
+  ?TRACE(?ID, "extract path neighbours BType ~p  Path ~p Neighbours ~p Len ~p Rest ~p Additional ~p~n",
+        [BType, Path, Neighbours, Len, Rest, Additional]),
+  Rest_payload = cut_add_bits(Rest),
+  ?TRACE(?ID, "extract path neighbours Rest_payload ~p~n", [Rest_payload]),
+
+  if Len > 0 ->
+    <<Path_payload:Len/binary, Other_msg/binary>> = Rest_payload,
+    [Path, 0, Integrity, Min_integrity, Neighbours, Path_payload, Other_msg];
+  true ->
+    [Path, 0, Integrity, Min_integrity, Neighbours, <<"">>, Rest_payload]
   end.
 
 extract_path_evo_header(SM, Payload) ->
@@ -1244,20 +1423,27 @@ extract_path_evo_header(SM, Payload) ->
   CBitsLenPath = count_flag_bits(?MAX_LEN_PATH),
   CBitsLenAdd = count_flag_bits(?LEN_ADD),
   CBitsAdd = count_flag_bits(?ADD_INFO_MAX),
+  CBitsMaxLenData = count_flag_bits(?MAX_DATA_LEN),
 
   <<BType:CBitsTypeMsg, PathRest/bitstring>> = Payload,
   {Path, Add_rest} = extract_header(path, CBitsLenPath, CBitsLenPath, PathRest),
   {Additional, Data_rest} = extract_header(add, CBitsLenAdd, CBitsAdd, Add_rest),
 
   path_addit = ?NUM2TYPEMSG(BType),
-  [Rssi, Integrity] = Additional,
+  [Rssi, Integrity, Min_integrity] = Additional,
 
   ?TRACE(?ID, "extract path addit BType ~p  Path ~p Additonal ~p~n",
         [BType, Path, Additional]),
 
-  Data = cut_add_bits(Data_rest),
-  [Path, Rssi, Integrity, Data, <<"">>].
+  <<Len:CBitsMaxLenData, Rest/bitstring>> = Data_rest,
+  Rest_payload = cut_add_bits(Rest),
 
+  if Len > 0 ->
+    <<Path_payload:Len/binary, Other_msg/binary>> = Rest_payload,
+    [Path, Rssi, Integrity, Min_integrity, [], Path_payload, Other_msg];
+  true ->
+    [Path, Rssi, Integrity, Min_integrity, [], <<"">>, Rest_payload]
+end.
 
 extract_payload(SM, Payload) ->
   CBitsTypeMsg = count_flag_bits(?TYPE_MSG_MAX),
@@ -1270,23 +1456,24 @@ extract_payload(SM, Payload) ->
 
   MType = ?NUM2TYPEMSG(Type),
   ?TRACE(?ID, "extract_payload message type ~p ~n", [MType]),
-  [Path, Rssi, Integrity, Parsed_data, Other_msg] =
+  [Path, Rssi, Integrity, Min_integrity, Neighbours, Parsed_data, Other_msg] =
   case MType of
-    % TODO: other types
+    path_neighbours ->
+      extract_path_neighbours_header(SM, Payload);
     path_addit ->
       extract_path_evo_header(SM, Payload);
     path_data ->
       {P, Path_payload} = extract_header(path, CBitsLenPath, CBitsLenPath, Rest),
       ?TRACE(?ID, "extract_payload message type ~p ~p ~n", [P, Path_payload]),
       [Data, Rest_payload] = decode_payload(SM, MType, Len, 0, Path_payload),
-      [P, 0, 0, Data, Rest_payload];
+      [P, 0, 0, 0, [], Data, Rest_payload];
     data ->
       Cut_len = CBitsTypeMsg + CBitsMaxLenData,
       [Data, Rest_payload] = decode_payload(SM, MType, Len, Cut_len, Payload),
-      [[], 0, 0, Data, Rest_payload]
+      [[], 0, 0, 0, [], Data, Rest_payload]
   end,
 
-  [MType, Path, Rssi, Integrity, Parsed_data, Other_msg].
+  [MType, Path, Rssi, Integrity, Min_integrity, Neighbours, Parsed_data, Other_msg].
 
 decode_payload(SM, path_data, Len, _, Payload) ->
   Data = cut_add_bits(Payload),
@@ -1518,8 +1705,6 @@ get_protocol_info(SM, Name) ->
                    (br_na,A) when not Conf#pr_conf.br_na -> [{"broadcast", "available"} | A];
                    (pf,A) when Conf#pr_conf.pf -> [{"type", "path finder"} | A];
                    (evo,A) when Conf#pr_conf.evo -> [{"specifics", "evologics dmac rssi and integrity"} | A];
-                   (dbl,A) when Conf#pr_conf.dbl -> [{"specifics", "2 waves to find bidirectional path"} | A];
-                   (rm,A) when Conf#pr_conf.rm   -> [{"route", "maintained"} | A];
                    (_,A) -> A
                 end, [], ?LIST_ALL_PARAMS),
   lists:reverse(Prop_list).
@@ -1552,7 +1737,7 @@ delete_neighbour(SM, Address) ->
   Neighbour_handler =
     fun(LSM, true) ->
         PNeighbours = lists:delete(Address, Neighbours),
-
+        ?INFO(?ID, "delete_neighbour ~p ~p~n", [PNeighbours, Address]),
         [share:put(__, current_neighbours, PNeighbours),
          Routing_handler(__, share:get(SM, routing_table)),
          Channel_handler(__, lists:keyfind(Address, 1, N_Channel))
@@ -1562,6 +1747,15 @@ delete_neighbour(SM, Address) ->
     end,
 
   Neighbour_handler(SM, lists:member(Address, Neighbours)).
+
+get_prev_neighbour(SM, Routing) ->
+  Local_address = share:get(SM, local_address),
+  {Slist, _} = lists:splitwith(fun(A) -> A =/= Local_address end, Routing),
+  Reverse = lists:reverse(Slist),
+  if Reverse =/= [] ->
+    [Neighbour | _] = Reverse, Neighbour;
+  true -> nothing
+  end.
 
 update_routing(_SM, []) -> [];
 update_routing(SM, Routing) ->

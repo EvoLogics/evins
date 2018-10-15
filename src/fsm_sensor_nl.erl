@@ -104,7 +104,7 @@ handle_idle(_MM, SM, Term) ->
 
 handle_send(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  [Param_Term, SMP] = nl_mac_hf:event_params(SM, Term, rcv_ul),
+  [Param_Term, SMP] = mac_hf:event_params(SM, Term, rcv_ul),
   case Param_Term of
     {rcv_ul, Protocol, Dst, TypeMsg, Payl} ->
       share:put(SMP, last_sent, Param_Term),
@@ -200,8 +200,8 @@ send_sensor_command(SM, Protocol, Dst, TypeMsg, D) ->
 %    TypeMsg  TypeSensor  SRC   ADD
 %---------------------------------------------
 create_payload_sensor(TM, TS, Data) ->
-  CTypeMsg = nl_mac_hf:count_flag_bits(?TYPEMSGMAX),
-  CTypeSensor = nl_mac_hf:count_flag_bits(?TYPESENSORMAX),
+  CTypeMsg = mac_hf:count_flag_bits(?TYPEMSGMAX),
+  CTypeSensor = mac_hf:count_flag_bits(?TYPESENSORMAX),
 
   TypeMsg = ?TYPEMSG2NUM(TM),
   BTMsg = <<TypeMsg:CTypeMsg>>,
@@ -219,8 +219,8 @@ create_payload_sensor(TM, TS, Data) ->
   end.
 
 extract_sensor_command(Payl) ->
-  CTypeMsg = nl_mac_hf:count_flag_bits(?TYPEMSGMAX),
-  CTypeSensor = nl_mac_hf:count_flag_bits(?TYPESENSORMAX),
+  CTypeMsg = mac_hf:count_flag_bits(?TYPEMSGMAX),
+  CTypeSensor = mac_hf:count_flag_bits(?TYPESENSORMAX),
 
   Data_bin = (bit_size(Payl) rem 8) =/= 0,
   <<BTypeMsg:CTypeMsg, BTypeSensor:CTypeSensor, Rest/bitstring>> = Payl,
@@ -281,9 +281,9 @@ parse_sensor_data(SM, Sensor, Data) ->
 
 bin_to_float(Bin) when is_binary(Bin) ->
   L = re:replace(Bin, "(^\\s+)|(\\s+$)", "", [global,{return, list}]),
-  nl_mac_hf:bin_to_num(L);
+  mac_hf:bin_to_num(L);
 bin_to_float(Bin) ->
-  nl_mac_hf:bin_to_num(Bin).
+  mac_hf:bin_to_num(Bin).
 
 readlines(nothing) ->
   nothing;
@@ -351,8 +351,8 @@ create_payl_conductivity(Line) ->
                                               [global, {capture, all, binary}]),
       [M1] = MEASUREMENT1,
       [M2] = MEASUREMENT2,
-      IM1 =  nl_mac_hf:bin_to_num(M1),
-      IM2 =  nl_mac_hf:bin_to_num(M2),
+      IM1 =  mac_hf:bin_to_num(M1),
+      IM2 =  mac_hf:bin_to_num(M2),
 
       BStrM1 = <<IM1:16>>,
       BStrM2 = <<IM2:16>>,
@@ -441,8 +441,8 @@ create_payl_oxygen(Line) ->
                                               [global, {capture, all, binary}]),
       [M1] = MEASUREMENT1,
       [M2] = MEASUREMENT2,
-      IM1 =  nl_mac_hf:bin_to_num(M1),
-      IM2 =  nl_mac_hf:bin_to_num(M2),
+      IM1 =  mac_hf:bin_to_num(M1),
+      IM2 =  mac_hf:bin_to_num(M2),
 
       BStrM1 = <<IM1:16>>,
       BStrM2 = <<IM2:16>>,

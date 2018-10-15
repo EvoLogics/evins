@@ -99,19 +99,19 @@ handle_send(_MM, SM, Term) ->
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Term of
     {try_send, {sendburst, AT = {at, _PID, _, _, _}} } when Answer_timeout == false ->
-      SM1 = nl_mac_hf:send_mac(SM, at, data, AT),
+      SM1 = mac_hf:send_mac(SM, at, data, AT),
       SM1#sm{event = eps};
     {try_send, {sendburst, {at, _PID, _, _, _}} } ->
       fsm:set_timeout(SM, {ms, 500}, Term);
     {try_send, {sendim, {at, PID, _SENDIM, Dst, _, Data}} } when Answer_timeout == false ->
-      [_, Flag, _, _, _, _, _] = nl_mac_hf:extract_payload_nl_flag(Data),
-      NLFlag = nl_mac_hf:num2flag(Flag, nl),
+      [_, Flag, _, _, _, _, _] = mac_hf:extract_payload_nl_flag(Data),
+      NLFlag = mac_hf:num2flag(Flag, nl),
       case NLFlag of
       data when Answer_timeout == true ->
         fsm:set_timeout(SM, {ms, 500}, Term);
       data ->
         AT = {at, PID, "*SEND", Dst, Data},
-        SM1 = nl_mac_hf:send_mac(SM, at, data, AT),
+        SM1 = mac_hf:send_mac(SM, at, data, AT),
         SM1#sm{event = eps};
       _ ->
         SM#sm{event = eps}
@@ -189,11 +189,11 @@ if_busy(SM, Src) ->
 process_recv(SM, T) ->
   ?TRACE(?ID, "MAC_AT_RECVIM ~p~n", [T]),
   {_, Len, P1, P2, P3, P4, P5, P6, P7, Payl} = T,
-  [BPid, BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
+  [BPid, BFlag, Data, LenAdd] = mac_hf:extract_payload_mac_flag(Payl),
 
   CurrentPid = ?PROTOCOL_MAC_PID(share:get(SM, macp)),
   if CurrentPid == BPid ->
-    Flag = nl_mac_hf:num2flag(BFlag, mac),
+    Flag = mac_hf:num2flag(BFlag, mac),
     ShortTuple = {Len - LenAdd, P1, P2, P3, P4, P5, P6, P7, Data},
     [SM, {BPid, Flag, ShortTuple}];
   true ->
