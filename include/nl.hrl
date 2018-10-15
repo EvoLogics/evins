@@ -81,13 +81,11 @@
            icrpr,
            sncfloodpfr,
            sncfloodpfrack,
-           dblfloodpfr,
-           dblfloodpfrack,
            evoicrppfr,
            evoicrppfrack
           ]).
 
--record(pr_conf,{stat=false, brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, dbl=false, evo=false, lo=false, rm=false}).
+-record(pr_conf,{stat=false, brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, evo=false}).
 
 -define(LIST_ALL_PARAMS, [
         stat,   % static routing
@@ -96,12 +94,11 @@
         ack,    % with acknowledgement
         ry_only,  % relay only data without knowing path
         pf,   % path finder
-          % if ry_only and pf are use together, it means thay data will be relayed and on the way
-          % the path will be established, this path on dst will be used for sending ack back
+                % if ry_only and pf are use together, it means thay data will be relayed and on the way
+                % the path will be established, this path on dst will be used for sending ack back
         prob,   % probabilsitic flooding
-        dbl,    % double waves (two flooding waves)
-        evo,    % evologics special type, to add info like Rssi and Integrity
-        rm]).   % route maintenance
+        evo    % evologics special type, to add info like Rssi and Integrity
+        ]).
 
 
 -define(PROTOCOL_NL_PID(P),
@@ -115,10 +112,8 @@
     icrpr           -> 6;
     sncfloodpfr     -> 7;
     sncfloodpfrack  -> 8;
-    dblfloodpfr     -> 9;
-    dblfloodpfrack  -> 10;
-    evoicrppfr      -> 11;
-    evoicrppfrack   -> 12
+    evoicrppfr      -> 9;
+    evoicrppfrack   -> 10
   end).
 
 -define(PROTOCOL_MAC_PID(P),
@@ -140,8 +135,6 @@
       {icrpr, [{ry_only, pf, br_na, ack},  fsm_opportunistic_flooding]},  % Information Carrying Routing Protocol
       {sncfloodpfr, [{pf, brp, br_na}, fsm_opportunistic_flooding]},  % Pathfind and relay, based on sequence number controlled flooding
       {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_opportunistic_flooding]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
-      {dblfloodpfr, [{pf, dbl, br_na}, fsm_opportunistic_flooding]},  % Double flooding path finder
-      {dblfloodpfrack,[{pf, dbl, br_na, ack}, fsm_opportunistic_flooding]}, % Double flooding path finder with acknowledgement
       {evoicrppfr, [{pf, br_na, evo}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol
       {evoicrppfrack, [{pf, br_na, evo, ack}, fsm_opportunistic_flooding]} % Evologics Information Carrying routing protocol with acknowledgement
     ]).
@@ -155,8 +148,6 @@
        "sncfloodpfrack - pathfind and relay to destination with acknowledgement\n",
        "evoicrppfr     - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header\n"
        "evoicrppfrack  - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header with acknowledgement\n"
-       "dblfloodpfr    - double flooding path finder, based on 3 waves, going through the network to find path\n"
-       "dblfloodpfrack - double flooding path finder, based on 3 waves, going through the network to find path with acknowledgement\n"
        "dpfloodr       - dynamic probabilistic flooding\n"
        "dpfloodrack    - dynamic probabilistic flooding with acknowledgement\n"
        "icrpr          - information carrying routing protocol\n"
