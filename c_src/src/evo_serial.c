@@ -96,6 +96,10 @@ int main(void) {
                 rs_outp.head += erl_inp.len - 1;
                 break;
             }
+#ifndef _WIN32
+        } else if (rs == 0) {
+            return 1;
+#endif
         }
 
         if (ctx[2]) {
