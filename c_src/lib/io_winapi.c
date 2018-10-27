@@ -1,4 +1,4 @@
-#include "io.h"
+#include "evo-io.h"
 
 #ifdef _WIN32
 
@@ -28,10 +28,10 @@ context_t *io_open_rs232(const portconf_t *pconf) {
     if (ctx == NULL)
         return NULL;
 
-    strcat(path, pconf->path);
+    strcat(path, (char *)pconf->path);
 
     memset(ctx, '\0', sizeof(*ctx));
-    if ((ctx->fd = CreateFile(pconf->path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL)) == INVALID_HANDLE_VALUE
+    if ((ctx->fd = CreateFile(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL)) == INVALID_HANDLE_VALUE
             || io_set_params(ctx) < 0
             || io_set_baudrate(ctx, pconf->baudrate) < 0
             || io_set_databits(ctx, pconf->databits) < 0

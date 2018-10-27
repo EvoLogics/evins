@@ -2,7 +2,14 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-#include "io.h"
+#ifdef _WIN32
+  #include <io.h>
+  #include <stdio.h>
+  #include <fcntl.h>
+#endif
+
+#include "evo-io.h"
+#include "logger.h"
 
 typedef enum {
     COPEN           = 0,
@@ -29,6 +36,11 @@ size_t cbuf_free(cbuf_t *cbuf);
 void cbuf_norm(cbuf_t *cbuf);
 
 int main(void) {
+#ifdef _WIN32
+    setmode(fileno(stdout),O_BINARY);
+    setmode(fileno(stdin),O_BINARY);
+#endif
+
     erl_chunk_t erl_inp = { 0xFF, 0, CHDR, {0} };
     cbuf_t erl_outp, rs_outp;
     uint8_t rs_inp[254];
@@ -51,11 +63,10 @@ int main(void) {
     ctx[1] = io_stdout();
     ctx[2] = NULL;
 
-
     for (;;) {
-        if ((rs = erl_read(ctx[0], &erl_inp)) < 0 && rs == -1) {
+        if ((rs = erl_read(ctx[0], &erl_inp)) < 0 && rs == -1)
             return 1;
-        } else if (rs > 0 && erl_inp.state == CREADY) {
+        else if (rs > 0 && erl_inp.state == CREADY) {
             erl_inp.state = CHDR;
             erl_inp.done = 0;
             switch (erl_inp.data[0]) {
@@ -72,9 +83,8 @@ int main(void) {
                 strncpy((char *)portconf.path, (char *)erl_inp.data + 5, sizeof(portconf.path) - 1);
                 portconf.path[sizeof(portconf.path) - 1] = '\0';
 
-                if (!(ctx[2] = io_open_rs232(&portconf))) {
+                if (!(ctx[2] = io_open_rs232(&portconf)))
                     return 1;
-                }
 
                 break;
 
@@ -101,8 +111,7 @@ int main(void) {
                 erl_outp.head[1] = CRECV;
                 memcpy(erl_outp.head + 2, rs_inp, len);
                 erl_outp.head += len;
-            } else if (rs == 0)
-                return 0;
+            }
 
             while (ctx[2] && cbuf_used(&rs_outp)) {
                 if ((rs = io_write(ctx[2], rs_outp.tail, cbuf_used(&rs_outp))) < 0 && rs == -1)
@@ -116,9 +125,9 @@ int main(void) {
         }
 
         while (cbuf_used(&erl_outp)) {
-            if ((rs = io_write(ctx[1], erl_outp.tail, cbuf_used(&erl_outp))) < 0 && rs == -1) {
+            if ((rs = io_write(ctx[1], erl_outp.tail, cbuf_used(&erl_outp))) < 0 && rs == -1)
                 return 1;
-            } else if (rs > 0) {
+            else if (rs > 0) {
                 erl_outp.tail += rs;
                 cbuf_norm(&erl_outp);
             } else
@@ -139,15 +148,18 @@ ssize_t erl_read(context_t *ctx, erl_chunk_t *chunk) {
 
     switch (chunk->state) {
     case CHDR:
-        if ((rs = io_read(ctx, &chunk->len, 1)) <= 0)
-            return rs == 0 ? -1 : rs;
+        if ((rs = io_read(ctx, &chunk->len, 1)) < 0)
+            return rs;
+
+        if (rs == 0)
+            break;
 
         chunk->state = CDATA;
         chunk->done = 0;
         // no break
     case CDATA:
-        if ((rs = io_read(ctx, chunk->data + chunk->done, chunk->len - chunk->done)) <= 0)
-            return rs == 0 ? -1 : rs;
+        if ((rs = io_read(ctx, chunk->data + chunk->done, chunk->len - chunk->done)) < 0)
+            return rs;
 
         chunk->done += rs;
         if (chunk->done == chunk->len)
