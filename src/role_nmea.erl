@@ -385,10 +385,14 @@ extract_nmea(<<"IXSE">>, Params) ->
 %% $PASHR,200345.00,78.00,T,-3.00,+2.00,+0.00,1.000,1.000,1.000,1,1*32
 extract_nmea(<<"ASHR">>, Params) ->
   try
-    [BUTC,BHeading,BTrue,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD,BGPSq,BINSq] = binary:split(Params,<<",">>,[global]),
+    [BUTC,BHeading,BTrue,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD,BGPSq | LINSq] = binary:split(Params,<<",">>,[global]),
     UTC = extract_utc(BUTC),
     [Heading,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD] = [safe_binary_to_float(X) || X <- [BHeading,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD]],
-    [GPSq,INSq] = [safe_binary_to_integer(X) || X <- [BGPSq,BINSq]],
+    GPSq = safe_binary_to_integer(BGPSq),
+    INSq = case LINSq of
+               [BINSq] -> safe_binary_to_integer(BINSq);
+               _ -> nothing
+           end,
     True = case BTrue of <<"T">> -> true; _ -> false end,
     {nmea, {ashr,UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq}}
   catch
@@ -1150,7 +1154,11 @@ build_ashr(UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq
   RollFmt = case Roll of N when N >= 0 -> "+~.2f"; _ -> "~.2f" end,
   PitchFmt = case Pitch of M when M >= 0 -> "+~.2f"; _ -> "~.2f" end,
   HeadingFmt = case Heading of K when K >= 0 -> "+~.2f"; _ -> "~.2f" end,
-  SRest = safe_fmt([RollFmt,PitchFmt,HeadingFmt,"~.3f","~.3f","~.3f","~B","~B"], [Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq], ","),
+  SRest =
+  case INSq of
+      nothing -> safe_fmt([RollFmt,PitchFmt,HeadingFmt,"~.3f","~.3f","~.3f","~B"], [Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq], ",");
+      _ -> safe_fmt([RollFmt,PitchFmt,HeadingFmt,"~.3f","~.3f","~.3f","~B","~B"], [Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq], ",")
+  end,
   (["PASHR",SUTC,SHeading,STrue,SRest]).
 
 %% $PRDID,PPP.PP,RRR.RR,xxx.xx
