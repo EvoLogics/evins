@@ -300,18 +300,18 @@ extract_nmea(<<"SXN">>, Params) ->
     [Type | Rest] = binary:split(Params,<<",">>,[global]),
     case Type of
       <<"10">> ->
-        [BTok,BRoll,BPitch,BHeave,BUTC,_] = Rest,
+        [BTok,BRoll,BPitch,BHeave,BUTC | _] = Rest,
         R2D = 180.0 / math:pi(),
         {ok,[Roll],[]} = io_lib:fread("~f", binary_to_list(BRoll)),
         {ok,[Pitch],[]} = io_lib:fread("~f", binary_to_list(BPitch)),
         {ok,[Heave],[]} = io_lib:fread("~f", binary_to_list(BHeave)),
+        {ok,[UTC],[]} = io_lib:fread("~f", binary_to_list(BUTC)),
         Tok = safe_binary_to_integer(BTok),
-        UTC = safe_binary_to_integer(BUTC),
         {nmea, {sxn, 10, Tok, Roll * R2D, Pitch * R2D, Heave, UTC, nothing}};
       <<"23">> ->
         [Roll, Pitch, Heading, Heave] = [safe_binary_to_float(X) || X <- Rest],
         {nmea, {sxn, 23, Roll, Pitch, Heading, Heave}};
-      _ -> {error, {parseError, sxn, Params}}
+      _ -> {error, {unsupported, sxn, Params}}
     end
   catch error:_ -> {error, {parseError, sxn, Params}}
   end;
@@ -1117,7 +1117,7 @@ build_simsvt(Total, Idx, Lst) ->
 %% Example: $PSXN,10,019,5.100e-2,-5.1e-2,1.234e+0,771598427
 build_sxn(10,Tok,Roll,Pitch,Heave,UTC,nothing) ->
   D2R = math:pi() / 180.0,
-  SRest = safe_fmt(["~.4e","~.4e","~.4e","~B"],
+  SRest = safe_fmt(["~.4e","~.4e","~.4e","~.4e"],
                    [Roll*D2R,Pitch*D2R,Heave,UTC], ","),
   (["PSXN,10",SRest,","]).
 
