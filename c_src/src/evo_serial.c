@@ -90,7 +90,8 @@ int main(void) {
 
             case CSEND:
                 if (cbuf_free(&rs_outp) < erl_inp.len) // TODO: prevent this situation
-                    return 1;
+                    // just drop this chunk
+                    continue; //return 1;
 
                 memcpy(rs_outp.head, erl_inp.data + 1, erl_inp.len - 1);
                 rs_outp.head += erl_inp.len - 1;
