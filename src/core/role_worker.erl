@@ -568,6 +568,7 @@ process_bin(Bin, #ifstate{behaviour = B, fsm_pids = FSMs, cfg = Cfg, tail = Tail
       {noreply, State}
   end.
 
+serial_send(nothing, _) -> ok;
 serial_send(Port, <<Chunk:253/binary, Rest/binary>>) ->
     Port ! {self(), {command, <<?SER_SEND:8, Chunk/binary>>}},
     serial_send(Port, Rest);
