@@ -89,13 +89,20 @@ int main(void) {
                 break;
 
             case CSEND:
-                if (cbuf_free(&rs_outp) < erl_inp.len) // TODO: prevent this situation
-                    // just drop this chunk
-                    continue; //return 1;
+                {
+                    size_t n_write = erl_inp.len - 1, cf = cbuf_free(&rs_outp);
+                    if (cf < n_write)
+                        n_write = cf;
 
-                memcpy(rs_outp.head, erl_inp.data + 1, erl_inp.len - 1);
-                rs_outp.head += erl_inp.len - 1;
-                break;
+                    memcpy(rs_outp.head, erl_inp.data + 1, n_write);
+                    rs_outp.head += n_write;
+
+                    // TODO: make a notification of bottleneck overflow
+                    // if (n_write != erl_inp.len - 1)
+                    //     notiy_about_data_drop();
+
+                    break;
+                }
             }
 #ifndef _WIN32
         } else if (rs == 0) {
