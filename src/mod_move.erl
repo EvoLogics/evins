@@ -103,7 +103,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   %% NOTE: if several movements provided, will be overwirtten with last one
   Init_movement = fun(Movement) ->
                       [{geodetic, Lat, Lon, Alt}] = [R || {reference,R} <- ArgS],
-                      Sea_level = Alt - Z_lever_arm + Depth,
+                      Sea_level = Alt + Depth,
                       share:put(ShareID, [{sea_level, Sea_level}, {geodetic, [Lat, Lon, Alt]}, {movement, Movement}])
                   end,
   lists:map(
