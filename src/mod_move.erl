@@ -52,7 +52,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   %% {rocking, Tau} - mock
 
   %% {lever_arm, [Forward, Right, Down]}
-  [_,_,Z_lever_arm] = Lever_arm = case [Arm || {lever_arm, Arm} <- ArgS] of [] -> [0,0,0]; [Arm] -> Arm end,
+  [_,_,_Z_lever_arm] = Lever_arm = case [Arm || {lever_arm, Arm} <- ArgS] of [] -> [0,0,0]; [Arm] -> Arm end,
 
   Pressure = case [P || {pressure,P} <- ArgS] of [] -> ?PAIR; [P] -> P end,
   Depth0 = (Pressure - ?PAIR) / ?DBAR_PRO_METER,
