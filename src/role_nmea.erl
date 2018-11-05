@@ -1117,8 +1117,8 @@ build_simsvt(Total, Idx, Lst) ->
 %% Example: $PSXN,10,019,5.100e-2,-5.1e-2,1.234e+0,771598427
 build_sxn(10,Tok,Roll,Pitch,Heave,UTC,nothing) ->
   D2R = math:pi() / 180.0,
-  SRest = safe_fmt(["~.4e","~.4e","~.4e","~.4e"],
-                   [Roll*D2R,Pitch*D2R,Heave,UTC], ","),
+  SRest = safe_fmt(["~B","~.4e","~.4e","~.4e","~.4e"],
+                   [Tok,Roll*D2R,Pitch*D2R,Heave,UTC], ","),
   (["PSXN,10",SRest,","]).
 
 %% Example: $PSXN,23,0.02,-0.76,330.56,*0B
