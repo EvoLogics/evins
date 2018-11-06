@@ -1682,7 +1682,7 @@ process_set_command(SM, Command) ->
     {routing, Routing} ->
       Routing_Format = lists:map(
                         fun({default, To}) -> To;
-                            ({From, To, _}) -> {From, To}
+                            ({From, To}) -> {From, To, 0}
                         end, Routing),
       share:put(SM, routing_table, Routing_Format),
       {nl, routing, Routing};
