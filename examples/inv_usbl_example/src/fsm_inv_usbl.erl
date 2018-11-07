@@ -6,38 +6,22 @@
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
--export([handle_idle/3,handle_waiting_answer/3,handle_alarm/3]).
 
--define(TRANS, [{idle,
-                 [{init, idle},
-                  {send_at_command, waiting_answer},
-                  {sync_answer, alarm},
-                  {answer_timeout, alarm}]},
-
-                {waiting_answer,
-                 [{send_at_command, waiting_answer},
-                  {sync_answer, waiting_answer},
-                  {empty_queue, idle},
-                  {answer_timeout, alarm}]},
-
-                {alarm,[]}
-               ]).
+-define(TRANS, []).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> SM.
+init(SM)       -> evins:rb(start), evins:logon(),
+                  share:put(SM, im_pid, 0).
 trans()        -> ?TRANS.
 final()        -> [].
-init_event()   -> init.
+init_event()   -> eps.
 stop(_SM)      -> ok.
 
-handle_event(MM, SM, Term) ->
+handle_event(_MM, SM, Term) ->
   LAddr = share:get(SM, local_address),
   case Term of
     {timeout, {am_timeout, {Pid, RAddr, TTS}}} ->
-      AT = {at, {pid, Pid}, "*SENDIMS", RAddr, TTS, <<"N">>},
-      fsm:run_event(MM, SM#sm{event=send_at_command}, AT);
-    {timeout, Event} ->
-      fsm:run_event(MM, SM#sm{event=Event}, {});
+      fsm:send_at_command(SM, {at, {pid, Pid}, "*SENDIMS", RAddr, TTS, <<"N">>});
 
     % RECVIM (only for debugging)
     {async,  {pid, Pid}, {recvim, _, _RAddr, LAddr, ack, _, _, _, _, _Payload}} ->
@@ -45,10 +29,10 @@ handle_event(MM, SM, Term) ->
       share:put(SM, im_pid, Pid);
 
     % RECVIMS
-    {async, {pid, Pid}, {recvims, _, RAddr, LAddr, TS, Dur, _, _, _, _Payload}} ->
+    {async, {pid, Pid}, {recvims, _, RAddr, LAddr, TS, _Dur, _, _, _, _Payload}} ->
       %io:format("RDistance = ~p~n", [extractIM(Payload)]),
       AD = share:get(SM, answer_delay),
-      fsm:set_timeout(SM, {ms, 0.5 * AD - Dur / 1000}, {am_timeout, {Pid, RAddr, TS + AD * 1000}});
+      fsm:set_timeout(SM, {ms, 150}, {am_timeout, {Pid, RAddr, TS + AD * 1000}});
 
     % create AM to send by PBM or IMS
     {async, {usblangles, _, _, RAddr, Bearing, Elevation, _, _, Roll, Pitch, Yaw, _, _, Acc}} ->
@@ -59,72 +43,23 @@ handle_event(MM, SM, Term) ->
       %io:format("LAngles: ~p~n", [extractAM(AM)]),
       case find_spec_timeouts(SM, am_timeout) of
         [] ->
-          Pid = share:get(SM, im_pid),
-          AT = {at, {pid, Pid}, "*SENDPBM", RAddr, AM},
-          fsm:run_event(MM, SM#sm{event=send_at_command}, AT);
+          fsm:send_at_command(SM, {at, {pid, share:get(SM, im_pid)}, "*SENDPBM", RAddr, AM});
         List ->
           lists:foldl(fun({am_timeout, {Pid, MRAddr, TTS}} = Spec, MSM) ->
-                          AT = {at, {pid, Pid}, "*SENDIMS", RAddr, TTS, AM},
                           case MRAddr of
                             RAddr ->
                               [fsm:clear_timeout(__, Spec),
-                               fsm:run_event(MM, __#sm{event=send_at_command}, AT)
-                              ](MSM);
+                               fsm:send_at_command(__, {at, {pid, Pid}, "*SENDIMS", RAddr, TTS, AM})](MSM);
                             _ -> MSM
                           end
                       end, SM, List)
       end;
 
     {sync, _Req, _Answer} ->
-      [fsm:clear_timeout(__, answer_timeout),
-       fsm:run_event(MM, __#sm{event=sync_answer}, {})
-      ](SM);
+      fsm:clear_timeout(SM, answer_timeout);
 
     _ -> SM
   end.
-
-
-handle_idle(_MM, SM, _Term) ->
-  case SM#sm.event of
-    init ->
-      [share:put(__, im_pid, 0),
-       share:put(__, at_queue, queue:new()),
-       fsm:set_event(__, eps)
-      ](SM);
-    _ -> fsm:set_event(SM, eps)
-  end.
-
-handle_waiting_answer(_MM, SM, Term) ->
-  AQ = share:get(SM, at_queue),
-  case SM#sm.event of
-    send_at_command ->
-      SM1 = case fsm:check_timeout(SM, answer_timeout) of
-              true ->
-                share:put(SM, at_queue, queue:in(Term, AQ));
-              _ ->
-                fsm:send_at_command(SM, Term)
-            end,
-      fsm:set_event(SM1, eps);
-
-    sync_answer ->
-      case queue:out(AQ) of
-        {{value, AT}, AQn} ->
-          [fsm:send_at_command(__, AT),
-           share:put(__, at_queue, AQn),
-           fsm:set_event(__, eps)
-          ](SM);
-
-        {empty, _} ->
-          fsm:set_event(SM, empty_queue)
-      end;
-
-    _ -> fsm:set_event(SM, eps)
-  end.
-
--spec handle_alarm(any(), any(), any()) -> no_return().
-handle_alarm(_MM, SM, _Term) ->
-  exit({alarm, SM#sm.module}).
-
 
 find_spec_timeouts(SM, Spec) ->
   R = lists:filter(fun({V, _}) ->

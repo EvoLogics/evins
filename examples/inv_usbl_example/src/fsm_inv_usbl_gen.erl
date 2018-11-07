@@ -6,42 +6,32 @@
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
--export([handle_idle/3,handle_waiting_answer/3,handle_alarm/3]).
 
--define(TRANS, [{idle,
-                 [{init, idle},
-                  {send_at_command, waiting_answer},
-                  {sync_answer, alarm},
-                  {answer_timeout, alarm}]},
-
-                {waiting_answer,
-                 [{send_at_command, waiting_answer},
-                  {sync_answer, waiting_answer},
-                  {empty_queue, idle},
-                  {answer_timeout, alarm}]},
-
-                {alarm,[]}
-               ]).
+-define(TRANS, []).
 
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       -> share:put(SM, heading, 0).
 trans()        -> ?TRANS.
 final()        -> [].
-init_event()   -> init.
+init_event()   -> eps.
 stop(_SM)      -> ok.
 
-handle_event(MM, SM, Term) ->
+handle_event(_MM, SM, Term) ->
   RAddr = share:get(SM, dst),
   LAddr = share:get(SM, local_address),
+
   case Term of
-    {timeout, answer_timeout} ->
-      fsm:run_event(MM, SM#sm{event=answer_timeout}, {});
+    {allowed} ->
+      TM = share:get(SM, query_timeout),
+      fsm:set_timeout(SM, {ms, TM}, query_timeout);
+
+    {denied} ->
+      fsm:clear_timeout(SM, query_timeout);
 
     {timeout, query_timeout} ->
       TM = share:get(SM, query_timeout),
       [fsm:set_timeout(__, {ms, TM}, query_timeout),
-       fsm:run_event(MM, __#sm{event = send_at_command}, createIM(SM))
-      ](SM);
+       fsm:send_at_command(__, createIM(SM))](SM);
 
     %% ------ IM logic -------
     {async, _, {recvpbm, _, RAddr, LAddr, _, _, _, _, _Payload}} ->
@@ -49,13 +39,12 @@ handle_event(MM, SM, Term) ->
       SM;
 
     {async, {deliveredim, RAddr}} ->
-      fsm:run_event(MM, SM#sm{event = send_at_command}, {at, "?T", ""});
+      fsm:send_at_command(SM, {at, "?T", ""});
 
     {async, {failedim, RAddr}} ->
       TM = share:get(SM, query_delay),
       [fsm:clear_timeout(__, query_timeout),
-       fsm:set_timeout(__, {ms, TM}, query_timeout)
-      ](SM);
+       fsm:set_timeout(__, {ms, TM}, query_timeout)](SM);
 
     {sync, "?T", PTimeStr} ->
       Delay = share:get(SM, query_delay),
@@ -65,9 +54,7 @@ handle_event(MM, SM, Term) ->
       [share:put(__, distance, Dist),
        fsm:clear_timeout(__, query_timeout),
        fsm:set_timeout(__, {ms, Delay}, query_timeout),
-       fsm:clear_timeout(__, answer_timeout),
-       fsm:run_event(MM, __#sm{event=sync_answer}, {})
-      ](SM);
+       fsm:clear_timeout(__, answer_timeout)](SM);
 
     %% ------ IMS logic -------
     {async, {sendend, RAddr,"ims", STS, _}} ->
@@ -83,61 +70,16 @@ handle_event(MM, SM, Term) ->
       %io:format("LDistance: ~p~n", [Dist]),
       [share:put(__, distance, Dist),
        fsm:clear_timeout(__, query_timeout),
-       fsm:set_timeout(__, {ms, Delay}, query_timeout)
-      ](SM);
+       fsm:set_timeout(__, {ms, Delay}, query_timeout)](SM);
 
     {sync, _Req, _Answer} ->
-      [fsm:clear_timeout(__, answer_timeout),
-       fsm:run_event(MM, __#sm{event=sync_answer}, {})
-      ](SM);
+      fsm:clear_timeout(SM, answer_timeout);
 
     {nmea, {tnthpr, Heading, _, _Pitch, _, _Roll, _}} ->
        share:put(SM, heading, Heading);
 
     _ -> SM
   end.
-
-handle_idle(_MM, SM, _Term) ->
-  case SM#sm.event of
-    init ->
-      Delay = share:get(SM, query_delay),
-      [share:put(__, at_queue, queue:new()),
-       fsm:set_timeout(__, {ms, Delay}, query_timeout),
-       fsm:set_event(__, eps)
-      ](SM);
-    _ -> fsm:set_event(SM, eps)
-  end.
-
-handle_waiting_answer(_MM, SM, Term) ->
-  AQ = share:get(SM, at_queue),
-  case SM#sm.event of
-    send_at_command ->
-      SM1 = case fsm:check_timeout(SM, answer_timeout) of
-              true ->
-                share:put(SM, at_queue, queue:in(Term, AQ));
-              _ ->
-                fsm:send_at_command(SM, Term)
-            end,
-      fsm:set_event(SM1, eps);
-
-    sync_answer ->
-      case queue:out(AQ) of
-        {{value, AT}, AQn} ->
-          [fsm:send_at_command(__, AT),
-           share:put(__, at_queue, AQn),
-           fsm:set_event(__, eps)
-          ](SM);
-
-        {empty, _} ->
-          fsm:set_event(SM, empty_queue)
-      end;
-
-    _ -> fsm:set_event(SM, eps)
-  end.
-
--spec handle_alarm(any(), any(), any()) -> no_return().
-handle_alarm(_MM, SM, _Term) ->
-  exit({alarm, SM#sm.module}).
 
 % -----------------------------------------------------------------------
 createIM(SM) ->
