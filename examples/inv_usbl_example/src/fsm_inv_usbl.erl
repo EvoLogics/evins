@@ -10,8 +10,7 @@
 -define(TRANS, []).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> evins:rb(start), evins:logon(),
-                  share:put(SM, im_pid, 0).
+init(SM)       -> share:put(SM, im_pid, 0).
 trans()        -> ?TRANS.
 final()        -> [].
 init_event()   -> eps.
