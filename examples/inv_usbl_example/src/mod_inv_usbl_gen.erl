@@ -1,4 +1,5 @@
 %% Copyright (c) 2015, Oleksiy Kebkal <lesha@evologics.de>
+%% Copyright (c) 2018, Oleksandr Novychenko <novychenko@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -33,30 +34,40 @@
 -export([start/4, register_fsms/4]).
 
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-  fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+    fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
-register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
-  parse_conf(Mod_ID, ArgS, Share),
-  Roles = fsm_worker:role_info(Role_IDs, [at,nmea]),
-  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_inv_usbl_gen}].
+register_fsms(Mod_ID, Role_IDs, _Share, ArgS) ->
+    Role_names = lists:usort([Role || {Role, _, _, _, _} <- Role_IDs]),
+    Roles = fsm_worker:role_info(Role_IDs, Role_names),
+    [#sm{roles = [hd(Roles)], module = fsm_conf},
+     #sm{roles = Roles, env = parse_conf(Mod_ID, ArgS), module = fsm_inv_usbl_gen}].
 
-parse_conf(_Mod_ID, ArgS, Share) ->
-  QDelay = [P || {query_delay, P} <- ArgS],
-  QTimeout = [P || {query_timeout, P} <- ArgS],
-  ADelay = [P || {answer_delay, P} <- ArgS],
-  Mode   = [P || {mode, P} <- ArgS],
-  Addr   = [P || {dst, P} <- ArgS],
-  Pid    = [P || {pid, P} <- ArgS],
+parse_conf(_Mod_ID, ArgS) ->
+    #{pid => set_params(ArgS, pid, check_integer("PID"), {error, "PID must be defined"}),
+      remote_address => set_params(ArgS, remote_address, check_integer("Remote address"), {error, "Remote address must be specified"}),
+      answer_delay => set_params(ArgS, answer_delay, check_integer("Answer delay"), 500),
+      mode => set_params(ArgS, mode, check_atom("Mode"), ims),
+      ping_delay => set_params(ArgS, ping_delay, check_integer("Ping delay"), 500),
+      ping_timeout => set_params(ArgS, ping_timeout, check_integer("Ping timeout"), 5000)}.
 
-  share:put(#sm{share = Share}, [{query_delay, set_params(QDelay, 1000)},
-                                 {query_timeout, set_params(QTimeout, 5000)},
-                                 {answer_delay, set_params(ADelay, 500)},
-                                 {mode, set_params(Mode, im)},
-                                 {dst, set_params(Addr, 1)},
-                                 {pid, set_params(Pid, 0)}]).
+set_params(ArgS, Name, Validate, Default) ->
+    case lists:keyfind(Name, 1, ArgS) of
+        {Name, Value} ->
+            case Validate of
+                F when is_function(F) -> F(Value);
+                _ -> Value
+            end;
+        _ ->
+            case Default of
+                {error, Reason} -> error(Reason);
+                _ -> Default
+            end
+    end.
 
-set_params(Param, Default) ->
-  case Param of
-    []     -> Default;
-    [Value]-> Value
-  end.
+check_integer(Name) ->
+    fun(V) when is_integer(V) -> V;
+       (_) -> error(Name ++ " must be an integer") end.
+
+check_atom(Name) ->
+    fun(V) when is_atom(V) -> V;
+       (_) -> error(Name ++ " must be an atom") end.

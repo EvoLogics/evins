@@ -1,4 +1,5 @@
 %% Copyright (c) 2015, Oleksiy Kebkal <lesha@evologics.de>
+%% Copyright (c) 2018, Oleksandr Novychenko <novychenko@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -33,23 +34,32 @@
 -export([start/4, register_fsms/4]).
 
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-  fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+    fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
-register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
-  parse_conf(Mod_ID, ArgS, Share),
-  Roles = fsm_worker:role_info(Role_IDs, [at]),
-  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_inv_usbl}].
+register_fsms(Mod_ID, Role_IDs, _Share, ArgS) ->
+    Role_names = lists:usort([Role || {Role, _, _, _, _} <- Role_IDs]),
+    Roles = fsm_worker:role_info(Role_IDs, Role_names),
+    [#sm{roles = [hd(Roles)], module = fsm_conf},
+     #sm{roles = Roles, env = parse_conf(Mod_ID, ArgS), module = fsm_inv_usbl}].
 
-parse_conf(_Mod_ID, ArgS, Share) ->
-  ADelay_Set   = [P || {answer_delay, P} <- ArgS],
+parse_conf(_Mod_ID, ArgS) ->
+    #{pid => set_params(ArgS, pid, check_integer("PID"), {error, "PID must be defined"}),
+      answer_delay => set_params(ArgS, answer_delay, check_integer("Answer delay"), 500)}.
 
-  ADelay     = set_params(ADelay_Set, 1000),
-  
-  ShareID = #sm{share = Share},
-  share:put(ShareID, [{answer_delay, ADelay}]).
+set_params(ArgS, Name, Validate, Default) ->
+    case lists:keyfind(Name, 1, ArgS) of
+        {Name, Value} ->
+            case Validate of
+                F when is_function(F) -> F(Value);
+                _ -> Value
+            end;
+        _ ->
+            case Default of
+                {error, Reason} -> error(Reason);
+                _ -> Default
+            end
+    end.
 
-set_params(Param, Default) ->
-  case Param of
-    []     -> Default;
-    [Value]-> Value
-  end.
+check_integer(Name) ->
+    fun(V) when is_integer(V) -> V;
+       (_) -> error(Name ++ " must be an integer") end.
