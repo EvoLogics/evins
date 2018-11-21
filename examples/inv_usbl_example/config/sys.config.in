@@ -1,4 +1,10 @@
-[{evins, [
+[{sasl, [
+    {sasl_error_logger, false},
+    {errlog_type, all},
+    {error_logger_mf_dir, "log"}, % Log directory
+    {error_logger_mf_maxbytes, 1048576}, % 1 MB max file size
+    {error_logger_mf_maxfiles, 5} % 5 files max
+]},
+{evins, [
     {fabric_config, "path/etc/fsm.conf"}
-]}
-].
+]}].

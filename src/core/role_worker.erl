@@ -348,7 +348,9 @@ handle_cast({_, {ctrl, reconnect}}, #ifstate{type = client, proto = tcp, mm = MM
     {ok, NewState} = connect(State),
     {noreply, NewState};
 
-handle_cast({_, {ctrl, reconnect}}, State) ->
+handle_cast({_, {ctrl, reconnect}}, #ifstate{mm = MM, fsm_pids = FSMs} = State) ->
+    broadcast(FSMs, {chan_error, MM, disconnected}),
+    cast_connected(State),
     {noreply, State};
 
 handle_cast({_, {ctrl, Term}}, #ifstate{id = ID, behaviour = B, fsm_pids = FSMs, mm = MM, cfg = #{allow := Allow} = Cfg} = State) ->
