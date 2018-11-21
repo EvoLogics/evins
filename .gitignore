@@ -1,5 +1,6 @@
 *.beam
 *.o
+*.dep
 *.d
 /c_src/env.mk
 /.erlang.mk
