@@ -168,7 +168,7 @@ ssize_t erl_read(context_t *ctx, erl_chunk_t *chunk) {
 
         chunk->state = CDATA;
         chunk->done = 0;
-        // no break
+        // Fall through.
     case CDATA:
         if ((rs = io_read(ctx, chunk->data + chunk->done, chunk->len - chunk->done)) < 0)
             return rs;
