@@ -968,7 +968,28 @@ extract_nmea(<<"SMCS">>, Params) ->
     [Roll, Pitch, Heave] = [ safe_binary_to_float(X) || X <- [BRoll,BPitch,BHeave]],
     {nmea, {smcs, Roll, Pitch, Heave}}
   catch
-    error:_ -> {error, {parseError, tnthpr, Params}}
+    error:_ -> {error, {parseError, smcs, Params}}
+  end;
+
+% $PHTRO,x.xx,a,y.yy,b*hh<CR><LF>
+%   x.xx is the pitch in degrees
+%       a is ‘M’ for bow up
+%       a is ‘P’ for bow down
+%   y.yy is the roll in degrees
+%       b is ‘B’ for port down
+%       b is ‘T’ for port up
+%
+% $PHTRO,0.16,M,0.01,T*4E
+% $PHTRO,0.09,M,0.12,B*54
+extract_nmea(<<"HTRO">>, Params) ->
+  try
+    [BPitch, PitchSign, BRoll, RollSign] = binary:split(Params,<<",">>,[global]),
+    PitchFactor = case PitchSign of <<"P">> -> -1.0; _ -> 1.0 end,
+    RollFactor = case RollSign of <<"B">> -> -1.0; _ -> 1.0 end,
+    [Roll, Pitch] = [safe_binary_to_float(X) || X <- [BRoll, BPitch]],
+    {nmea, {htro, Pitch * PitchFactor, Roll * RollFactor}}
+  catch
+    error:_ -> {error, {parseError, htro, Params}}
   end;
 
 %% $--DBS,<Df>,f,<DM>,M,<DF>,F
@@ -1418,6 +1439,13 @@ build_smcs(Roll,Pitch,Heave) ->
            safe_fmt(["~.1.3f","~.1.3f","~.1.2f"],
                     [Roll,Pitch,Heave], ",")]).
 
+build_htro(Pitch, Roll) ->
+  PitchSign = case Pitch of P when P >= 0.0 -> "M"; _ -> "P" end,
+  RollSign = case Roll of R when R >= 0.0 -> "T"; _ -> "B" end,
+  (["PHTRO",
+           safe_fmt(["~.2f","~s","~.2f","~s"],
+                    [Pitch, PitchSign, Roll, RollSign], ",")]).
+
 build_dbs(Depth) ->
   Fmts = ["~.2.0f","~.2.0f","~.2.0f"],
   Fields = safe_fmt(Fmts, case Depth of
@@ -1515,6 +1543,8 @@ from_term_helper(Sentense) ->
       build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus);
     {smcs, Roll, Pitch, Heave} ->
       build_smcs(Roll, Pitch, Heave);
+    {htro,Pitch,Roll} ->
+       build_htro(Pitch,Roll);
     {sxn,10,Tok,Roll,Pitch,Heave,UTC,nothing} ->
       build_sxn(10,Tok,Roll,Pitch,Heave,UTC,nothing);
     {sxn,23,Roll,Pitch,Heading,Heave} ->
