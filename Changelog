@@ -18,6 +18,7 @@
  - rewritten t-lohi and csma-aloha implementation
  
 ### Added
+ - added support of STATUS BES in role_at
  - position transmission via fsm_polling_mux, EVOSSB reception/generation
  - added role_at_impl to mirror implementation side AT interface (supports only NET mode)
  - WIP: neigbourhoud update by overhearing acoustic signal at networking layer

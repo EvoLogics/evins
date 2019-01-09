@@ -283,6 +283,11 @@ extract_nmea(<<"SIMSVT">>, Params) ->
     error:_ -> {error, {parseError, simsvt, Params}}
   end;
 
+%% $PSXN,10,Tok,Roll,Pitch,Heave,UTC,*xx
+%% 10      x         Message type (Roll, Pitch and Heave)
+%% Roll    x.x       Roll in degrees. Positive with port side up.
+%% Pitch   x.x       Pitch in degrees. Positive is bow up. (NED)
+%% Heave   x.x       Heave in meters. Positive is down.
 %% $PSXN,23,Roll,Pitch,Heading,Heave
 %% 23      x         Message type (Roll, Pitch, Heading and Heave)
 %% Roll    x.x       Roll in degrees. Positive with port side up.
@@ -292,14 +297,23 @@ extract_nmea(<<"SIMSVT">>, Params) ->
 %% Example: $PSXN,23,0.02,-0.76,330.56,*0B
 extract_nmea(<<"SXN">>, Params) ->
   try
-    [Type | Rest] = lists:sublist(binary:split(Params,<<",">>,[global]),5),
+    [Type | Rest] = binary:split(Params,<<",">>,[global]),
     case Type of
+      <<"10">> ->
+        [BTok,BRoll,BPitch,BHeave,BUTC | _] = Rest,
+        R2D = 180.0 / math:pi(),
+        {ok,[Roll],[]} = io_lib:fread("~f", binary_to_list(BRoll)),
+        {ok,[Pitch],[]} = io_lib:fread("~f", binary_to_list(BPitch)),
+        {ok,[Heave],[]} = io_lib:fread("~f", binary_to_list(BHeave)),
+        {ok,[UTC],[]} = io_lib:fread("~f", binary_to_list(BUTC)),
+        Tok = safe_binary_to_integer(BTok),
+        {nmea, {sxn, 10, Tok, Roll * R2D, Pitch * R2D, Heave, UTC, nothing}};
       <<"23">> ->
         [Roll, Pitch, Heading, Heave] = [safe_binary_to_float(X) || X <- Rest],
         {nmea, {sxn, 23, Roll, Pitch, Heading, Heave}};
-      _ -> {error, {parseError, sxn_23, Params}}
+      _ -> {error, {unsupported, sxn, Params}}
     end
-  catch error:_ -> {error, {parseError, sxn_23, Params}}
+  catch error:_ -> {error, {parseError, sxn, Params}}
   end;
 
 %% $PSAT,HPR,TIME,HEADING,PITCH,ROLL,TYPE*CC<CR><LF>
@@ -371,10 +385,14 @@ extract_nmea(<<"IXSE">>, Params) ->
 %% $PASHR,200345.00,78.00,T,-3.00,+2.00,+0.00,1.000,1.000,1.000,1,1*32
 extract_nmea(<<"ASHR">>, Params) ->
   try
-    [BUTC,BHeading,BTrue,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD,BGPSq,BINSq] = binary:split(Params,<<",">>,[global]),
+    [BUTC,BHeading,BTrue,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD,BGPSq | LINSq] = binary:split(Params,<<",">>,[global]),
     UTC = extract_utc(BUTC),
     [Heading,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD] = [safe_binary_to_float(X) || X <- [BHeading,BRoll,BPitch,BRes,BRollSTD,BPitchSTD,BHeadingSTD]],
-    [GPSq,INSq] = [safe_binary_to_integer(X) || X <- [BGPSq,BINSq]],
+    GPSq = safe_binary_to_integer(BGPSq),
+    INSq = case LINSq of
+               [BINSq] -> safe_binary_to_integer(BINSq);
+               _ -> nothing
+           end,
     True = case BTrue of <<"T">> -> true; _ -> false end,
     {nmea, {ashr,UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq}}
   catch
@@ -1096,6 +1114,13 @@ build_simsvt(Total, Idx, Lst) ->
   SHead = io_lib:format(",~B,~B", [Total, Idx]),
   (["PSIMSVT,P",SHead,SPoints,STail]).
 
+%% Example: $PSXN,10,019,5.100e-2,-5.1e-2,1.234e+0,771598427
+build_sxn(10,Tok,Roll,Pitch,Heave,UTC,nothing) ->
+  D2R = math:pi() / 180.0,
+  SRest = safe_fmt(["~B","~.4e","~.4e","~.4e","~.4e"],
+                   [Tok,Roll*D2R,Pitch*D2R,Heave,UTC], ","),
+  (["PSXN,10",SRest,","]).
+
 %% Example: $PSXN,23,0.02,-0.76,330.56,*0B
 build_sxn(23,Roll,Pitch,Heading,Heave) ->
   SRest = safe_fmt(["~.2f","~.2f","~.2f","~.2f"],
@@ -1129,7 +1154,11 @@ build_ashr(UTC,Heading,True,Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq
   RollFmt = case Roll of N when N >= 0 -> "+~.2f"; _ -> "~.2f" end,
   PitchFmt = case Pitch of M when M >= 0 -> "+~.2f"; _ -> "~.2f" end,
   HeadingFmt = case Heading of K when K >= 0 -> "+~.2f"; _ -> "~.2f" end,
-  SRest = safe_fmt([RollFmt,PitchFmt,HeadingFmt,"~.3f","~.3f","~.3f","~B","~B"], [Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq], ","),
+  SRest =
+  case INSq of
+      nothing -> safe_fmt([RollFmt,PitchFmt,HeadingFmt,"~.3f","~.3f","~.3f","~B"], [Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq], ",");
+      _ -> safe_fmt([RollFmt,PitchFmt,HeadingFmt,"~.3f","~.3f","~.3f","~B","~B"], [Roll,Pitch,Res,RollSTD,PitchSTD,HeadingSTD,GPSq,INSq], ",")
+  end,
   (["PASHR",SUTC,SHeading,STrue,SRest]).
 
 %% $PRDID,PPP.PP,RRR.RR,xxx.xx
@@ -1486,6 +1515,8 @@ from_term_helper(Sentense) ->
       build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus);
     {smcs, Roll, Pitch, Heave} ->
       build_smcs(Roll, Pitch, Heave);
+    {sxn,10,Tok,Roll,Pitch,Heave,UTC,nothing} ->
+      build_sxn(10,Tok,Roll,Pitch,Heave,UTC,nothing);
     {sxn,23,Roll,Pitch,Heading,Heave} ->
       build_sxn(23,Roll,Pitch,Heading,Heave);
     {sat,hpr,UTC,Heading,Pitch,Roll,Type} ->

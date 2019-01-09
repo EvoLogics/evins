@@ -52,7 +52,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   %% {rocking, Tau} - mock
 
   %% {lever_arm, [Forward, Right, Down]}
-  [_,_,Z_lever_arm] = Lever_arm = case [Arm || {lever_arm, Arm} <- ArgS] of [] -> [0,0,0]; [Arm] -> Arm end,
+  [_,_,_Z_lever_arm] = Lever_arm = case [Arm || {lever_arm, Arm} <- ArgS] of [] -> [0,0,0]; [Arm] -> Arm end,
 
   Pressure = case [P || {pressure,P} <- ArgS] of [] -> ?PAIR; [P] -> P end,
   Depth0 = (Pressure - ?PAIR) / ?DBAR_PRO_METER,
@@ -103,7 +103,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   %% NOTE: if several movements provided, will be overwirtten with last one
   Init_movement = fun(Movement) ->
                       [{geodetic, Lat, Lon, Alt}] = [R || {reference,R} <- ArgS],
-                      Sea_level = Alt - Z_lever_arm + Depth,
+                      Sea_level = Alt + Depth,
                       share:put(ShareID, [{sea_level, Sea_level}, {geodetic, [Lat, Lon, Alt]}, {movement, Movement}])
                   end,
   lists:map(

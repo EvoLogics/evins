@@ -176,6 +176,8 @@ from_term({async, Async}, Cfg) ->
         "PHYOFF";
       {phyon} ->
         "PHYON";
+      {status,MS,MSP} ->
+        io_lib:format("STATUS,~s,~s",[MS,MSP]);
       {sendstart,Addr,Type,Dur,Delay} ->
         io_lib:format("SENDSTART,~b,~s,~b,~b",[Addr,Type,Dur,Delay]);
       {sendend,Addr,Type,Usec,Dur} ->
@@ -222,7 +224,7 @@ from_term({async, Async}, Cfg) ->
       {error, Reason} ->
         ["ERROR ", Reason];
       _Other ->
-        io:format("Error: not handled data~p~n", [_Other]),
+        io:format("Error: not handled data: ~p~n", [_Other]),
         ""
     end,
   [list_to_binary([Data,"\r\n"]), Cfg].

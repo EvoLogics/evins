@@ -263,7 +263,7 @@ send_at_command(SM, AT) ->
       cast(SM, at, {send, AT}), ?ANSWER_TIMEOUT, answer_timeout), eps).
 
 maybe_send_at_command(SM, AT) ->
-  maybe_send_at_command(SM, AT, fun(_,_) -> SM end).
+  maybe_send_at_command(SM, AT, fun(LSM,_) -> LSM end).
 
 maybe_send_at_command(SM, AT, Fun) ->
   case fsm:check_timeout(SM, answer_timeout) of
