@@ -1,0 +1,80 @@
+%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
+%%
+%% Redistribution and use in source and binary forms, with or without
+%% modification, are permitted provided that the following conditions
+%% are met:
+%% 1. Redistributions of source code must retain the above copyright
+%%    notice, this list of conditions and the following disclaimer.
+%% 2. Redistributions in binary form must reproduce the above copyright
+%%    notice, this list of conditions and the following disclaimer in the
+%%    documentation and/or other materials provided with the distribution.
+%% 3. The name of the author may not be used to endorse or promote products
+%%    derived from this software without specific prior written permission.
+%%
+%% Alternatively, this software may be distributed under the terms of the
+%% GNU General Public License ("GPL") version 2 as published by the Free
+%% Software Foundation.
+%%
+%% THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+%% IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+%% OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+%% IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+%% INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+%% NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+%% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-module(mod_nl_burst).
+-behaviour(fsm_worker).
+
+-include("fsm.hrl").
+-include("nl.hrl").
+
+-export([start/4, register_fsms/4]).
+
+start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
+    fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+
+register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
+  parse_conf(Mod_ID, ArgS, Share),
+  Roles = fsm_worker:role_info(Role_IDs, [at, nl_impl]),
+  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_nl_burst}].
+
+
+parse_conf(Mod_ID, ArgS, Share) ->
+  ShareID = #sm{share = Share},
+
+  [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
+  Routing       = [Addrs          || {routing, Addrs} <- ArgS],
+  Max_queue_set = [Addrs          || {max_queue, Addrs} <- ArgS],
+  Max_burst_len_set  = [Max  || {max_burst_len, Max} <- ArgS],
+
+  Max_queue  = set_params(Max_queue_set, 3),
+  Max_burst_len  = set_params(Max_burst_len_set, Max_queue * 1000),
+  %!!! TODO: TMP, integration with PF
+  Routing_table = set_routing(Routing, NL_Protocol, ?ADDRESS_MAX),
+  share:put(ShareID, [{nl_protocol, NL_Protocol},
+                      {routing_table, Routing_table},
+                      {max_queue, Max_queue},
+                      {max_burst_len, Max_burst_len}]),
+
+  ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
+  ?TRACE(Mod_ID, "Routing Table ~p ~n", [Routing_table]).
+
+  set_routing(Routing, Protocol, Default) ->
+  case Protocol of
+    _ when ( ((Protocol =:= staticr) or (Protocol =:= staticrack)) and (Routing =:= [])) ->
+      io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a default value will be set 255 broadcast ~n",[]),
+      Default;
+    _ when (Routing =/= []) ->
+      [TupleRouting] = Routing,
+      [{?ADDRESS_MAX, ?ADDRESS_MAX, 0} | tuple_to_list(TupleRouting)];
+    _ -> Default
+  end.
+
+set_params(Param, Default) ->
+  case Param of
+    []     -> Default;
+    [Value]-> Value
+  end.
