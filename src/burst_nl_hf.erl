@@ -39,7 +39,7 @@
 -export([geta/1, getv/2, create_default/0, replace/3]).
 -export([check_routing_existance/1]).
 -export([burst_len/1, increase_local_pc/2]).
--export([get_packets/1, pop_delivered/2, failed_pc/3]).
+-export([get_packets/1, pop_delivered/2, failed_pc/2]).
 -export([bind_pc/3]).
 
 %----------------------------- Get from tuple ----------------------------------
@@ -127,10 +127,11 @@ extract_nl_burst_header(SM, Payload) ->
   C_Bits_Addr = nl_hf:count_flag_bits(?ADDRESS_MAX),
   C_Bits_Len = nl_hf:count_flag_bits(Max),
 
-  <<Flag:C_Bits_Flag, _PkgID:C_Bits_PkgID, LPkgID:C_Bits_PkgID,
+  <<Flag_Num:C_Bits_Flag, _PkgID:C_Bits_PkgID, LPkgID:C_Bits_PkgID,
     Src:C_Bits_Addr, Dst:C_Bits_Addr,
     Len:C_Bits_Len, Whole_len:C_Bits_Len, _Rest/bitstring>> = Payload,
 
+    Flag = nl_hf:num2flag(Flag_Num, nl),
     Bits_header = C_Bits_Flag + 2 * C_Bits_PkgID + 2 * C_Bits_Addr +
                   2 * C_Bits_Len,
     Data = nl_hf:cut_add_bits(Bits_header, Payload),
@@ -170,7 +171,7 @@ bind_pc(SM, PC, Packet) ->
   [LocalPC, Dst, Payload] = getv([id_local, dst, payload], Packet),
   Q_data = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
   NQ =
-  lists:foldr(
+  lists:foldl(
   fun(X, Q) ->
     [XPC, XLocalPC, XDst] = getv([id, id_local, dst], X),
     NT = replace([id, payload], [PC, Payload], X),
@@ -203,10 +204,10 @@ pop_delivered(SM, PC) ->
     share:put(__, burst_data_buffer, NQ)
   ](SM).
 
-failed_pc(SM, PC, Dst) ->
+failed_pc(SM, PC) ->
   QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
   NQ =
-  lists:foldr(
+  lists:foldl(
   fun(X, Q) ->
     [XPC, XLocalPC, XSrc, XDst, XLen, XPayload] =
       getv([id, id_local, src, dst, len, payload], X),
@@ -215,10 +216,8 @@ failed_pc(SM, PC, Dst) ->
             [XLocalPC, XSrc, XDst, XLen, XPayload],
     create_default()),
 
-    if XPC == PC, XDst == Dst ->
-      queue:in(Tuple, Q);
-    true ->
-      queue:in(X, Q)
+    if XPC == PC -> queue:in(Tuple, Q);
+    true -> queue:in(X, Q)
     end
   end, queue:new(), QL),
   ?TRACE(?ID, "Update failed ~p~n", [NQ]),
@@ -230,7 +229,7 @@ get_packets(SM) ->
   Routing_table = share:get(SM, routing_table),
   Q_data = share:get(SM, nothing, burst_data_buffer, queue:new()),
   A = get_first_addr(SM, Routing_table, Q_data),
-  Packets = get_packets(SM, Q_data, A, []),
+  Packets = lists:reverse(get_packets(SM, Q_data, A, [])),
   if Packets == [] -> [0, nothing, []];
     true ->
       Whole_len = burst_len(Packets),

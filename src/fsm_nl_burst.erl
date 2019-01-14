@@ -57,7 +57,8 @@
                   {empty, idle},
                   {no_routing, idle},
                   {busy_backoff, busy},
-                  {busy_online, busy}
+                  {busy_online, busy},
+                  {recv_data, recv}
                  ]},
 
                 {transmit,
@@ -68,7 +69,8 @@
 
                 {busy,
                  [{backoff_timeout, sensing},
-                  {check_state, sensing}
+                  {check_state, sensing},
+                  {recv_data, recv}
                  ]},
 
                 {alarm,
@@ -89,6 +91,8 @@ handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT ~p ~p Term:~p~n", [SM#sm.state, SM#sm.event, Term]),
   Local_address = share:get(SM, local_address),
   Pid = share:get(SM, pid),
+  State = SM#sm.state,
+
   case Term of
     {timeout, answer_timeout} ->
       fsm:cast(SM, nl_impl, {send, {nl, error, <<"ANSWER TIMEOUT">>}});
@@ -97,8 +101,12 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, check_state),
        fsm:run_event(MM, __, {})
       ](SM);
+    {timeout, pc_timeout} when State == busy ->
+      SM;
     {timeout, pc_timeout} ->
       fsm:maybe_send_at_command(SM, {at, "?PC", ""});
+    {timeout, Event} ->
+      fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       SM;
     {allowed} ->
@@ -107,6 +115,8 @@ handle_event(MM, SM, Term) ->
       share:put(SM, pid, nothing);
     {disconnected, _} ->
       SM;
+    {nl, get, help} ->
+      fsm:cast(SM, nl_impl, {send, {nl, help, ?HELP}});
     {nl, get, routing} ->
       Routing = {nl, routing, nl_hf:routing_to_list(SM)},
       fsm:cast(SM, nl_impl, {send, Routing});
@@ -115,6 +125,8 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, protocol, Protocol}});
     {nl, get, address} ->
       fsm:cast(SM, nl_impl, {send, {nl, address, Local_address}});
+    {nl, send, error} ->
+      fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, send, _, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, send, tolerant, _, _} ->
@@ -158,20 +170,21 @@ handle_event(MM, SM, Term) ->
        run_hook_handler(MM, __, Term, eps)
       ](SM);
     {async, {pid, Pid}, {recv, _, _, Local_address , _,  _,  _,  _,  _, P}} ->
-      [process_data(__, P),
-       fsm:set_event(__, recv_data),
-       fsm:run_event(MM, __, {})
+      [fsm:set_event(__, recv_data),
+       fsm:run_event(MM, __, P)
       ](SM);
     {async, {delivered, PC, _Src}} ->
       [burst_nl_hf:pop_delivered(__, PC),
        fsm:set_event(__, check_pcs(__)),
        fsm:run_event(MM, __, {})
       ](SM);
-    {async, {failed, PC, Src}} ->
-      [burst_nl_hf:failed_pc(__, PC, Src),
+    {async, {failed, PC, _Src}} ->
+      [burst_nl_hf:failed_pc(__, PC),
        fsm:set_event(__, check_pcs(__)),
        fsm:run_event(MM, __, {})
       ](SM);
+    {nl, error, {parseError, _}} ->
+      fsm:cast(SM, nl_impl, {send, {nl, error}});
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -198,6 +211,8 @@ handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_idle ~120p~n", [Term]),
   SM#sm{event = eps}.
 
+handle_recv(_MM, #sm{event = recv_data} = SM, Term) ->
+  process_data(SM, Term);
 handle_recv(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_recv ~120p~n", [Term]),
   SM#sm{event = eps}.
@@ -295,6 +310,8 @@ handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
 
 % ------------------------------- Helper functions -----------------------------
+process_nl_send(SM, _, {nl, send, tolerant, ?ADDRESS_MAX, _Payload}) ->
+  fsm:cast(SM, nl_impl, {send, {nl, send, error}});
 process_nl_send(SM, _, T) ->
   [push_tolerant_queue(__, T),
    fsm:cast(__, nl_impl, {send, {nl, send, 0}})
@@ -361,6 +378,7 @@ process_data(SM, Data) ->
   Local_address = share:get(SM, local_address),
   try
     Tuple = burst_nl_hf:extract_nl_burst_header(SM, Data),
+    ?TRACE(?ID, "Received ~p~n", [Tuple]),
     [Src, Dst, Payload] = burst_nl_hf:getv([src, dst, payload], Tuple),
     if Dst == Local_address ->
       %TODO: send ack
@@ -368,10 +386,14 @@ process_data(SM, Data) ->
        fsm:set_event(__, eps)
       ](SM);
     true ->
-      fsm:set_event(SM, eps)
-    end,
-    ?TRACE(?ID, "Received ~p~n", [Tuple]),
-     fsm:set_event(SM, eps)
+      Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
+      ?TRACE(?ID, "Add to burst queue ~p~n", [Tuple]),
+      %TODO: Check whole len: pick or recv_data
+      [burst_nl_hf:increase_local_pc(__, local_pc),
+       share:put(__, burst_data_buffer, queue:in(Tuple, Q)),
+       fsm:set_event(__, pick)
+      ](SM)
+    end
   catch error: Reason ->
     % Got a message not for NL, no NL header
     ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
