@@ -47,7 +47,8 @@
 
                 {recv,
                  [{recv_data, recv},
-                  {pick, sensing}
+                  {pick, sensing},
+                  {busy_online, recv}
                  ]},
 
                 {sensing,
@@ -101,6 +102,10 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, check_state),
        fsm:run_event(MM, __, {})
       ](SM);
+    {timeout, wait_data_tmo} when State == recv ->
+      [fsm:set_event(__, pick),
+       fsm:run_event(MM, __, {})
+      ](SM);
     {timeout, pc_timeout} when State == busy ->
       SM;
     {timeout, pc_timeout} ->
@@ -128,6 +133,8 @@ handle_event(MM, SM, Term) ->
     {nl, send, error} ->
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, send, _, _} ->
+      fsm:cast(SM, nl_impl, {send, {nl, send, error}});
+    {nl, send, tolerant, Local_address, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, send, tolerant, _, _} ->
       Event_handler =
@@ -159,28 +166,32 @@ handle_event(MM, SM, Term) ->
        fsm:cast(__, nl_impl, {send, {nl, send, error}}),
        run_hook_handler(MM, __, Term, error)
       ](SM);
-    % TODO: check if busy state needed
-    %{sync,"*SEND", {busy, _}} ->
-    %  [fsm:maybe_send_at_command(__, {at, "?S", ""}),
-    %   run_hook_handler(MM, __, Term, eps)
-    %  ](SM);
+    %TODO: check busy state
+    {sync,"*SEND", {busy, _}} ->
+      [fsm:clear_timeout(__, answer_timeout),
+       fsm:set_timeout(__, 1, check_state),
+       fsm:set_event(__, busy_online),
+       fsm:run_event(MM, __, {})
+      ](SM);
     {sync, "*SEND", "OK"} ->
       [fsm:maybe_send_at_command(__, {at, "?PC", ""}),
-       fsm:set_timeout(__, {s, 1}, pc_timeout),
+       set_timeout(__, 1, pc_timeout),
        run_hook_handler(MM, __, Term, eps)
       ](SM);
+    {async,{bitrate, _, Bitrate}} ->
+      share:put(SM, bitrate, Bitrate);
     {async, {pid, Pid}, {recv, _, _, Local_address , _,  _,  _,  _,  _, P}} ->
       [fsm:set_event(__, recv_data),
        fsm:run_event(MM, __, P)
       ](SM);
     {async, {delivered, PC, _Src}} ->
       [burst_nl_hf:pop_delivered(__, PC),
-       fsm:set_event(__, check_pcs(__)),
+       check_pcs(__),
        fsm:run_event(MM, __, {})
       ](SM);
     {async, {failed, PC, _Src}} ->
       [burst_nl_hf:failed_pc(__, PC),
-       fsm:set_event(__, check_pcs(__)),
+       check_pcs(__),
        fsm:run_event(MM, __, {})
       ](SM);
     {nl, error, {parseError, _}} ->
@@ -191,8 +202,13 @@ handle_event(MM, SM, Term) ->
   end.
 
 check_pcs(SM) ->
+  State = SM#sm.state,
   PCS = share:get(SM, nothing, wait_async_pcs, []),
-  if PCS == [] -> pick; true -> eps end.
+  if PCS == [], State =/= busy ->
+    fsm:set_event(SM, pick);
+  true ->
+    fsm:set_event(SM, eps)
+  end.
 
 run_hook_handler(MM, SM, Term, Event) ->
   [fsm:clear_timeout(__, answer_timeout),
@@ -227,7 +243,7 @@ handle_sensing(_MM, #sm{event = pick} = SM, Term) ->
   Queue_handler(SM, queue:is_empty(Q));
 handle_sensing(_MM, #sm{event = check_state} = SM, _) ->
   [fsm:maybe_send_at_command(__, {at, "?S", ""}),
-   fsm:set_timeout(__, {s, 1}, check_state),
+   set_timeout(__, 1, check_state),
    fsm:set_event(__, eps)
   ](SM);
 handle_sensing(_MM, #sm{event = try_transmit} = SM, _) ->
@@ -256,7 +272,7 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
   Transmit_handler =
   fun(LSM, T, Rest) ->
       Pid = share:get(LSM, pid),
-      [PC, Dst] = burst_nl_hf:getv([id, dst], T),
+      [PC, Dst] = burst_nl_hf:getv([id_at, dst], T),
       Data = burst_nl_hf:create_nl_burst_header(LSM, T),
       Route_Addr = nl_hf:get_routing_address(LSM, Dst),
 
@@ -285,13 +301,12 @@ handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
   % 1. get packets from the queue for one dst where routing exist for
   % 2. get current package counter and bind
   [Whole_len, Packet, Tail] = burst_nl_hf:get_packets(SM),
-  % TODO: check if Packet is nothing
   NT = {send_params, {Whole_len, Packet, Tail}},
   ?TRACE(?ID, "Try to send packet Packet ~120p Tail ~p ~n", [Packet, Tail]),
   [share:put(__, wait_async_pcs, []),
    fsm:maybe_send_at_command(__, {at, "?PC", ""}),
    nl_hf:add_event_params(__, NT),
-   fsm:set_timeout(__, {s, 1}, pc_timeout),
+   set_timeout(__, 1, pc_timeout),
    fsm:set_event(__, eps)
   ](SM);
 handle_transmit(_MM, SM, Term) ->
@@ -323,8 +338,8 @@ push_tolerant_queue(SM, {nl, send, tolerant, Dst, Payload}) ->
   Src = share:get(SM, local_address),
 
   Tuple =
-  burst_nl_hf:replace([id_local, src, dst, len, payload],
-                      [LocalPC, Src, Dst, Len, Payload],
+  burst_nl_hf:replace([id_local, id_remote, src, dst, len, payload],
+                      [LocalPC, LocalPC, Src, Dst, Len, Payload],
               burst_nl_hf:create_default()),
 
   Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
@@ -363,7 +378,7 @@ process_pc(SM, LPC) ->
   case Send_params of
     {send_params, {Whole_len, Tuple, Tail}} when Tuple =/= nothing ->
       ?INFO(?ID, "process_pc for ~p~n", [Tuple]),
-      PC_Tuple = burst_nl_hf:replace(id, PC, Tuple),
+      PC_Tuple = burst_nl_hf:replace(id_at, PC, Tuple),
       NT = {send_params, {Whole_len, PC_Tuple, Tail}},
       [init_pc(__, PC),
        burst_nl_hf:bind_pc(__, PC, Tuple),
@@ -379,23 +394,77 @@ process_data(SM, Data) ->
   try
     Tuple = burst_nl_hf:extract_nl_burst_header(SM, Data),
     ?TRACE(?ID, "Received ~p~n", [Tuple]),
-    [Src, Dst, Payload] = burst_nl_hf:getv([src, dst, payload], Tuple),
-    if Dst == Local_address ->
-      %TODO: send ack
-      [fsm:cast(__, nl_impl, {send, {nl, recv, Src, Dst, Payload}}),
-       fsm:set_event(__, eps)
-      ](SM);
-    true ->
-      Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
-      ?TRACE(?ID, "Add to burst queue ~p~n", [Tuple]),
-      %TODO: Check whole len: pick or recv_data
-      [burst_nl_hf:increase_local_pc(__, local_pc),
-       share:put(__, burst_data_buffer, queue:in(Tuple, Q)),
-       fsm:set_event(__, pick)
-      ](SM)
-    end
+    [Src, Dst, Len, Whole_len, Payload] =
+      burst_nl_hf:getv([src, dst, len, whole_len, payload], Tuple),
+    Params_name = atom_name(wait_len, Dst),
+    Params = nl_hf:find_event_params(SM, Params_name),
+
+    Packet_handler =
+    fun (LSM, EP, Rest) when Rest =< 0 ->
+          [nl_hf:clear_spec_event_params(__, EP),
+           fsm:clear_timeout(__, wait_data_tmo),
+           fsm:set_event(__, pick)
+          ](LSM);
+        (LSM, _EP, Rest) ->
+          NT = {Params_name, {Len, Rest}},
+          ?TRACE(?ID, "Packet_handler ~p ~p~n", [Len, Rest]),
+          Time = calc_burst_time(LSM, Rest),
+          [nl_hf:add_event_params(__, NT),
+           fsm:clear_timeout(__, wait_data_tmo),
+           fsm:set_timeout(__, {s, Time}, wait_data_tmo),
+           fsm:set_event(__, eps)
+          ](LSM)
+    end,
+
+    %Check whole len: pick or wait for more data
+    Wait_handler =
+    fun (LSM, []) when Whole_len - Len =< 0 ->
+          fsm:set_event(LSM, pick);
+        (LSM, []) ->
+          NT = {Params_name, {Len, Whole_len - Len}},
+          ?TRACE(?ID, "Wait_handler ~p ~p~n", [Len, Whole_len]),
+          Time = calc_burst_time(LSM, Whole_len),
+          [nl_hf:add_event_params(__, NT),
+           fsm:set_timeout(__, {s, Time}, wait_data_tmo),
+           fsm:set_event(__, eps)
+          ](LSM);
+        (LSM, EP = {_P, {_L, WL}})->
+          Waiting_rest = WL - Len,
+          Packet_handler(LSM, EP, Waiting_rest)
+    end,
+
+    Destination_handler =
+    fun (LSM) when Dst == Local_address ->
+          %TODO: send ack
+          fsm:cast(LSM, nl_impl, {send, {nl, recv, Src, Dst, Payload}});
+        (LSM) ->
+          burst_nl_hf:check_dublicated(LSM, Tuple)
+    end,
+
+    [Destination_handler(__),
+     burst_nl_hf:increase_local_pc(__, local_pc),
+     Wait_handler(__, Params)
+    ](SM)
   catch error: Reason ->
     % Got a message not for NL, no NL header
     ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
     fsm:set_event(SM, eps)
+  end.
+
+calc_burst_time(SM, Len) ->
+    Bitrate = share:get(SM, bitrate),
+    Byte_per_s = Bitrate / 8,
+    T = Len / Byte_per_s,
+    ?INFO(?ID, "Wait for length ~p bytes, time ~p~n", [Len, T]),
+    T.
+
+atom_name(Name, Dst) ->
+  DstA = binary_to_atom(integer_to_binary(Dst), utf8),
+  list_to_atom(atom_to_list(Name) ++ atom_to_list(DstA)).
+
+set_timeout(SM, S, Timeout) ->
+  Check = fsm:check_timeout(SM, Timeout),
+  if not Check ->
+      fsm:set_timeout(SM, {s, S}, Timeout);
+    true -> SM
   end.
