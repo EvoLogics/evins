@@ -44,7 +44,7 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
 
 parse_conf(Mod_ID, ArgS, Share) ->
   ShareID = #sm{share = Share},
-
+  Start_time = erlang:monotonic_time(milli_seconds),
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
   Routing       = [Addrs          || {routing, Addrs} <- ArgS],
   Max_queue_set = [Addrs          || {max_queue, Addrs} <- ArgS],
@@ -54,7 +54,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Max_burst_len  = set_params(Max_burst_len_set, Max_queue * 1000),
   %!!! TODO: TMP, integration with PF
   Routing_table = set_routing(Routing, NL_Protocol, ?ADDRESS_MAX),
-  share:put(ShareID, [{nl_protocol, NL_Protocol},
+  share:put(ShareID, [{nl_start_time, Start_time},
+                      {nl_protocol, NL_Protocol},
                       {routing_table, Routing_table},
                       {max_queue, Max_queue},
                       {max_burst_len, Max_burst_len}]),
