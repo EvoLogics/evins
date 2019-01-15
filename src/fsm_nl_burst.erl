@@ -42,13 +42,15 @@
                 {idle,
                  [{try_transmit, sensing},
                   {routing_updated, sensing},
-                  {recv_data, recv}
+                  {recv_data, recv},
+                  {reset, idle}
                  ]},
 
                 {recv,
                  [{recv_data, recv},
                   {pick, sensing},
-                  {busy_online, recv}
+                  {busy_online, recv},
+                  {reset, idle}
                  ]},
 
                 {sensing,
@@ -59,19 +61,22 @@
                   {no_routing, idle},
                   {busy_backoff, busy},
                   {busy_online, busy},
-                  {recv_data, recv}
+                  {recv_data, recv},
+                  {reset, idle}
                  ]},
 
                 {transmit,
                  [{pick, sensing},
                   {next_packet, transmit},
-                  {recv_data, recv}
+                  {recv_data, recv},
+                  {reset, idle}
                  ]},
 
                 {busy,
                  [{backoff_timeout, sensing},
                   {check_state, sensing},
-                  {recv_data, recv}
+                  {recv_data, recv},
+                  {reset, idle}
                  ]},
 
                 {alarm,
@@ -93,7 +98,8 @@ handle_event(MM, SM, Term) ->
   Local_address = share:get(SM, local_address),
   Pid = share:get(SM, pid),
   State = SM#sm.state,
-
+  Protocol_Name = share:get(SM, nl_protocol),
+  
   case Term of
     {timeout, answer_timeout} ->
       fsm:cast(SM, nl_impl, {send, {nl, error, <<"ANSWER TIMEOUT">>}});
@@ -120,16 +126,50 @@ handle_event(MM, SM, Term) ->
       share:put(SM, pid, nothing);
     {disconnected, _} ->
       SM;
+    {nl, set, debug, ON} ->
+      share:put(SM, debug, ON),
+      fsm:cast(SM, nl_impl, {send, {nl, debug, ok}});
+    {nl, set, address, Address} ->
+      nl_hf:process_set_command(SM, {address, Address});
+    {nl, set, neighbours, Neighbours} ->
+      nl_hf:process_set_command(SM, {neighbours, Neighbours});
+    {nl, set, routing, Routing} ->
+      nl_hf:process_set_command(SM, {routing, Routing});
+    {nl, set, protocol, Protocol} ->
+      nl_hf:process_set_command(SM, {protocol, Protocol});
+    {nl, set, Command} ->
+      nl_hf:process_set_command(SM, Command);
+    {nl, get, buffer} ->
+      Buffer = get_buffer(SM),
+      fsm:cast(SM, nl_impl, {send, {nl, buffer, Buffer}});
+    {nl, flush, buffer} ->
+      [fsm:maybe_send_at_command(__, {at, "Z3", ""}),
+       clear_buffer(__),
+       fsm:clear_timeouts(__),
+       fsm:cast(__, nl_impl, {send, {nl, buffer, ok}})
+      ] (SM);
+    {nl, get, protocol} ->
+      fsm:cast(SM, nl_impl, {send, {nl, protocol, Protocol_Name}});
     {nl, get, help} ->
       fsm:cast(SM, nl_impl, {send, {nl, help, ?HELP}});
-    {nl, get, routing} ->
-      Routing = {nl, routing, nl_hf:routing_to_list(SM)},
-      fsm:cast(SM, nl_impl, {send, Routing});
-    {nl, get, protocol} ->
-      Protocol = share:get(SM, nl_protocol),
-      fsm:cast(SM, nl_impl, {send, {nl, protocol, Protocol}});
-    {nl, get, address} ->
-      fsm:cast(SM, nl_impl, {send, {nl, address, Local_address}});
+    {nl, get, version} ->
+      %% FIXME: define rules to generate version
+      fsm:cast(SM, nl_impl, {send, {nl, version, 0, 1, "emb"}});
+    {nl, get, time, monotonic} ->
+      Current_time = erlang:monotonic_time(milli_seconds) - share:get(SM, nl_start_time),
+      fsm:cast(SM, nl_impl, {send, {nl, time, monotonic, Current_time}});
+    {nl, get, statistics, Some_statistics} ->
+      nl_hf:process_get_command(SM, {statistics, Some_statistics});
+    {nl, get, protocolinfo, Some_protocol} ->
+      nl_hf:process_get_command(SM, {protocolinfo, Some_protocol});
+    {nl, get, Command} ->
+      nl_hf:process_get_command(SM, Command);
+    {nl, delete, neighbour, Address} ->
+      nl_hf:process_get_command(SM, {delete, neighbour, Address});
+    {nl, clear, statistics, data} ->
+      share:put(SM, statistics_queue, queue:new()),
+      share:put(SM, statistics_neighbours, queue:new()),
+      fsm:cast(SM, nl_impl, {send, {nl, statistics, data, empty}});
     {nl, send, error} ->
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, send, _, _} ->
@@ -149,6 +189,16 @@ handle_event(MM, SM, Term) ->
       ](SM);
     {nl, send, _, _, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
+    {nl, error, _} ->
+      fsm:cast(SM, nl_impl, {send, {nl, error}});
+    {nl, reset, state} ->
+      [nl_hf:clear_spec_timeout(__, pc_timeout),
+       nl_hf:clear_spec_timeout(__, check_state),
+       nl_hf:clear_spec_timeout(__, wait_data_tmo),
+       fsm:cast(__, nl_impl, {send, {nl, state, ok}}),
+       fsm:set_event(__, reset),
+       fsm:run_event(MM, __, {})
+      ](SM);
     {sync,"?S", Status} ->
       [fsm:clear_timeout(__, check_state),
        fsm:clear_timeout(__, answer_timeout),
@@ -178,11 +228,19 @@ handle_event(MM, SM, Term) ->
        set_timeout(__, 1, pc_timeout),
        run_hook_handler(MM, __, Term, eps)
       ](SM);
-    {async,{bitrate, _, Bitrate}} ->
+    {async, {bitrate, _, Bitrate}} ->
       share:put(SM, bitrate, Bitrate);
-    {async, {pid, Pid}, {recv, _, _, Local_address , _,  _,  _,  _,  _, P}} ->
-      [fsm:set_event(__, recv_data),
+    {async, {pid, Pid}, Recv_Tuple =
+                          {recv, _, _, Local_address , _,  _,  _,  _,  _, P}} ->
+      ?INFO(?ID, "Received: ~p~n", [Recv_Tuple]),
+      [process_received(__, Recv_Tuple),
+       fsm:set_event(__, recv_data),
        fsm:run_event(MM, __, P)
+      ](SM);
+    {async, {pid, _Pid}, Recv_Tuple} ->
+      ?INFO(?ID, "Received: ~p~n", [Recv_Tuple]),
+      [process_received(__, Recv_Tuple),
+       fsm:run_event(MM, __, {})
       ](SM);
     {async, {delivered, PC, _Src}} ->
       [burst_nl_hf:pop_delivered(__, PC),
@@ -194,12 +252,12 @@ handle_event(MM, SM, Term) ->
        check_pcs(__),
        fsm:run_event(MM, __, {})
       ](SM);
-    {nl, error, {parseError, _}} ->
-      fsm:cast(SM, nl_impl, {send, {nl, error}});
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
   end.
+
+%nl_hf:add_neighbours(__, NL_Src, {Rssi, Integrity}
 
 check_pcs(SM) ->
   State = SM#sm.state,
@@ -217,21 +275,32 @@ run_hook_handler(MM, SM, Term, Event) ->
   ](SM).
 
 init_nl_burst(SM) ->
-  [share:put(__, burst_data_buffer, queue:new()),
-   share:put(__, local_pc, 1),
-   share:put(__, wait_async_pcs, [])
-  ](SM).
+  share:put(SM, [{burst_data_buffer, queue:new()},
+                {local_pc, 1},
+                {current_neighbours, []},
+                {neighbours_channel, []},
+                {wait_async_pcs, []},
+                {last_states, queue:new()},
+                {statistics_neighbours, queue:new()},
+                {statistics_queue, queue:new()}
+  ]).
 
 %------------------------------Handle functions---------------------------------
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_idle ~120p~n", [Term]),
-  SM#sm{event = eps}.
+  [nl_hf:update_states(__),
+   fsm:set_event(__, eps)
+  ](SM).
 
 handle_recv(_MM, #sm{event = recv_data} = SM, Term) ->
-  process_data(SM, Term);
+  [nl_hf:update_states(__),
+   process_data(__, Term)
+  ](SM);
 handle_recv(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_recv ~120p~n", [Term]),
-  SM#sm{event = eps}.
+  [nl_hf:update_states(__),
+   fsm:set_event(__, eps)
+  ](SM).
 
 handle_sensing(_MM, #sm{event = pick} = SM, Term) ->
   ?TRACE(?ID, "handle_sensing ~120p~n", [Term]),
@@ -240,9 +309,12 @@ handle_sensing(_MM, #sm{event = pick} = SM, Term) ->
   fun (LSM, true)  -> LSM#sm{event = empty};
       (LSM, false) -> LSM#sm{event = try_transmit}
   end,
-  Queue_handler(SM, queue:is_empty(Q));
+  [nl_hf:update_states(__),
+   Queue_handler(SM, queue:is_empty(Q))
+  ](SM);
 handle_sensing(_MM, #sm{event = check_state} = SM, _) ->
-  [fsm:maybe_send_at_command(__, {at, "?S", ""}),
+  [nl_hf:update_states(__),
+   fsm:maybe_send_at_command(__, {at, "?S", ""}),
    set_timeout(__, 1, check_state),
    fsm:set_event(__, eps)
   ](SM);
@@ -255,10 +327,15 @@ handle_sensing(_MM, #sm{event = try_transmit} = SM, _) ->
   fun (LSM, true) -> fsm:set_event(LSM, check_state);
       (LSM, false) -> fsm:set_event(LSM, no_routing)
   end,
-  Routing_handler(SM, burst_nl_hf:check_routing_existance(SM));
+
+  [nl_hf:update_states(__),
+   Routing_handler(__, burst_nl_hf:check_routing_existance(SM))
+  ](SM);
 handle_sensing(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_sensing ~120p~n", [Term]),
-  SM#sm{event = eps}.
+  [nl_hf:update_states(__),
+   fsm:set_event(__, eps)
+  ](SM).
 
 handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
   {send_params, {Whole_len, Tuple, Tail}} =
@@ -296,14 +373,17 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
   end,
 
   ?INFO(?ID, "try transmit ~p Rest ~p~n", [Tuple, Tail]),
-  Params_handler(SM, Tuple, Tail);
+  [nl_hf:update_states(__),
+   Params_handler(__, Tuple, Tail)
+  ](SM);
 handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
   % 1. get packets from the queue for one dst where routing exist for
   % 2. get current package counter and bind
   [Whole_len, Packet, Tail] = burst_nl_hf:get_packets(SM),
   NT = {send_params, {Whole_len, Packet, Tail}},
   ?TRACE(?ID, "Try to send packet Packet ~120p Tail ~p ~n", [Packet, Tail]),
-  [share:put(__, wait_async_pcs, []),
+  [nl_hf:update_states(__),
+   share:put(__, wait_async_pcs, []),
    fsm:maybe_send_at_command(__, {at, "?PC", ""}),
    nl_hf:add_event_params(__, NT),
    set_timeout(__, 1, pc_timeout),
@@ -311,11 +391,15 @@ handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
   ](SM);
 handle_transmit(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_transmit ~120p~n", [Term]),
-  SM#sm{event = eps}.
+  [nl_hf:update_states(__),
+   fsm:set_event(__, eps)
+  ](SM).
 
 handle_busy(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_busy ~120p~n", [Term]),
-  SM#sm{event = eps}.
+  [nl_hf:update_states(__),
+   fsm:set_event(__, eps)
+  ](SM).
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
@@ -451,6 +535,17 @@ process_data(SM, Data) ->
     fsm:set_event(SM, eps)
   end.
 
+get_buffer(SM) ->
+  QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
+  lists:foldl(
+  fun(X, A) ->
+    [Src, Dst, Len, Payload] = burst_nl_hf:getv([src, dst, len, payload], X),
+    [{Src, Dst, Len, Payload} | A]
+  end, [], QL).
+
+clear_buffer(SM) ->
+  share:put(SM, burst_data_buffer, queue:new()).
+
 calc_burst_time(SM, Len) ->
     Bitrate = share:get(SM, bitrate),
     Byte_per_s = Bitrate / 8,
@@ -468,3 +563,18 @@ set_timeout(SM, S, Timeout) ->
       fsm:set_timeout(SM, {s, S}, Timeout);
     true -> SM
   end.
+
+process_received(SM, Tuple) ->
+  {Src, Rssi, Integrity} =
+  case Tuple of
+    {recvpbm,_,RSrc,_,_,  RRssi,RIntegrity,_,_} ->
+      {RSrc, RRssi, RIntegrity};
+    {Format,_,RSrc,_,_,_,RRssi,RIntegrity,_,_} when Format == recvim;
+                                                    Format == recvims;
+                                                    Format == recv ->
+      {RSrc, RRssi, RIntegrity}
+  end,
+
+  [nl_hf:fill_statistics(__, neighbours, Src),
+   nl_hf:add_neighbours(__, Src, {Rssi, Integrity})
+  ](SM).
