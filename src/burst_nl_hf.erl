@@ -40,21 +40,22 @@
 -export([check_routing_existance/1]).
 -export([burst_len/1, increase_local_pc/2]).
 -export([get_packets/1, pop_delivered/2, failed_pc/2]).
--export([bind_pc/3]).
+-export([bind_pc/3, check_dublicated/2]).
 
 %----------------------------- Get from tuple ----------------------------------
 geta(Tuple) ->
-  getv([flag, id, id_local, src, dst, len, whole_len, payload], Tuple).
+  getv([flag, id_at, id_local, id_remote, src, dst, len, whole_len, payload], Tuple).
 getv(_, empty) -> nothing;
 getv(Types, Tuple) when is_list(Types) ->
   lists:foldr(fun(Type, L) -> [getv(Type, Tuple) | L] end, [], Types);
 getv(Type, Tuple) when is_atom(Type) ->
   PT =
   case Tuple of {_Retries, T} -> T; _-> Tuple end,
-  {Flag, PkgID, PkgIDLocal, Src, Dst, Len, Whole_len, Payload} = PT,
+  {Flag, PkgID, PkgIDLocal, PkgIDRemote, Src, Dst, Len, Whole_len, Payload} = PT,
 
   Structure =
-  [{flag, Flag}, {id, PkgID}, {id_local, PkgIDLocal}, {src, Src}, {dst, Dst},
+  [{flag, Flag}, {id_at, PkgID}, {id_local, PkgIDLocal}, {id_remote, PkgIDRemote},
+   {src, Src}, {dst, Dst},
    {len, Len}, {whole_len, Whole_len}, {payload, Payload}
   ],
   Map = maps:from_list(Structure),
@@ -62,14 +63,15 @@ getv(Type, Tuple) when is_atom(Type) ->
   Val.
 
 create_default() ->
-  {data, unknown, 0, 0, 0, 0, 0, <<"">>}.
+  {data, unknown, 0, 0, 0, 0, 0, 0, <<"">>}.
 
 replace(Types, Values, Tuple) when is_list(Types) ->
   replace_helper(Types, Values, Tuple);
 replace(Type, Value, Tuple) when is_atom(Type) ->
-  {Flag, PkgID, PkgIDLocal, Src, Dst, Len, Whole_len, Payload} = Tuple,
+  {Flag, PkgID, PkgIDLocal, PkgIDRemote, Src, Dst, Len, Whole_len, Payload} = Tuple,
   Structure =
-  [{flag, Flag}, {id, PkgID}, {id_local, PkgIDLocal}, {src, Src}, {dst, Dst},
+  [{flag, Flag}, {id_at, PkgID}, {id_local, PkgIDLocal}, {id_remote, PkgIDRemote},
+   {src, Src}, {dst, Dst},
    {len, Len}, {whole_len, Whole_len}, {payload, Payload}
   ],
   list_to_tuple(lists:foldr(
@@ -84,8 +86,8 @@ replace_helper([Type | Types], [Value | Values], Tuple) ->
 %-------------------- Encodeing / Decodinf data --------------------------------
 create_nl_burst_header(SM, T) ->
   ?TRACE(?ID, "create_payload_nl_burst_header ~p~n", [T]),
-  [Flag, PkgID,LPkgID,  Src, Dst, Len, Whole_len, Payload] =
-    getv([flag, id, id_local, src, dst, len, whole_len, payload], T),
+  [Flag, RPkgID, Src, Dst, Len, Whole_len, Payload] =
+    getv([flag, id_remote, src, dst, len, whole_len, payload], T),
 
   Flag_Num = ?FLAG2NUM(Flag),
   Max = share:get(SM, max_burst_len),
@@ -94,15 +96,14 @@ create_nl_burst_header(SM, T) ->
   C_Bits_Len = nl_hf:count_flag_bits(Max),
   C_Bits_Flag = nl_hf:count_flag_bits(?FLAG_MAX),
 
-  B_PkgID = <<PkgID:C_Bits_PkgID>>,
-  B_LPkgID = <<LPkgID:C_Bits_PkgID>>,
+  B_RPkgID = <<RPkgID:C_Bits_PkgID>>,
   B_Len_Burst = <<Len:C_Bits_Len>>,
   B_Whole_Len_Burst = <<Whole_len:C_Bits_Len>>,
   B_Src = <<Src:C_Bits_Addr>>,
   B_Dst = <<Dst:C_Bits_Addr>>,
   B_Flag = <<Flag_Num:C_Bits_Flag>>,
 
-  Tmp_Data = << B_Flag/bitstring, B_PkgID/bitstring, B_LPkgID/bitstring,
+  Tmp_Data = << B_Flag/bitstring, B_RPkgID/bitstring,
                 B_Src/bitstring,
                 B_Dst/bitstring, B_Len_Burst/bitstring,
                 B_Whole_Len_Burst/bitstring, Payload/binary>>,
@@ -112,7 +113,7 @@ create_nl_burst_header(SM, T) ->
     Add = nl_hf:add_bits(Tmp_Data),
     ?INFO(?ID, "Add ~p~n", [Add]),
 
-    <<B_Flag/bitstring, B_PkgID/bitstring, B_LPkgID/bitstring,
+    <<B_Flag/bitstring, B_RPkgID/bitstring,
       B_Src/bitstring, B_Dst/bitstring,
       B_Len_Burst/bitstring,
       B_Whole_Len_Burst/bitstring, 0:Add, Payload/binary>>;
@@ -127,18 +128,22 @@ extract_nl_burst_header(SM, Payload) ->
   C_Bits_Addr = nl_hf:count_flag_bits(?ADDRESS_MAX),
   C_Bits_Len = nl_hf:count_flag_bits(Max),
 
-  <<Flag_Num:C_Bits_Flag, _PkgID:C_Bits_PkgID, LPkgID:C_Bits_PkgID,
+  <<Flag_Num:C_Bits_Flag, RPkgID:C_Bits_PkgID,
     Src:C_Bits_Addr, Dst:C_Bits_Addr,
     Len:C_Bits_Len, Whole_len:C_Bits_Len, _Rest/bitstring>> = Payload,
 
     Flag = nl_hf:num2flag(Flag_Num, nl),
-    Bits_header = C_Bits_Flag + 2 * C_Bits_PkgID + 2 * C_Bits_Addr +
+    Bits_header = C_Bits_Flag + C_Bits_PkgID + 2 * C_Bits_Addr +
                   2 * C_Bits_Len,
     Data = nl_hf:cut_add_bits(Bits_header, Payload),
     Tuple = create_default(),
+    LocalPC = share:get(SM, local_pc),
     replace(
-    [flag, id_local, src, dst, len, whole_len, payload],
-    [Flag, LPkgID, Src, Dst, Len, Whole_len, Data], Tuple).
+    [flag, id_local, id_remote, src, dst, len, whole_len, payload],
+    [Flag, LocalPC, RPkgID, Src, Dst, Len, Whole_len, Data], Tuple).
+
+    %[flag, id_local, src, dst, len, whole_len, payload],
+    %[Flag, LPkgID, Src, Dst, Len, Whole_len, Data], Tuple).
 %--------------------------------- Routing -------------------------------------
 check_routing_existance(SM) ->
   Routing_table = share:get(SM, routing_table),
@@ -173,8 +178,8 @@ bind_pc(SM, PC, Packet) ->
   NQ =
   lists:foldl(
   fun(X, Q) ->
-    [XPC, XLocalPC, XDst] = getv([id, id_local, dst], X),
-    NT = replace([id, payload], [PC, Payload], X),
+    [XPC, XLocalPC, XDst] = getv([id_at, id_local, dst], X),
+    NT = replace([id_at, payload], [PC, Payload], X),
     if XPC == unknown, LocalPC == XLocalPC, Dst == XDst ->
       queue:in(NT, Q);
     true ->
@@ -193,7 +198,7 @@ pop_delivered(SM, PC) ->
 
   NL =
   lists:filtermap(fun(X) ->
-    XPC = getv(id, X),
+    XPC = getv(id_at, X),
     if XPC == PC -> false; true -> {true, X} end
   end, QL),
 
@@ -210,7 +215,7 @@ failed_pc(SM, PC) ->
   lists:foldl(
   fun(X, Q) ->
     [XPC, XLocalPC, XSrc, XDst, XLen, XPayload] =
-      getv([id, id_local, src, dst, len, payload], X),
+      getv([id_at, id_local, src, dst, len, payload], X),
     Tuple =
     replace([id_local, src, dst, len, payload],
             [XLocalPC, XSrc, XDst, XLen, XPayload],
@@ -228,15 +233,41 @@ failed_pc(SM, PC) ->
 get_packets(SM) ->
   Routing_table = share:get(SM, routing_table),
   Q_data = share:get(SM, nothing, burst_data_buffer, queue:new()),
-  A = get_first_addr(SM, Routing_table, Q_data),
-  Packets = lists:reverse(get_packets(SM, Q_data, A, [])),
+  Addr = get_first_addr(SM, Routing_table, Q_data),
+  Packets = get_packets(SM, Q_data, Addr, []),
   if Packets == [] -> [0, nothing, []];
     true ->
       Whole_len = burst_len(Packets),
-      ?TRACE(?ID, "Burst data Whole len ~p~n", [Whole_len]),
-      [H | T] = Packets,
+      NPackets =
+      lists:foldl(fun(X, A) ->
+                      P = replace(whole_len, Whole_len, X),
+                      [P | A]
+                  end, [], Packets),
+      ?TRACE(?ID, "Burst data Whole len ~p ~p~n", [Whole_len, NPackets]),
+      [H | T] = NPackets,
       [Whole_len, H, T]
   end.
+
+check_dublicated(SM, Tuple) ->
+  Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
+  Dublicated = check_helper(Q, Tuple),
+  ?INFO(?ID, "check_dublicated Tuple ~w - dublicated: ~w~n", [Tuple, Dublicated]),
+  if not Dublicated ->
+    share:put(SM, burst_data_buffer, queue:in(Tuple, Q));
+  true -> SM
+  end.
+
+check_helper(inside) -> true.
+check_helper({[],[]}, _Tuple) -> false;
+check_helper(Q, Tuple) ->
+  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
+  [Id, Src, Dst, Payload] = getv([id_remote, src, dst, payload], Tuple),
+  [QId, QSrc, QDst, QPayload] = getv([id_remote, src, dst, payload], Q_Tuple),
+  if Id == QId, Src == QSrc,
+     Dst == QDst, Payload == QPayload ->
+      check_helper(inside);
+  true -> check_helper(Q_Tail, Tuple)
+ end.
 
 process_asyncs(SM, PC) ->
   PCS = share:get(SM, nothing, wait_async_pcs, []),
