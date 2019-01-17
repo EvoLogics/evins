@@ -412,9 +412,7 @@ handle_final(_MM, SM, Term) ->
 process_nl_send(SM, _, {nl, send, tolerant, ?ADDRESS_MAX, _Payload}) ->
   fsm:cast(SM, nl_impl, {send, {nl, send, error}});
 process_nl_send(SM, _, T) ->
-  [push_tolerant_queue(__, T),
-   fsm:cast(__, nl_impl, {send, {nl, send, 0}})
-  ](SM).
+  push_tolerant_queue(SM, T).
 
 push_tolerant_queue(SM, {nl, send, tolerant, Dst, Payload}) ->
   LocalPC = share:get(SM, local_pc),
@@ -430,7 +428,8 @@ push_tolerant_queue(SM, {nl, send, tolerant, Dst, Payload}) ->
   ?TRACE(?ID, "Add to burst queue ~p~n", [Tuple]),
 
   [burst_nl_hf:increase_local_pc(__, local_pc),
-   share:put(__, burst_data_buffer, queue:in(Tuple, Q))
+   share:put(__, burst_data_buffer, queue:in(Tuple, Q)),
+   fsm:cast(__, nl_impl, {send, {nl, send, LocalPC}})
   ](SM).
 
 extract_status(SM, Status) ->
