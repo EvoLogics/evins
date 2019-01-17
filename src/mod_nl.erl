@@ -130,16 +130,19 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Neighbour_life_set= [Time || {neighbour_life, Time} <- ArgS],
   Tmo_dbl_wv_set    = [Time || {tmo_dbl_wv, Time} <- ArgS],
 
-  Local_Retries_Set  = [C   || {retries, C} <- ArgS],
-  TTL_Set  = [C   || {ttl, C} <- ArgS],
+  Local_retries_set  = [C   || {retries, C} <- ArgS],
+  TTL_set  = [C   || {ttl, C} <- ArgS],
   Tmo_sensing  = [Time || {tmo_sensing, Time} <- ArgS],
 
-  Max_TTL        = set_params(TTL_Set, 20),
-  Local_Retries  = set_params(Local_Retries_Set, 3), % optimal 3, % optimal 4 for icrpr
+  Path_retries_set  = [C   || {path_retries, C} <- ArgS],
+
+  Max_TTL        = set_params(TTL_set, 20),
+  Local_retries  = set_params(Local_retries_set, 3), % optimal 3, % optimal 4 for icrpr
   {Tmo_sensing_start, Tmo_sensing_end} = set_timeouts(Tmo_sensing, {0, 1}), % optimal aloha {0,1}
                                                                             % optimal tlohi {1,5} / {0,4}
                                                                             % optimal for ack {2, 5}
 
+  Path_retries    = set_params(Path_retries_set, 2),
   Addr            = set_params(Addr_set, 1),
   Max_address     = set_params(Max_address_set, 20),
   Pkg_life        = set_params(Pkg_life_Set, 180), % in sek
@@ -186,7 +189,8 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {send_wv_dbl_tmo, Tmo_dbl_wv},
                       {probability, Probability},
                       {pkg_life, Pkg_life},
-                      {retries, Local_Retries},
+                      {retries, Local_retries},
+                      {path_retries, Path_retries},
                       {ttl, Max_TTL},
                       {tmo_sensing, {Tmo_sensing_start, Tmo_sensing_end}}
                      ]),
@@ -203,7 +207,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ?TRACE(Mod_ID, "Path_life ~p ~n", [Path_life]),
   ?TRACE(Mod_ID, "Neighbour_life ~p ~n", [Neighbour_life]),
   ?TRACE(Mod_ID, "Pkg_life ~p ~n", [Pkg_life]),
-  ?TRACE(Mod_ID, "Retries ~p ~n", [Local_Retries]),
+  ?TRACE(Mod_ID, "Retries ~p ~n", [Local_retries]),
   ?TRACE(Mod_ID, "Sensing time {~p,~p} ~n", [Tmo_sensing_start, Tmo_sensing_end]),
 
   NL_Protocol.

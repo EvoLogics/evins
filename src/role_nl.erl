@@ -196,6 +196,14 @@ nl_extract_subject(<<"polling">>, Params) ->
     _ ->
       {nl, polling, binary_to_existing_atom(Params, utf8)}
   end;
+%NL,path,Retries,Dst
+% Retries decreasinf, if < 0 -> Retries = failed
+nl_extract_subject(<<"path">>, <<"failed,", Params/binary>>) ->
+  [Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
+  {nl, path, failed, Dst};
+nl_extract_subject(<<"path">>, Params) ->
+  [Retries, Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
+  {nl, path, Retries, Dst};
 %% NL,delivered,PC,Src,Dst
 nl_extract_subject(<<"delivered">>, Params) ->
   [PC, Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],

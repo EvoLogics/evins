@@ -113,6 +113,7 @@ handle_event(MM, SM, Term) ->
     Protocol_Name = share:get(SM, protocol_name),
     Pid = share:get(SM, pid),
     Debug = share:get(SM, debug),
+    Path_max_retries = share:get(SM, path_retries),
     Establish_retries = share:get(SM, nothing, path_establish, 0),
 
     case Term of
@@ -134,14 +135,21 @@ handle_event(MM, SM, Term) ->
       {timeout, {sensing_timeout, _Send_Tuple}} ->
         ?INFO(?ID, "St ~p Ev ~p ~n", [SM#sm.event, SM#sm.state]),
         fsm:run_event(MM, SM#sm{event = sensing_timeout}, {});
-      {timeout, {path_establish, Dst}} when Establish_retries > 1 ->
+      {timeout, {path_establish, Src, Dst}} when Establish_retries >= Path_max_retries ->
+        Cast_handler =
+        fun (LSM) when Src == Local_Address ->
+              fsm:cast(LSM, nl_impl, {send, {nl, path, failed, Dst}});
+            (LSM) -> LSM
+        end,
+
         [nl_hf:drop_postponed(__, Dst),
          share:put(__, path_establish, 0),
          share:put(__, waiting_path, false),
+         Cast_handler(__),
          fsm:set_event(__, relay),
          fsm:run_event(MM, __, {})
         ](SM);
-      {timeout, {path_establish, _}} ->
+      {timeout, {path_establish, _, _}} ->
         [share:put(__, waiting_path, false),
          fsm:set_event(__, relay),
          fsm:run_event(MM, __, {})
@@ -290,7 +298,7 @@ handle_transmit(_MM, SM, Term) ->
     false when Waiting_path, not Is_path ->
       fsm:set_event(SM, path);
     false ->
-      [fsm:clear_timeout(__, {path_establish, nl_hf:getv(src, Head)}),
+      [fsm:clear_timeout(__, {path_establish, nl_hf:getv(dst, Head), nl_hf:getv(src, Head)}),
        try_transmit(__, Head)
       ] (SM)
   end.
@@ -360,7 +368,7 @@ establish_path(SM, NL) ->
   [Src, Dst] = nl_hf:getv([src, dst], NL),
 
   [share:put(__, path_establish, Retries + 1),
-   fsm:set_timeout(__, {s, Wpath_tmo}, {path_establish, Dst}),
+   fsm:set_timeout(__, {s, Wpath_tmo}, {path_establish, Src, Dst}),
    establish_path(__, Src == Local_address, Dst, NL)
   ](SM).
 
@@ -370,15 +378,20 @@ establish_path(SM, true, Dst, _NL) ->
   Protocol_name = share:get(SM, protocol_name),
   Protocol_config = share:get(SM, protocol_config, Protocol_name),
 
+  Path_max_retries = share:get(SM, path_retries),
+  Establish = share:get(SM, nothing, path_establish, 0),
+  ?TRACE(?ID, "establish_path ~p ~p~n", [Establish, Path_max_retries]),
+  Retries = Path_max_retries - Establish,
+
   MType =
   if Protocol_config#pr_conf.evo -> path_addit;
   true -> path_neighbours end,
 
-  ?INFO(?ID, "establish_path ~p ~p~n", [Protocol_config#pr_conf.evo, MType]),
+  ?INFO(?ID, "establish_path retries ~p ~p~n", [Protocol_config#pr_conf.evo, MType]),
 
   Tuple = nl_hf:prepare_path(SM, path, MType, Local_address, Dst),
   [share:put(__, waiting_path, true),
-   fsm:cast(__, nl_impl, {send, {nl, path, Dst}}),
+   fsm:cast(__, nl_impl, {send, {nl, path, Retries, Dst}}),
    nl_hf:fill_transmission(__, filo, Tuple),
    try_transmit(__, Tuple)
   ](SM);
@@ -775,18 +788,18 @@ set_stable_path(SM, path_addit, Tuple, Stable_path) ->
 set_stable_ack_path(SM, {NL_Src, NL_Dst}) ->
   Stable_path = nl_hf:get_stable_path(SM, NL_Src, NL_Dst),
   New_path = nl_hf:update_path(SM, Stable_path),
-  
+
   Cast_handler =
   fun(LSM) ->
     Routing = nl_hf:routing_to_list(LSM),
     fsm:cast(LSM, nl_impl, {send, {nl, routing, Routing}})
   end,
-  
+
   ?TRACE(?ID, "Stable Path ~p~n", [Stable_path]),
   [nl_hf:update_routing(__, New_path),
    cancel_wpath(__),
    Cast_handler(__),
-   fsm:clear_timeout(__, {path_establish, NL_Src}),
+   fsm:clear_timeout(__, {path_establish, NL_Dst, NL_Src}),
    nl_hf:remove_old_paths(__, NL_Src, NL_Dst),
    fsm:set_event(__, relay)
   ](SM).
@@ -846,7 +859,7 @@ process_destination(SM, Channel, Recv_tuple) ->
         nl_hf:fill_transmission(__, fifo, Send_tuple),
         Path_handler(__, MType),
         cancel_wpath(__),
-        fsm:clear_timeout(__, {path_establish, NL_Src}),
+        fsm:clear_timeout(__, {path_establish, NL_Dst, NL_Src}),
         fsm:set_event(__, relay)
        ](LSM);
       (LSM, path_neighbours) ->
