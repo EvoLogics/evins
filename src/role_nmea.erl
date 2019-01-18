@@ -971,6 +971,33 @@ extract_nmea(<<"SMCS">>, Params) ->
     error:_ -> {error, {parseError, smcs, Params}}
   end;
 
+%% $PSIMSSB,UTC,B01,A,,C,H,M,X,Y,Z,Acc,N,,
+extract_nmea(<<"SIMSSB">>, Params) ->
+  try
+    [BUTC,BSAddr,BS,Err,BCS,BHS,BFS,BX,BY,BDepth,BAcc,AddT,BAdd1,BAdd2] = binary:split(Params,<<",">>,[global]),
+    UTC = extract_utc(BUTC),
+    Addr = case BSAddr of <<"B", BAddr/binary>> -> safe_binary_to_integer(BAddr); _ -> nothing end,
+    S = case BS of <<"A">> -> ok; _ -> nok end,
+    {CS, DS} = case {BCS, BHS} of
+                   {<<"C">>, <<"H">>} -> {lf, 1};
+                   {<<"C">>, <<"E">>} -> {enu, 1};
+                   {<<"C">>, <<"N">>} -> {ned, 1};
+                   {<<"R">>, <<"G">>} -> {geod, -1}
+               end,
+    FS = case BFS of
+             <<"M">> -> measured;
+             <<"F">> -> filtered;
+             <<"R">> -> reconstructed
+         end,
+
+    [X, Y, Depth, Acc, Add1, Add2] = [safe_binary_to_float(X) || X <- [BX, BY, BDepth, BAcc, BAdd1, BAdd2]],
+    Z = case Depth of nothing -> nothing; _ -> Depth * DS end,
+
+    {nmea, {simssb,UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2}}
+  catch
+    error:_ -> {error, {parseError, simssb, Params}}
+  end;
+
 % $PHTRO,x.xx,a,y.yy,b*hh<CR><LF>
 %   x.xx is the pitch in degrees
 %       a is ‘M’ for bow up
