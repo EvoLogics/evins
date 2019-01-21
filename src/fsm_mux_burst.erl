@@ -78,6 +78,8 @@ handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
   ?TRACE(?ID, "state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.event, Term]),
   {wait_routing_sync, Wait_routing_sync} = nl_hf:find_event_params(SM, wait_routing_sync),
+  {wait_routing_async, Wait_routing_async} =
+    nl_hf:find_event_params(SM, wait_routing_async),
   {clear_routing, Clear_routing} = nl_hf:find_event_params(SM, clear_routing),
   {send_routing, Send_routing} = nl_hf:find_event_params(SM, send_routing),
 
@@ -104,39 +106,50 @@ handle_event(MM, SM, Term) ->
     {nl, update, routing} ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, error}});
     {nl, update, routing, Dst} when State == ready_nl ->
-      [fsm:cast(__, nl_impl, {send, {nl, routing, ok}}),
+      Cast_handler =
+      fun (LSM, nl_impl) ->
+            fsm:cast(LSM, nl_impl, {send, {nl, routing, ok}});
+          (LSM, nl) -> LSM
+      end,
+      [Cast_handler(__, MM#mm.role),
        update_routing(__, Dst),
        fsm:set_event(__, update_routing),
        fsm:run_event(MM, __, {})
       ](SM);
+    {nl, update, routing, _} ->
+      fsm:cast(SM, nl_impl, {send, {nl, routing, busy}});
     {nl, send, _} when Send_routing == true ->
       nl_hf:add_event_params(SM, {send_routing, false});
     {nl, send, tolerant, _Src, _Data} ->
       send_command(SM, ?TO_MM, burst_protocol, Term);
     {nl, send, _Src, _Data} ->
       send_command(SM, ?TO_MM, current_protocol, Term);
-    {nl, update, routing, _} ->
-      fsm:cast(SM, nl_impl, {send, {nl, routing, busy}});
     {nl, routing, Routing} when Clear_routing == true ->
       [nl_hf:add_event_params(__, {clear_routing, false}),
        share:put(__, routing_table, Routing)
       ](SM);
     {nl, routing, Routing} when Wait_routing_sync == false ->
+      ?INFO(?ID, "SET ROUTING 1 ~p ~p~n", [MM#mm.role, Routing]),
       [share:put(__, routing_table, Routing),
        process_routing(__, Routing),
        fsm:set_event(__, set_routing),
        fsm:run_event(MM, __, {})
       ](SM);
     {nl, routing, Routing} ->
-      ?INFO(?ID, "HANDLE MM ~p~n", [MM#mm.role]),
+      Cast_handler =
+      fun (LSM, false) ->
+            fsm:cast(LSM, nl_impl, {send, Term});
+          (LSM, true) ->
+            nl_hf:add_event_params(LSM, {wait_routing_async, false})
+      end,
+      ?INFO(?ID, "SET ROUTING 2 ~p ~p~n", [MM#mm.role, Routing]),
       [share:put(__, routing_table, Routing),
        nl_hf:add_event_params(__, {wait_routing_sync, false}),
-       fsm:cast(__, nl_impl, {send, Term}),
+       Cast_handler(__, Wait_routing_async),
        fsm:set_event(__, eps),
        fsm:run_event(MM, __, {})
       ](SM);
     {nl, reset, state} ->
-      ?INFO(?ID, "HANDLE MM ~p~n", [MM#mm.role]),
       [send_command(__, ?TO_MM, current_protocol, Term),
        fsm:run_event(MM, __, {}),
        fsm:set_event(__, ready_nl),
@@ -157,7 +170,15 @@ handle_event(MM, SM, Term) ->
       end,
       fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
     {nl, get, routing} ->
-      get_routing(SM, ?TO_MM, Term);
+      ?INFO(?ID, "GET ROUTING ~p~n", [MM#mm.role]),
+      Cast_handler =
+      fun (LSM, nl) ->
+             nl_hf:add_event_params(LSM, {wait_routing_async, true});
+          (LSM, nl_impl) -> LSM
+      end,
+      [Cast_handler(__, MM#mm.role),
+       get_routing(__, ?TO_MM, Term)
+      ](SM);
     {nl, get, protocol} ->
       send_command(SM, ?TO_MM, current_protocol, Term);
     {nl, get, buffer} ->
@@ -226,7 +247,8 @@ handle_event(MM, SM, Term) ->
 %%--------------------------------Handler functions-------------------------------
 handle_idle(_MM, #sm{event = internal} = SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  [nl_hf:add_event_params(__, {wait_routing_sync, false}),
+  [nl_hf:add_event_params(__, {wait_routing_async, false}),
+   nl_hf:add_event_params(__, {wait_routing_sync, false}),
    nl_hf:add_event_params(__, {clear_routing, false}),
    nl_hf:add_event_params(__, {send_routing, false}),
    share:put(__, configured_protocols, []),
@@ -282,7 +304,6 @@ update_routing(SM, Dst) ->
         LSM;
       (LSM, _) ->
         Tuple = {nl, send, Dst, <<"D">> },
-        % Default = {nl, set, routing,[{default, 63}]},
         Cleared = {nl, set, routing, clear_routing(SM, Dst)},
         % Delete routing
         [nl_hf:add_event_params(__, {clear_routing, true}),
