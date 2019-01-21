@@ -174,6 +174,10 @@ handle_event(MM, SM, Term) ->
         ?INFO(?ID, "Overheard message: ~p~n", [Recv_Tuple]),
         [process_overheared_packet(__, Recv_Tuple),
         fsm:run_event(MM, __, {})](SM);
+      {sync, Recv_Tuple = {recvsrv,_,_,_,_,_,_,_}} ->
+        ?INFO(?ID, "Received service message: ~p~n", [Recv_Tuple]),
+        [process_overheared_packet(__, Recv_Tuple),
+        fsm:run_event(MM, __, {})](SM);
       {async, Notification} when Debug == on ->
         process_async(SM, Notification);
       {sync, _, _} ->
@@ -497,6 +501,8 @@ maybe_transmit_next(SM) ->
 process_overheared_packet(SM, Tuple) ->
   {Src, Rssi, Integrity} =
   case Tuple of
+    {recvsrv, RSrc,_,_,_,_,RRssi,RIntegrity} ->
+      {RSrc, RRssi, RIntegrity};
     {recvpbm,_,RSrc,_,_,  RRssi,RIntegrity,_,_} ->
       {RSrc, RRssi, RIntegrity};
     {recv,_,RSrc,_,_,RRssi,RIntegrity,_,_,_} ->
