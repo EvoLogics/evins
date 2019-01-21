@@ -146,31 +146,14 @@ extract_nl_burst_header(SM, Payload) ->
     %[Flag, LPkgID, Src, Dst, Len, Whole_len, Data], Tuple).
 %--------------------------------- Routing -------------------------------------
 check_routing_existance(SM) ->
-  Routing_table = share:get(SM, routing_table),
-  Local_address = share:get(SM, local_address),
   Q_data = share:get(SM, nothing, burst_data_buffer, queue:new()),
-  case Routing_table of
-    ?ADDRESS_MAX -> [];
-    _ ->
-      lists:filtermap(
-        fun({?ADDRESS_MAX, ?ADDRESS_MAX, _}) -> false;
-           ({From, _, _}) when From =/= Local_address ->
-              exist_data(Q_data, From);
-           ({_ ,_ ,_}) -> false;
-           (To) -> {true, {default, To}}
-        end, Routing_table)
-  end =/= [].
-
-exist_data(Q, A) -> exist_data(Q, A, 0).
-exist_data({[],[]}, _, 0) -> false;
-exist_data({[],[]}, A, _) -> {true, A};
-exist_data(Q, A, C) ->
-  {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  Dst = getv(dst, Q_Tuple),
-  if Dst == A -> exist_data(Q_Tail, A, C + 1);
-    true -> exist_data(Q_Tail, A, C)
+  if Q_data == {[],[]} -> false;
+  true ->
+    {{value, Q_Tuple}, _} = queue:out(Q_data),
+    Dst = getv(dst, Q_Tuple),
+    Exist = nl_hf:routing_exist(SM, Dst),
+    {Exist, Dst}
   end.
-
 %---------------------- Burst package handling ---------------------------------
 bind_pc(SM, PC, Packet) ->
   [LocalPC, Dst, Payload] = getv([id_local, dst, payload], Packet),

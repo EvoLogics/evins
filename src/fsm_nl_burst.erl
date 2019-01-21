@@ -54,7 +54,8 @@
                  ]},
 
                 {sensing,
-                 [{try_transmit, sensing},
+                 [{routing_updated, sensing},
+                  {try_transmit, sensing},
                   {check_state, sensing},
                   {initiation_listen, transmit},
                   {empty, idle},
@@ -134,7 +135,10 @@ handle_event(MM, SM, Term) ->
     {nl, set, neighbours, Neighbours} ->
       nl_hf:process_set_command(SM, {neighbours, Neighbours});
     {nl, set, routing, Routing} ->
-      nl_hf:process_set_command(SM, {routing, Routing});
+      [nl_hf:process_set_command(__, {routing, Routing}),
+       set_routing(__, Routing),
+       fsm:run_event(MM, __, {})
+      ](SM);
     {nl, set, protocol, Protocol} ->
       nl_hf:process_set_command(SM, {protocol, Protocol});
     {nl, set, Command} ->
@@ -286,6 +290,18 @@ init_nl_burst(SM) ->
   ]).
 
 %------------------------------Handle functions---------------------------------
+handle_idle(_MM, #sm{event = no_routing} = SM, _Term) ->
+  Params = nl_hf:find_event_params(SM, no_routing),
+  Routing_handler =
+  fun (LSM, {no_routing, Dst}) ->
+        fsm:cast(LSM, nl_impl, {send, {nl, update, routing, Dst}});
+      (LSM, _) -> LSM
+  end,
+
+  [Routing_handler(__, Params),
+   nl_hf:update_states(__),
+   fsm:set_event(__, eps)
+  ](SM);
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_idle ~120p~n", [Term]),
   [nl_hf:update_states(__),
@@ -318,18 +334,31 @@ handle_sensing(_MM, #sm{event = check_state} = SM, _) ->
    set_timeout(__, 1, check_state),
    fsm:set_event(__, eps)
   ](SM);
-handle_sensing(_MM, #sm{event = try_transmit} = SM, _) ->
+handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
+                                                  (Ev == routing_updated) ->
   % 1. check if there are messages in the buffer with existing
   %    routing to dst address
   % 2. if exist -> check state and try transmit
   %    if not, go back to idle
-  Routing_handler =
-  fun (LSM, true) -> fsm:set_event(LSM, check_state);
-      (LSM, false) -> fsm:set_event(LSM, no_routing)
+  Cast_handler =
+  fun (LSM, try_transmit) ->
+        fsm:cast(LSM, nl_impl, {send, {nl, get, routing}});
+      (LSM, _) -> LSM
   end,
 
-  [nl_hf:update_states(__),
-   Routing_handler(__, burst_nl_hf:check_routing_existance(SM))
+  Routing_handler =
+  fun (LSM, {true, _}) -> fsm:set_event(LSM, check_state);
+      (LSM, {false, Dst}) ->
+        [nl_hf:add_event_params(__, {no_routing, Dst}),
+         fsm:set_event(__, eps)
+        ](LSM);
+      (LSM, false) ->
+        fsm:set_event(LSM, no_routing)
+  end,
+  Exist = burst_nl_hf:check_routing_existance(SM),
+  [Cast_handler(__, Ev),
+   nl_hf:update_states(__),
+   Routing_handler(__, Exist)
   ](SM);
 handle_sensing(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_sensing ~120p~n", [Term]),
@@ -380,14 +409,21 @@ handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
   % 1. get packets from the queue for one dst where routing exist for
   % 2. get current package counter and bind
   [Whole_len, Packet, Tail] = burst_nl_hf:get_packets(SM),
-  NT = {send_params, {Whole_len, Packet, Tail}},
+  Packet_handler =
+  fun (LSM) when Packet == nothing, Tail == [] ->
+        fsm:set_event(LSM, pick);
+      (LSM) ->
+        NT = {send_params, {Whole_len, Packet, Tail}},
+        [share:put(__, wait_async_pcs, []),
+         fsm:maybe_send_at_command(__, {at, "?PC", ""}),
+         nl_hf:add_event_params(__, NT),
+         set_timeout(__, 1, pc_timeout),
+         fsm:set_event(__, eps)
+        ](LSM)
+  end,
   ?TRACE(?ID, "Try to send packet Packet ~120p Tail ~p ~n", [Packet, Tail]),
   [nl_hf:update_states(__),
-   share:put(__, wait_async_pcs, []),
-   fsm:maybe_send_at_command(__, {at, "?PC", ""}),
-   nl_hf:add_event_params(__, NT),
-   set_timeout(__, 1, pc_timeout),
-   fsm:set_event(__, eps)
+   Packet_handler(__)
   ](SM);
 handle_transmit(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_transmit ~120p~n", [Term]),
@@ -409,6 +445,30 @@ handle_final(_MM, SM, Term) ->
   ?TRACE(?ID, "Final ~120p~n", [Term]).
 
 % ------------------------------- Helper functions -----------------------------
+set_routing(SM, Routing) ->
+  Data_buffer = share:get(SM, nothing, burst_data_buffer, queue:new()),
+  Params = nl_hf:find_event_params(SM, no_routing),
+  Exist =
+  case Params of
+    {no_routing, Dst} ->
+      nl_hf:routing_exist(SM, Dst);
+    _ -> false
+  end,
+
+  State = SM#sm.state,
+  Routing_handler =
+  fun (LSM, idle) when Data_buffer =/= {[],[]} ->
+       fsm:set_event(LSM, routing_updated);
+      (LSM, sensing) when Routing == [{default,63}];
+                          not Exist ->
+       fsm:set_event(LSM, no_routing);
+      (LSM, sensing) when Exist ->
+       fsm:set_event(LSM, routing_updated);
+      (LSM, _) ->
+       fsm:set_event(LSM, eps)
+  end,
+  Routing_handler(SM, State).
+
 process_nl_send(SM, _, {nl, send, tolerant, ?ADDRESS_MAX, _Payload}) ->
   fsm:cast(SM, nl_impl, {send, {nl, send, error}});
 process_nl_send(SM, _, T) ->

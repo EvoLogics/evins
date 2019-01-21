@@ -233,6 +233,11 @@ nl_extract_subject(<<"time">>, <<"monotonic,",Time/binary>>) ->
 %% NL,statistics,ok
 nl_extract_subject(<<"statistics">>, <<"ok">>) ->
   {nl, statistics, ok};
+nl_extract_subject(<<"get">>, <<"routing">>) ->
+  {nl, get, routing};
+nl_extract_subject(<<"update">>, <<"routing,", Params/binary>>) ->
+  Dst = binary_to_integer(Params),
+  {nl, update, routing, Dst};
 %% NL,statistics,neighbours,<EOL> <relay or source> neighbours:<neighbours> count:<count> total:<total><EOL>...<EOL><EOL>
 %% NL,statistics,neighbours,
 %%  source neighbour:3 count:8 total:10
@@ -299,15 +304,22 @@ nl_extract_subject(<<"buffer">>, <<"empty">>) ->
 % NL,statistics,data,<EOL> data:<hash> dst:<dst> type:<type><EOL>...<EOL><EOL>
 nl_extract_subject(<<"buffer">>, Params) ->
   Lines = tl(re:split(Params,"\r?\n")),
-  Regexp = "data:(.*?) dst:(\\d+) type:([^ ]*)",
+  Regexp1 = "data:(.*?) dst:(\\d+) type:([^ ]*)",
+  Regexp2 = "src:(\\d+) dst:(\\d+) len:(\\d+) data:(.*?)",
+
   {nl, buffer,
    lists:map(fun(Line) ->
-                 {match, [Data, Dst, Type]} =
-                   re:run(Line, Regexp, [{capture, [1,2,3], binary}]),
-                 list_to_tuple(
-                   [Data,
-                    binary_to_integer(Dst),
-                    Type])
+                case re:run(Line, Regexp1, [{capture, [1,2,3], binary}]) of
+                  {match, [Data, Dst, Type]} ->
+                    list_to_tuple( [Data, binary_to_integer(Dst), Type]);
+                  _ ->
+                    {match, [Src, Dst, Len, Data]} =
+                      re:run(Line, Regexp2, [{capture, [1,2,3,4], binary}]),
+                    list_to_tuple( [binary_to_integer(Src),
+                                    binary_to_integer(Dst),
+                                    binary_to_integer(Len),
+                                    Data])
+                end
              end, Lines)}.
 
 %% NL,send[,<Type>],[<Datalen>],<Dst>,<Data>
