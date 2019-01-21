@@ -70,6 +70,7 @@
                  [{pick, sensing},
                   {next_packet, transmit},
                   {recv_data, recv},
+                  {busy_online, busy},
                   {reset, idle}
                  ]},
 
@@ -220,10 +221,9 @@ handle_event(MM, SM, Term) ->
        fsm:cast(__, nl_impl, {send, {nl, send, error}}),
        run_hook_handler(MM, __, Term, error)
       ](SM);
-    %TODO: check busy state
     {sync,"*SEND", {busy, _}} ->
       [fsm:clear_timeout(__, answer_timeout),
-       fsm:set_timeout(__, 1, check_state),
+       set_timeout(__, 1, check_state),
        fsm:set_event(__, busy_online),
        fsm:run_event(MM, __, {})
       ](SM);
