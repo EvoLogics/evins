@@ -599,7 +599,7 @@ get_buffer(SM) ->
   lists:foldl(
   fun(X, A) ->
     [Src, Dst, Len, Payload] = burst_nl_hf:getv([src, dst, len, payload], X),
-    [{Src, Dst, Len, Payload} | A]
+    [{Payload, Src, Dst, Len} | A]
   end, [], QL).
 
 clear_buffer(SM) ->

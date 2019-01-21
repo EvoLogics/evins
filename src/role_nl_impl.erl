@@ -271,11 +271,13 @@ from_term({nl, buffer, []}, Cfg) ->
 from_term({nl, buffer, Buffer}, Cfg) when is_list(Buffer) ->
   EOL = Cfg#config.eol,
   BufferLst = lists:map(fun({Payload, Dst, XMsgType}) ->
-                            lists:flatten([io_lib:format("data:~p dst:~B type:~s",
-                            [Payload, Dst, XMsgType]), EOL]);
-                           ({Src, Dst, Len, Payload}) ->
-                            lists:flatten([io_lib:format("src:~B dst:~B len:~B data:~p",
-                            [Src, Dst, Len, Payload]), EOL])
+                            <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
+                            lists:flatten([io_lib:format("data:0x~4.16.0b dst:~B type:~s",
+                            [Hash, Dst, XMsgType]), EOL]);
+                           ({Payload, Src, Dst, Len}) ->
+                            <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
+                            lists:flatten([io_lib:format("data:0x~4.16.0b src:~B dst:~B len:~B",
+                            [Hash, Src, Dst, Len]), EOL])
                         end, Buffer),
   [list_to_binary(["NL,buffer,",EOL, BufferLst, EOL]), Cfg];
 
