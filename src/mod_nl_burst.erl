@@ -46,33 +46,17 @@ parse_conf(Mod_ID, ArgS, Share) ->
   ShareID = #sm{share = Share},
   Start_time = erlang:monotonic_time(milli_seconds),
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
-  Routing       = [Addrs          || {routing, Addrs} <- ArgS],
   Max_queue_set = [Addrs          || {max_queue, Addrs} <- ArgS],
   Max_burst_len_set  = [Max  || {max_burst_len, Max} <- ArgS],
 
   Max_queue  = set_params(Max_queue_set, 3),
   Max_burst_len  = set_params(Max_burst_len_set, Max_queue * 1000),
-  %!!! TODO: TMP, integration with PF
-  Routing_table = set_routing(Routing, NL_Protocol, ?ADDRESS_MAX),
   share:put(ShareID, [{nl_start_time, Start_time},
                       {nl_protocol, NL_Protocol},
-                      {routing_table, Routing_table},
                       {max_queue, Max_queue},
                       {max_burst_len, Max_burst_len}]),
 
-  ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]),
-  ?TRACE(Mod_ID, "Routing Table ~p ~n", [Routing_table]).
-
-  set_routing(Routing, Protocol, Default) ->
-  case Protocol of
-    _ when ( ((Protocol =:= staticr) or (Protocol =:= staticrack)) and (Routing =:= [])) ->
-      io:format("!!! Static routing needs to set addesses in routing table, no parameters in config file. ~n!!! As a default value will be set 255 broadcast ~n",[]),
-      Default;
-    _ when (Routing =/= []) ->
-      [TupleRouting] = Routing,
-      [{?ADDRESS_MAX, ?ADDRESS_MAX, 0} | tuple_to_list(TupleRouting)];
-    _ -> Default
-  end.
+  ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]).
 
 set_params(Param, Default) ->
   case Param of

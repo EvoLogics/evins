@@ -499,9 +499,10 @@ process_overheared_packet(SM, Tuple) ->
   case Tuple of
     {recvpbm,_,RSrc,_,_,  RRssi,RIntegrity,_,_} ->
       {RSrc, RRssi, RIntegrity};
+    {recv,_,RSrc,_,_,RRssi,RIntegrity,_,_,_} ->
+      {RSrc, RRssi, RIntegrity};
     {Format,_,RSrc,_,_,_,RRssi,RIntegrity,_,_} when Format == recvim;
-                                                    Format == recvims;
-                                                    Format == recv ->
+                                                    Format == recvims ->
       {RSrc, RRssi, RIntegrity}
   end,
 

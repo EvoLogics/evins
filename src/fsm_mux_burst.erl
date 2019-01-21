@@ -111,18 +111,26 @@ handle_event(MM, SM, Term) ->
       ](SM);
     {nl, send, _} when Send_routing == true ->
       nl_hf:add_event_params(SM, {send_routing, false});
+    {nl, send, tolerant, _Src, _Data} ->
+      send_command(SM, ?TO_MM, burst_protocol, Term);
+    {nl, send, _Src, _Data} ->
+      send_command(SM, ?TO_MM, current_protocol, Term);
     {nl, update, routing, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, busy}});
-    {nl, routing, [{default, 63}]} when Clear_routing == true ->
-      nl_hf:add_event_params(SM, {clear_routing, false});
+    {nl, routing, Routing} when Clear_routing == true ->
+      [nl_hf:add_event_params(__, {clear_routing, false}),
+       share:put(__, routing_table, Routing)
+      ](SM);
     {nl, routing, Routing} when Wait_routing_sync == false ->
-      [process_routing(__, Routing),
+      [share:put(__, routing_table, Routing),
+       process_routing(__, Routing),
        fsm:set_event(__, set_routing),
        fsm:run_event(MM, __, {})
       ](SM);
-    {nl, routing, _Routing} ->
+    {nl, routing, Routing} ->
       ?INFO(?ID, "HANDLE MM ~p~n", [MM#mm.role]),
-      [nl_hf:add_event_params(__, {wait_routing_sync, false}),
+      [share:put(__, routing_table, Routing),
+       nl_hf:add_event_params(__, {wait_routing_sync, false}),
        fsm:cast(__, nl_impl, {send, Term}),
        fsm:set_event(__, eps),
        fsm:run_event(MM, __, {})
@@ -274,15 +282,35 @@ update_routing(SM, Dst) ->
         LSM;
       (LSM, _) ->
         Tuple = {nl, send, Dst, <<"D">> },
-        Default = {nl, set, routing,[{default, 63}]},
+        % Default = {nl, set, routing,[{default, 63}]},
+        Cleared = {nl, set, routing, clear_routing(SM, Dst)},
         % Delete routing
         [nl_hf:add_event_params(__, {clear_routing, true}),
          nl_hf:add_event_params(__, {send_routing, true}),
-         fsm:cast(__, ProtocolMM, [], {send, Default}, ?TO_MM),
+         fsm:cast(__, ProtocolMM, [], {send, Cleared}, ?TO_MM),
          fsm:cast(__, ProtocolMM, [], {send, Tuple}, ?TO_MM)
         ](LSM)
   end,
   Protocol_handler(SM, ProtocolMM).
+
+clear_routing(SM, Dst) ->
+  Routing_table = share:get(SM, nothing, routing_table, []),
+  clear_routing_helper(SM, Routing_table, Dst).
+clear_routing_helper(_, [], _) -> [{default, 63}];
+clear_routing_helper(SM, Routing_table, Dst) ->
+  NR =
+  lists:filtermap(fun(X) ->
+        case X of
+          {Dst, _} -> false;
+          Dst -> false;
+          _ -> {true, X}
+  end end, Routing_table),
+
+  ?INFO(?ID, "clear_routing ~p  ~p~n", [Routing_table, NR]),
+
+  if NR == [] -> [{default, 63}];
+    true -> NR
+  end.
 
 process_routing(SM, NL) ->
   Burst_protocol = share:get(SM, burst_protocol),
