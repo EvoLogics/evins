@@ -74,7 +74,7 @@
 
                 {transmit,
                  [{transmitted, sensing},
-                 {wait, sensing},
+                 {wait, collision},
                  {path, sensing},
                  {reset, idle}
                  ]},
@@ -89,6 +89,7 @@
 
                 {collision,
                  [{relay, collision},
+                  {initiation_listen, collision},
                   {pick, transmit},
                   {idle, idle},
                   {reset, idle}
@@ -98,7 +99,10 @@
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> init_flood(SM).
+init(SM)       ->
+  [init_flood(__),
+   env:put(__, channel_state, initiation_listen)
+  ](SM).
 trans()        -> ?TRANS.
 final()        -> [alarm].
 init_event()   -> eps.
@@ -174,10 +178,21 @@ handle_event(MM, SM, Term) ->
         ?INFO(?ID, "Overheard message: ~p~n", [Recv_Tuple]),
         [process_overheared_packet(__, Recv_Tuple),
         fsm:run_event(MM, __, {})](SM);
-      {sync, Recv_Tuple = {recvsrv,_,_,_,_,_,_,_}} ->
+      {async, Recv_Tuple = {recvsrv,Src,_,_,_,_,_,_}} when Src =/=0 ->
         ?INFO(?ID, "Received service message: ~p~n", [Recv_Tuple]),
         [process_overheared_packet(__, Recv_Tuple),
         fsm:run_event(MM, __, {})](SM);
+      {async, Notification = {status, _, _}} ->
+        Channel_state = nl_hf:process_async_status(Notification),
+        Transmit_handler =
+        fun (LSM, initiation_listen) when SM#sm.state == collision ->
+             fsm:set_event(LSM, initiation_listen);
+            (LSM, _) -> LSM
+        end,
+        [Transmit_handler(__, Channel_state),
+         env:put(__, channel_state, Channel_state),
+         fsm:run_event(MM, __, {})
+        ](SM);
       {async, Notification} when Debug == on ->
         process_async(SM, Notification);
       {sync, _, _} ->
@@ -323,6 +338,8 @@ handle_collision(_MM, SM, _Term) ->
   ?INFO(?ID, "collision state ~p~n", [SM#sm.event]),
   nl_hf:update_states(SM),
   case SM#sm.event of
+    initiation_listen ->
+      maybe_pick(SM);
     sensing_timeout ->
       % 1. decreace TTL for every packet in the queue
       % 2. delete packets withh TTL 0 or < 0
@@ -417,12 +434,17 @@ try_transmit(SM, error, _, _) ->
   fsm:set_event(SM, transmitted);
 try_transmit(SM, AT, L, Head) ->
   Transmission_handler =
-  fun(_LSM, blocked) -> fsm:set_event(SM, wait);
+  fun(#sm{env = #{channel_state := busy_backoff}}, _) ->
+      ?INFO(?ID, "NL in backoff state ~n", []),
+      fsm:set_event(SM, wait);
+     (_LSM, blocked) ->
+      fsm:set_event(SM, wait);
      (_LSM, ok) ->
       ?INFO(?ID, "Transmit tuples ~p~n", [L]),
       transmit_combined(SM, AT, Head, lists:reverse(L), 0)
   end,
 
+  ?INFO(?ID, "Channel_state ~p~n", [env:get(SM, channel_state)]),
   [fsm:set_event(__, eps),
    fsm:maybe_send_at_command(__, AT, Transmission_handler)
   ](SM).

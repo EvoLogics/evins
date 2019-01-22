@@ -56,7 +56,6 @@
                 {sensing,
                  [{routing_updated, sensing},
                   {try_transmit, sensing},
-                  {check_state, sensing},
                   {initiation_listen, transmit},
                   {empty, idle},
                   {no_routing, idle},
@@ -75,8 +74,7 @@
                  ]},
 
                 {busy,
-                 [{backoff_timeout, sensing},
-                  {check_state, sensing},
+                 [{initiation_listen, sensing},
                   {recv_data, recv},
                   {reset, idle}
                  ]},
@@ -89,7 +87,10 @@
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> init_nl_burst(SM), SM.
+init(SM)       ->
+  [init_nl_burst(__),
+   env:put(__, channel_state, initiation_listen)
+  ](SM).
 trans()        -> ?TRANS.
 final()        -> [alarm].
 init_event()   -> eps.
@@ -101,13 +102,12 @@ handle_event(MM, SM, Term) ->
   Pid = share:get(SM, pid),
   State = SM#sm.state,
   Protocol_Name = share:get(SM, nl_protocol),
-  
+
   case Term of
     {timeout, answer_timeout} ->
       fsm:cast(SM, nl_impl, {send, {nl, error, <<"ANSWER TIMEOUT">>}});
     {timeout, check_state} ->
       [fsm:maybe_send_at_command(__, {at, "?S", ""}),
-       fsm:set_event(__, check_state),
        fsm:run_event(MM, __, {})
       ](SM);
     {timeout, {wait_data_tmo, Src}} when State == recv ->
@@ -217,11 +217,11 @@ handle_event(MM, SM, Term) ->
           recv_ack(SM, Dst, L)
       end;
     {sync,"?S", Status} ->
-      [fsm:clear_timeout(__, check_state),
-       fsm:clear_timeout(__, answer_timeout),
-       extract_status(__, Status),
-       fsm:run_event(MM, __, Term)
-      ](SM);
+     [fsm:clear_timeout(__, check_state),
+      fsm:clear_timeout(__, answer_timeout),
+      extract_status(__, Status),
+      fsm:run_event(MM, __, Term)
+     ](SM);
     {sync,"?PC", PC} ->
       [fsm:clear_timeout(__, pc_timeout),
        fsm:clear_timeout(__, answer_timeout),
@@ -243,6 +243,17 @@ handle_event(MM, SM, Term) ->
       [fsm:maybe_send_at_command(__, {at, "?PC", ""}),
        set_timeout(__, 1, pc_timeout),
        run_hook_handler(MM, __, Term, eps)
+      ](SM);
+    {async, Notification = {status, _, _}} ->
+      Channel_state = nl_hf:process_async_status(Notification),
+      Busy_handler =
+      fun (LSM, initiation_listen) when SM#sm.state == busy ->
+           fsm:set_event(LSM, initiation_listen);
+          (LSM, _) -> LSM
+      end,
+      [Busy_handler(__, Channel_state),
+       env:put(__, channel_state, Channel_state),
+       fsm:run_event(MM, __, {})
       ](SM);
     {async, {bitrate, _, Bitrate}} ->
       share:put(SM, bitrate, Bitrate);
@@ -340,14 +351,9 @@ handle_sensing(_MM, #sm{event = pick} = SM, Term) ->
   [nl_hf:update_states(__),
    Queue_handler(SM, queue:is_empty(Q))
   ](SM);
-handle_sensing(_MM, #sm{event = check_state} = SM, _) ->
-  [nl_hf:update_states(__),
-   fsm:maybe_send_at_command(__, {at, "?S", ""}),
-   set_timeout(__, 1, check_state),
-   fsm:set_event(__, eps)
-  ](SM);
 handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
-                                                  (Ev == routing_updated) ->
+                                                  (Ev == routing_updated) or
+                                                  (Ev == initiation_listen)->
   % 1. check if there are messages in the buffer with existing
   %    routing to dst address
   % 2. if exist -> check state and try transmit
@@ -359,7 +365,11 @@ handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
   end,
 
   Routing_handler =
-  fun (LSM, {true, _}) -> fsm:set_event(LSM, check_state);
+  fun (#sm{env = #{channel_state := initiation_listen}} = LSM, {true, _}) ->
+        fsm:set_event(LSM, initiation_listen);
+      (LSM, {true, _}) ->
+        Channel_state = env:get(LSM, channel_state),
+        fsm:set_event(LSM, Channel_state);
       (LSM, {false, Dst}) ->
         [nl_hf:add_event_params(__, {no_routing, Dst}),
          fsm:set_event(__, eps)
