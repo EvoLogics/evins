@@ -40,7 +40,7 @@
 -export([check_routing_existance/1]).
 -export([burst_len/1, increase_local_pc/2]).
 -export([get_packets/1, pop_delivered/2, failed_pc/2]).
--export([bind_pc/3, check_dublicated/2]).
+-export([bind_pc/3, check_dublicated/2, encode_ack/1, try_extract_ack/2]).
 
 %----------------------------- Get from tuple ----------------------------------
 geta(Tuple) ->
@@ -83,7 +83,48 @@ replace_helper([], _, Tuple) -> Tuple;
 replace_helper([Type | Types], [Value | Values], Tuple) ->
   replace_helper(Types, Values, replace(Type, Value, Tuple)).
 
-%-------------------- Encodeing / Decodinf data --------------------------------
+%-------------------- Encoding / Decoding data --------------------------------
+encode_ack(Acks) ->
+  C_Bits_Flag = nl_hf:count_flag_bits(?FLAG_MAX),
+  Flag_Num = ?FLAG2NUM(ack),
+  B_Flag = <<Flag_Num:C_Bits_Flag>>,
+  Len = length(Acks),
+  B_Len_Burst = <<Len:8>>,
+  Bin = code_header(?PKG_ID_MAX, Acks),
+  Tmp_Data = <<B_Flag/bitstring, B_Len_Burst/bitstring, Bin/bitstring>>,
+
+  Is_binary = nl_hf:check_binary(Tmp_Data),
+  if not Is_binary ->
+    Add = nl_hf:add_bits(Tmp_Data),
+    <<B_Flag/bitstring, B_Len_Burst/bitstring, Bin/bitstring, 0:Add>>;
+  true ->
+    Tmp_Data
+  end.
+
+try_extract_ack(SM, Payload) ->
+  try
+    C_Bits_Flag = nl_hf:count_flag_bits(?FLAG_MAX),
+    C_Bits_PkgId = nl_hf:count_flag_bits(?PKG_ID_MAX),
+    <<Flag_Num:C_Bits_Flag, Count:8, Rest/bitstring>> = Payload,
+    ?INFO(?ID, "try_extract_ack ~p ~p ~p~n", [Flag_Num, Count, Rest]),
+    Width = Count * C_Bits_PkgId,
+    <<BField:Width/bitstring, _/bitstring>> = Rest,
+    Acks = decode_header(?PKG_ID_MAX, BField),
+    ack = nl_hf:num2flag(Flag_Num, nl),
+    Count = length(Acks),
+    [Count, Acks]
+  catch error: _Reason ->
+    []
+  end.
+
+decode_header(Size, Payload) ->
+  W = nl_hf:count_flag_bits(Size),
+  [N || <<N:W>> <= Payload].
+
+code_header(Size, Payload) ->
+  W = nl_hf:count_flag_bits(Size),
+  << <<N:W>> || N <- Payload>>.
+
 create_nl_burst_header(SM, T) ->
   ?TRACE(?ID, "create_payload_nl_burst_header ~p~n", [T]),
   [Flag, RPkgID, Src, Dst, Len, Whole_len, Payload] =
@@ -141,9 +182,6 @@ extract_nl_burst_header(SM, Payload) ->
     replace(
     [flag, id_local, id_remote, src, dst, len, whole_len, payload],
     [Flag, LocalPC, RPkgID, Src, Dst, Len, Whole_len, Data], Tuple).
-
-    %[flag, id_local, src, dst, len, whole_len, payload],
-    %[Flag, LPkgID, Src, Dst, Len, Whole_len, Data], Tuple).
 %--------------------------------- Routing -------------------------------------
 check_routing_existance(SM) ->
   Q_data = share:get(SM, nothing, burst_data_buffer, queue:new()),
@@ -193,15 +231,19 @@ pop_delivered(SM, PC) ->
   ](SM).
 
 failed_pc(SM, PC) ->
+  Local_address = share:get(SM, local_address),
   QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
   NQ =
   lists:foldl(
   fun(X, Q) ->
-    [XPC, XLocalPC, XSrc, XDst, XLen, XPayload] =
-      getv([id_at, id_local, src, dst, len, payload], X),
+    [XPC, XLocalPC, XRemotePC, XSrc, XDst, XLen, XPayload] =
+      getv([id_at, id_local, id_remote, src, dst, len, payload], X),
+
+    RemotePC =
+    if XSrc == Local_address -> XLocalPC; true -> XRemotePC end,
     Tuple =
-    replace([id_local, src, dst, len, payload],
-            [XLocalPC, XSrc, XDst, XLen, XPayload],
+    replace([id_local, id_remote, src, dst, len, payload],
+            [XLocalPC, RemotePC, XSrc, XDst, XLen, XPayload],
     create_default()),
 
     if XPC == PC -> queue:in(Tuple, Q);

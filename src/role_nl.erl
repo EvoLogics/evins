@@ -38,7 +38,7 @@
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-  _ = {ok, busy, error, failed, delivered, send, recv, empty}, %% atom vocabular
+  _ = {ok, busy, error, failed, delivered, send, recv, empty, ack}, %% atom vocabular
   _ = {staticr, staticrack, sncfloodr, sncfloodrack, dpfloodr, dpfloodrack, icrpr, sncfloodpfr, sncfloodpfrack, evoicrppfr, evoicrppfrack, dblfloodpfr, dblfloodpfrack, laorp},
   _ = {time, period},
   _ = {source, relay},
@@ -238,6 +238,17 @@ nl_extract_subject(<<"get">>, <<"routing">>) ->
 nl_extract_subject(<<"update">>, <<"routing,", Params/binary>>) ->
   Dst = binary_to_integer(Params),
   {nl, update, routing, Dst};
+%% NL,ack,Dst,Data
+nl_extract_subject(<<"ack">>, <<Params/binary>>) ->
+  [BDst, Data] = re:split(Params,",",[{parts,2}]),
+  Dst = binary_to_integer(BDst),
+  {nl, ack, Dst, Data};
+%% NL,send, ack, Src, Dst, Data
+% nl_extract_subject(<<"ack">>, <<Params/binary>>) ->
+%   [BSrc,BDst,Data] = binary:split(Params,<<$,>>, [global]),
+%   [Src,Dst] = [binary_to_integer(V) || V <- [BSrc,BDst]],
+%   {nl, ack, Src, Dst, Data};
+
 %% NL,statistics,neighbours,<EOL> <relay or source> neighbours:<neighbours> count:<count> total:<total><EOL>...<EOL><EOL>
 %% NL,statistics,neighbours,
 %%  source neighbour:3 count:8 total:10
@@ -330,6 +341,9 @@ from_term({nl,send,Dst,Data}, Cfg) ->
 from_term({nl,send,Type,Dst,Data}, Cfg) ->
   BLen = integer_to_binary(byte_size(Data)),
   [list_to_binary(["NL,send,",atom_to_binary(Type,utf8),$,,BLen,$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
+%% NL,ack,Src,Dst,Data
+from_term({nl, ack, Src,Dst, Data}, Cfg) ->
+  [list_to_binary(["NL,ack,", integer_to_binary(Src),$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
 %% NL,set,routing,[<A1>-><A2>],[<A3>-><A4>],..,<Default Addr>
 from_term({nl,set,routing,Routing}, Cfg) ->
   RoutingLst =

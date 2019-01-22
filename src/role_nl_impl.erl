@@ -141,6 +141,13 @@ nl_extract_subject(<<"start">>, <<"polling,", Params/binary>>) ->
            <<"nb">> -> nb
          end,
   {nl,start,polling,Flag};
+
+%% NL,ack,Src,Dst,Data
+nl_extract_subject(<<"ack">>, <<Params/binary>>) ->
+   [BSrc,BDst,Data] = binary:split(Params,<<$,>>, [global]),
+   [Src,Dst] = [binary_to_integer(V) || V <- [BSrc,BDst]],
+   {nl, ack, Src, Dst, Data};
+
 %% NL telegrams with atoms and positive integers as parameters
 nl_extract_subject(Subject, Params) ->
   ParamLst =
@@ -151,6 +158,9 @@ nl_extract_subject(Subject, Params) ->
 
 from_term({nl, help, Bin}, Cfg) ->
   [Bin, Cfg];
+%% NL,ack,Dst,Data
+from_term({nl, ack, Dst, Data}, Cfg) ->
+  [list_to_binary(["NL,ack,",integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
 %% NL,recv,Datalen,Src,Dst,Data
 from_term({nl, recv, Src, Dst, Data}, Cfg) ->
   BLen = integer_to_binary(byte_size(Data)),
@@ -184,8 +194,10 @@ from_term({nl, neighbours, Neighbours}, Cfg) when is_list(Neighbours) ->
               end, Neighbours),
   [list_to_binary(["NL,neighbours,",lists:join(",",NeighboursLst),Cfg#config.eol]), Cfg];
 %% NL,state,State(Event)
-from_term({nl, state, {State, Event}}, Cfg) ->
+from_term({nl, state, {State, Event}}, Cfg) when is_atom(State) ->
   [list_to_binary(["NL,state,",atom_to_list(State),$(,atom_to_list(Event),$),Cfg#config.eol]), Cfg];
+from_term({nl, state, {State, Event}}, Cfg) ->
+  [list_to_binary(["NL,state,",State,$(,Event,$),Cfg#config.eol]), Cfg];
 %% NL,states,<EOL>State1(Event1)<EOL>...StateN(EventN)<EOL><EOL>
 from_term({nl, states, []}, Cfg) ->
   EOL = Cfg#config.eol,
@@ -193,8 +205,10 @@ from_term({nl, states, []}, Cfg) ->
 from_term({nl, states, Transitions}, Cfg) ->
   EOL = Cfg#config.eol,
   TransitionsLst =
-    lists:map(fun({State,Event}) ->
-                  lists:flatten([atom_to_list(State),$(,atom_to_list(Event),$),EOL])
+    lists:map(fun({State,Event}) when is_atom(State) ->
+                  lists:flatten([atom_to_list(State),$(,atom_to_list(Event),$),EOL]);
+                 ({State,Event}) ->
+                  lists:flatten([State,$(,Event,$),EOL])
               end, Transitions),
   [list_to_binary(["NL,states,",EOL,lists:join(",",TransitionsLst),EOL]), Cfg];
 %% NL,version,Major,Minor,Description

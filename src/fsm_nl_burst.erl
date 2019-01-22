@@ -110,14 +110,17 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, check_state),
        fsm:run_event(MM, __, {})
       ](SM);
-    {timeout, wait_data_tmo} when State == recv ->
+    {timeout, {wait_data_tmo, Src}} when State == recv ->
       [fsm:set_event(__, pick),
+       send_acks(__, Src),
        fsm:run_event(MM, __, {})
       ](SM);
     {timeout, pc_timeout} when State == busy ->
       SM;
     {timeout, pc_timeout} ->
       fsm:maybe_send_at_command(SM, {at, "?PC", ""});
+    {timeout, {wait_nl_async, Dst, PC}} ->
+      fsm:cast(SM, nl_impl, {send, {nl, failed, PC, Local_address, Dst}});
     {timeout, Event} ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
@@ -131,6 +134,9 @@ handle_event(MM, SM, Term) ->
     {nl, set, debug, ON} ->
       share:put(SM, debug, ON),
       fsm:cast(SM, nl_impl, {send, {nl, debug, ok}});
+    {nl, path, failed, Dst} ->
+      ?INFO(?ID, "Path to ~p failed to find~n", [Dst]),
+      SM;
     {nl, set, address, Address} ->
       nl_hf:process_set_command(SM, {address, Address});
     {nl, set, neighbours, Neighbours} ->
@@ -204,6 +210,12 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, reset),
        fsm:run_event(MM, __, {})
       ](SM);
+    {nl, ack, Dst, Local_address, Data} ->
+      case burst_nl_hf:try_extract_ack(SM, Data) of
+        [] -> SM;
+        [_Count, L] ->
+          recv_ack(SM, Dst, L)
+      end;
     {sync,"?S", Status} ->
       [fsm:clear_timeout(__, check_state),
        fsm:clear_timeout(__, answer_timeout),
@@ -367,6 +379,7 @@ handle_sensing(_MM, SM, Term) ->
   ](SM).
 
 handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
+  Local_address = share:get(SM, local_address),
   {send_params, {Whole_len, Tuple, Tail}} =
     nl_hf:find_event_params(SM, send_params),
 
@@ -375,10 +388,17 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
      (Packets) -> [H | T] = Packets, [H, T]
   end,
 
+  Wait_async_handler =
+  fun(LSM, Src, Dst, PC) when Src == Local_address ->
+      Wait_ack = share:get(SM, wait_ack),
+      fsm:set_timeout(LSM, {s, Wait_ack}, {wait_nl_async, Dst, PC});
+     (LSM, _, _, _) -> LSM
+  end,
+
   Transmit_handler =
   fun(LSM, T, Rest) ->
       Pid = share:get(LSM, pid),
-      [PC, Dst] = burst_nl_hf:getv([id_at, dst], T),
+      [PC, PC_local, Src, Dst] = burst_nl_hf:getv([id_at, id_local, src, dst], T),
       Data = burst_nl_hf:create_nl_burst_header(LSM, T),
       Route_Addr = nl_hf:get_routing_address(LSM, Dst),
 
@@ -386,9 +406,9 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
       [P, NTail] = Packet_handler(Rest),
       NT = {send_params, {Whole_len, P, NTail}},
       PCS = share:get(SM, nothing, wait_async_pcs, []),
-
       [share:put(__, wait_async_pcs, [PC | PCS]),
        nl_hf:add_event_params(__, NT),
+       Wait_async_handler(__, Src, Dst, PC_local),
        fsm:set_event(__, eps),
        fsm:maybe_send_at_command(__, AT)
       ](LSM)
@@ -537,15 +557,18 @@ process_data(SM, Data) ->
   try
     Tuple = burst_nl_hf:extract_nl_burst_header(SM, Data),
     ?TRACE(?ID, "Received ~p~n", [Tuple]),
-    [Src, Dst, Len, Whole_len, Payload] =
-      burst_nl_hf:getv([src, dst, len, whole_len, payload], Tuple),
+    [Id_remote, Src, Dst, Len, Whole_len, Payload] =
+      burst_nl_hf:getv([id_remote, src, dst, len, whole_len, payload], Tuple),
     Params_name = atom_name(wait_len, Dst),
     Params = nl_hf:find_event_params(SM, Params_name),
 
     Packet_handler =
     fun (LSM, EP, Rest) when Rest =< 0 ->
-          [nl_hf:clear_spec_event_params(__, EP),
-           fsm:clear_timeout(__, wait_data_tmo),
+          ?TRACE(?ID, "Packet_handler len ~p~n", [Rest]),
+          [send_acks(__, Src),
+           nl_hf:clear_spec_event_params(__, EP),
+           nl_hf:clear_spec_timeout(__, wait_data_tmo),
+           %fsm:clear_timeout(__, {wait_data_tmo, Src}),
            fsm:set_event(__, pick)
           ](LSM);
         (LSM, _EP, Rest) ->
@@ -553,8 +576,9 @@ process_data(SM, Data) ->
           ?TRACE(?ID, "Packet_handler ~p ~p~n", [Len, Rest]),
           Time = calc_burst_time(LSM, Rest),
           [nl_hf:add_event_params(__, NT),
-           fsm:clear_timeout(__, wait_data_tmo),
-           fsm:set_timeout(__, {s, Time}, wait_data_tmo),
+           %fsm:clear_timeout(__, {wait_data_tmo, Src}),
+           nl_hf:clear_spec_timeout(__, wait_data_tmo),
+           fsm:set_timeout(__, {s, Time}, {wait_data_tmo, Src}),
            fsm:set_event(__, eps)
           ](LSM)
     end,
@@ -562,13 +586,18 @@ process_data(SM, Data) ->
     %Check whole len: pick or wait for more data
     Wait_handler =
     fun (LSM, []) when Whole_len - Len =< 0 ->
-          fsm:set_event(LSM, pick);
+          ?TRACE(?ID, "Wait_handler len ~p~n", [Whole_len - Len]),
+          [send_acks(__, Src),
+           %fsm:clear_timeout(__, {wait_data_tmo, Src}),
+           nl_hf:clear_spec_timeout(__, wait_data_tmo),
+           fsm:set_event(__, pick)
+          ](LSM);
         (LSM, []) ->
           NT = {Params_name, {Len, Whole_len - Len}},
           ?TRACE(?ID, "Wait_handler ~p ~p~n", [Len, Whole_len]),
           Time = calc_burst_time(LSM, Whole_len),
           [nl_hf:add_event_params(__, NT),
-           fsm:set_timeout(__, {s, Time}, wait_data_tmo),
+           fsm:set_timeout(__, {s, Time}, {wait_data_tmo, Src}),
            fsm:set_event(__, eps)
           ](LSM);
         (LSM, EP = {_P, {_L, WL}})->
@@ -576,10 +605,21 @@ process_data(SM, Data) ->
           Packet_handler(LSM, EP, Waiting_rest)
     end,
 
+    Name = atom_name(acks, Src),
     Destination_handler =
     fun (LSM) when Dst == Local_address ->
-          %TODO: send ack
-          fsm:cast(LSM, nl_impl, {send, {nl, recv, Src, Dst, Payload}});
+          Acks = nl_hf:find_event_params(SM, Name),
+          Updated =
+          case Acks of
+            {Name, UAcks} ->
+              Member = lists:member(Id_remote, UAcks),
+              ?INFO(?ID, "Add ack ~p to ~p, is member ~p~n", [Id_remote, UAcks, Member]),
+              if Member -> UAcks; true -> [Id_remote | UAcks] end;
+            _ -> [Id_remote]
+          end,
+          [nl_hf:add_event_params(__, {Name, Updated}),
+           fsm:cast(__, nl_impl, {send, {nl, recv, Src, Dst, Payload}})
+          ](LSM);
         (LSM) ->
           burst_nl_hf:check_dublicated(LSM, Tuple)
     end,
@@ -610,7 +650,8 @@ calc_burst_time(SM, Len) ->
     Byte_per_s = Bitrate / 8,
     T = Len / Byte_per_s,
     ?INFO(?ID, "Wait for length ~p bytes, time ~p~n", [Len, T]),
-    T.
+    %TODO: find out if its real time
+    if T < 1 -> 1; true -> T end.
 
 atom_name(Name, Dst) ->
   DstA = binary_to_atom(integer_to_binary(Dst), utf8),
@@ -637,3 +678,33 @@ process_received(SM, Tuple) ->
   [nl_hf:fill_statistics(__, neighbours, Src),
    nl_hf:add_neighbours(__, Src, {Rssi, Integrity})
   ](SM).
+
+send_acks(SM, Src) ->
+  Name = atom_name(acks, Src),
+  Acks = nl_hf:find_event_params(SM, Name),
+  send_acks_helper(SM, Src, Acks).
+send_acks_helper(SM, _, []) -> SM;
+send_acks_helper(SM, Src, {_, Acks}) ->
+  ?INFO(?ID, "Send acks ~p to src ~p~n", [Acks, Src]),
+  Name = atom_name(acks, Src),
+  Payload = burst_nl_hf:encode_ack(lists:reverse(Acks)),
+  [nl_hf:add_event_params(__, {Name, []}),
+   fsm:cast(__, nl_impl, {send, {nl, ack, Src, Payload}})
+  ](SM).
+
+recv_ack(SM, Dst, L) ->
+  ?INFO(?ID, "Received acks from ~p: ~w~n", [Dst, L]),
+  recv_ack_helper(SM, Dst, L).
+recv_ack_helper(SM, _Dst, []) -> SM;
+recv_ack_helper(SM, Dst, [PC | T]) ->
+  Wait_ack = fsm:check_timeout(SM, {wait_nl_async, Dst, PC}),
+  ?INFO(?ID, "Wait_ack ~p: ~p ~n", [Dst, PC]),
+  if Wait_ack ->
+    Local_address = share:get(SM, local_address),
+    [fsm:cast(__, nl_impl, {send, {nl, delivered, PC, Local_address, Dst}}),
+     fsm:clear_timeout(__, {wait_nl_async, Dst, PC}),
+     recv_ack_helper(__, Dst, T)
+    ](SM);
+  true ->
+    recv_ack_helper(SM, Dst, T)
+  end.

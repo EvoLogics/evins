@@ -48,12 +48,15 @@ parse_conf(Mod_ID, ArgS, Share) ->
   [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
   Max_queue_set = [Addrs          || {max_queue, Addrs} <- ArgS],
   Max_burst_len_set  = [Max  || {max_burst_len, Max} <- ArgS],
+  Wait_ack_set  = [Time  || {wait_ack, Time} <- ArgS],
 
   Max_queue  = set_params(Max_queue_set, 3),
+  Wait_ack  = set_params(Wait_ack_set, 120), %s
   Max_burst_len  = set_params(Max_burst_len_set, Max_queue * 1000),
   share:put(ShareID, [{nl_start_time, Start_time},
                       {nl_protocol, NL_Protocol},
                       {max_queue, Max_queue},
+                      {wait_ack, Wait_ack},
                       {max_burst_len, Max_burst_len}]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]).
