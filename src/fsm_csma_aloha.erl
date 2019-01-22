@@ -124,7 +124,7 @@
                   {sendstart, backoff},
                   {recvstart, backoff}
                  ]},
-                  
+
                 {transmit,
                  [{data_sent, idle},
                   {transmit, sensing}
@@ -180,6 +180,15 @@ change_backoff(SM, Type) ->
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
   Val.
 
+process_async({status, Status, Reason}) ->
+  case Status of
+    'INITIATION' when Reason == 'LISTEN'-> initiation_listen;
+    'INITIATION' -> busy_online;
+    'ONLINE'-> busy_online;
+    'BACKOFF' -> busy_online;
+    'BUSY' when Reason == 'BACKOFF' -> busy_backoff;
+    'BUSY' -> busy
+  end;
 process_async({sendstart, _, _, _, _}) -> sendstart;
 process_async({sendend, _, _, _, _}) -> sendend;
 process_async({recvstart}) -> recvstart;
@@ -268,9 +277,10 @@ handle_event(MM, SM, Term) ->
         allowed ->
           Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to mac_hf?
           Tx = {at,{pid,P},"*SENDIM",Dst,noack,<<Hdr/binary,Bin/binary>>},
-          share:put(SM, tx, Tx), 
+          share:put(SM, tx, Tx),
           fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", "OK"}}),
           run_hook_handler(MM, SM, Term, transmit);
+
         _ ->
           fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", {error, "DISCONNECTED"}}})
       end;
@@ -296,7 +306,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, at_impl, {send, Term}),
       NSM =
         case process_async(Tuple) of
-          E when E == sendstart; E == recvstart ->
+          E when E == sendstart; E == recvstart; E == busy_backoff ->
             [
              fsm:set_event(__, E),
              env:put(__, channel_state, busy)
