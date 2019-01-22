@@ -195,7 +195,16 @@ handle_event(MM, SM, Term) ->
     {nl, failed, _, _, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, path, failed, _} ->
-      get_routing(SM, ?TO_MM, {nl, get, routing});
+      %TODO: move stack
+      Burst_protocol = share:get(SM, burst_protocol),
+      ProtocolMM = share:get(SM, Burst_protocol),
+      [fsm:cast(__, ProtocolMM, [], {send, Term}, ?TO_MM),
+       get_routing(__, ?TO_MM, {nl, get, routing})
+      ](SM);
+    {nl, ack, Src, Payload} ->
+      Ack_protocol = share:get(SM, ack_protocol),
+      ProtocolMM = share:get(SM, Ack_protocol),
+      fsm:cast(SM, ProtocolMM, [], {send, {nl, send, Src, Payload}}, ?TO_MM);
     {nl, path, _, _} ->
       SM;
     {nl, neighbours, _} ->
@@ -233,8 +242,15 @@ handle_event(MM, SM, Term) ->
     % TODO: check if should be shown
     {nl, recv, _Src, _Dst, <<"D">>} ->
       SM;
-    {nl, recv, _Src, _Dst, _Data} ->
-      fsm:cast(SM, nl_impl, {send, Term});
+    {nl, recv, Src, Dst, Data} ->
+      ?INFO(?ID, "Received tuple ~p~n", [Term]),
+      Burst_protocol = share:get(SM, burst_protocol),
+      ProtocolMM = share:get(SM, Burst_protocol),
+      case burst_nl_hf:try_extract_ack(SM, Data) of
+        [] -> fsm:cast(SM, nl_impl, {send, Term});
+        [_Count, _L] ->
+          fsm:cast(SM, ProtocolMM, [], {send, {nl, ack, Src, Dst, Data}}, ?TO_MM)
+      end;
     {nl, error, _} when MM#mm.role == nl_impl ->
       ?INFO(?ID, "MM ~p~n", [MM#mm.role]),
       fsm:cast(SM, nl_impl, {send, {nl, error}});
