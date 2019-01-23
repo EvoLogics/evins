@@ -698,7 +698,10 @@ extract_nmea(<<"EVOSSB">>, Params) ->
            <<"F">> -> filtered;
            <<"R">> -> reconstructed
          end,
-    Err = binary_to_list(BErr),
+    Err = case BErr of
+              <<>> -> nothing;
+              _ -> binary_to_list(BErr)
+          end,
     {nmea, {evossb, UTC, TID, DID, S, Err, CS, FS, X, Y, Z, Acc, Pr, Vel}}
   catch
     error:_ -> {error, {parseError, evossb, Params}}
