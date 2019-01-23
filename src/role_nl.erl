@@ -235,6 +235,8 @@ nl_extract_subject(<<"statistics">>, <<"ok">>) ->
   {nl, statistics, ok};
 nl_extract_subject(<<"get">>, <<"routing">>) ->
   {nl, get, routing};
+nl_extract_subject(<<"get">>, <<"service">>) ->
+  {nl, get, service};
 nl_extract_subject(<<"update">>, <<"routing,", Params/binary>>) ->
   Dst = binary_to_integer(Params),
   {nl, update, routing, Dst};
@@ -280,6 +282,26 @@ nl_extract_subject(<<"statistics">>, <<"paths,",Params/binary>>) ->
                  PathList = [binary_to_integer(I) || I <- binary:split(Path,<<$,>>)],
                  list_to_tuple([binary_to_existing_atom(Role, utf8), PathList | [binary_to_integer(V) || V <- Values]])
              end, Lines)};
+
+%% NL,service,status:P1,P2 service:empty
+%% NL,service,status:P1,P2 service:src,dst,type,decoded,transmitted,rssi,integrity
+nl_extract_subject(<<"service">>, <<"status:", Params/binary>>) ->
+  %Lines = tl(re:split(Params,"\r?\n")),
+  Regexp1 = "(.*?) (.*?) service:([^ ]*)",
+  {match, [S1, S2, Service]} = re:run(Params, Regexp1, [{capture, [1,2,3], binary}]),
+  if Service == <<"empty">> ->
+    {nl, service, {status, binary_to_list(S1), binary_to_list(S2)}, []};
+  true ->
+    Regexp2 = "(.*?) (.*?) service:([^ ]*),([^ ]*),([^ ]*),([^ ]*),([^ ]*),([^ ]*),([^ ]*)",
+    {match, [S1, S2, Src, Dst, Type, Decoded, Transmitted, RRssi, RIntegrity]} =
+      re:run(Params, Regexp2, [{capture, [1,2,3,4,5,6,7,8,9], binary}]),
+
+      {nl, service, {status, binary_to_list(S1), binary_to_list(S2)},
+                    {recvsrv, binary_to_integer(Src), binary_to_integer(Dst),
+                              binary_to_list(Type), binary_to_integer(Decoded),
+                              binary_to_integer(Transmitted), binary_to_integer(RRssi),
+                              binary_to_integer(RIntegrity)}}
+  end;
 %% NL,statistics,data,<EOL> <relay or source> data:<hash> len:<length> duration:<duration> state:<state> total:<total> dst:<dst> hops:<hops><EOL>...<EOL><EOL>
 %% NL,statistics,data,
 %%  source data:0xabde len:4 duration:5.6 state:delivered total:1 dst:4 hops:1

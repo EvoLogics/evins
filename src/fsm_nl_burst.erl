@@ -89,7 +89,9 @@
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       ->
   [init_nl_burst(__),
-   env:put(__, channel_state, initiation_listen)
+   env:put(__, channel_state, initiation_listen),
+   env:put(__, channel_state_msg, {status, 'INITIATION', 'LISTEN'}),
+   env:put(__, service_msg, [])
   ](SM).
 trans()        -> ?TRANS.
 final()        -> [alarm].
@@ -173,6 +175,10 @@ handle_event(MM, SM, Term) ->
       nl_hf:process_get_command(SM, {statistics, Some_statistics});
     {nl, get, protocolinfo, Some_protocol} ->
       nl_hf:process_get_command(SM, {protocolinfo, Some_protocol});
+    {nl, get, service} ->
+      Status = env:get(SM, channel_state_msg),
+      SRV = env:get(SM, service_msg),
+      fsm:cast(SM, nl_impl, {send, {nl, service, Status, SRV}});
     {nl, get, Command} ->
       nl_hf:process_get_command(SM, Command);
     {nl, delete, neighbour, Address} ->
@@ -216,6 +222,8 @@ handle_event(MM, SM, Term) ->
         [_Count, L] ->
           recv_ack(SM, Dst, L)
       end;
+    {async, Recv_Tuple = {recvsrv,Src,_,_,_,_,_,_}} when Src =/=0 ->
+      env:put(SM, service_msg, Recv_Tuple);
     {sync,"?S", Status} ->
      [fsm:clear_timeout(__, check_state),
       fsm:clear_timeout(__, answer_timeout),
@@ -253,6 +261,7 @@ handle_event(MM, SM, Term) ->
       end,
       [Busy_handler(__, Channel_state),
        env:put(__, channel_state, Channel_state),
+       env:put(__, channel_state_msg, Notification),
        fsm:run_event(MM, __, {})
       ](SM);
     {async, {bitrate, _, Bitrate}} ->
