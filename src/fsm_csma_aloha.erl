@@ -185,6 +185,7 @@ process_async({status, Status, Reason}) ->
     'INITIATION' when Reason == 'LISTEN'-> initiation_listen;
     'INITIATION' -> busy_online;
     'ONLINE'-> busy_online;
+    'OFFLINE' -> busy_online;
     'BACKOFF' -> busy_online;
     'BUSY' when Reason == 'BACKOFF' -> busy_backoff;
     'BUSY' -> busy

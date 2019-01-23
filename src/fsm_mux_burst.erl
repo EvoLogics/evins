@@ -129,7 +129,6 @@ handle_event(MM, SM, Term) ->
        share:put(__, routing_table, Routing)
       ](SM);
     {nl, routing, Routing} when Wait_routing_sync == false ->
-      ?INFO(?ID, "SET ROUTING 1 ~p ~p~n", [MM#mm.role, Routing]),
       [share:put(__, routing_table, Routing),
        process_routing(__, Routing),
        fsm:set_event(__, set_routing),
@@ -142,7 +141,6 @@ handle_event(MM, SM, Term) ->
           (LSM, true) ->
             nl_hf:add_event_params(LSM, {wait_routing_async, false})
       end,
-      ?INFO(?ID, "SET ROUTING 2 ~p ~p~n", [MM#mm.role, Routing]),
       [share:put(__, routing_table, Routing),
        nl_hf:add_event_params(__, {wait_routing_sync, false}),
        Cast_handler(__, Wait_routing_async),
@@ -170,7 +168,6 @@ handle_event(MM, SM, Term) ->
       end,
       fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
     {nl, get, routing} ->
-      ?INFO(?ID, "GET ROUTING ~p~n", [MM#mm.role]),
       Cast_handler =
       fun (LSM, nl) ->
              nl_hf:add_event_params(LSM, {wait_routing_async, true});
