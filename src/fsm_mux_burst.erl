@@ -86,6 +86,7 @@ handle_event(MM, SM, Term) ->
   Wait_routing_async = env:get(SM, wait_routing_async),
   Clear_routing = env:get(SM, clear_routing),
   Send_routing = env:get(SM, send_routing),
+  Current_protocol = share:get(SM, current_protocol),
 
   State = SM#sm.state,
   case Term of
@@ -131,7 +132,6 @@ handle_event(MM, SM, Term) ->
       send_command(SM, ?TO_MM, burst_protocol, {nl, send, tolerant, Src, Payload});
     {nl, send, Src, Data} ->
       Payload = encode_mux(SM, mux, Data),
-      Current_protocol = share:get(SM, current_protocol),
       P =
       if Current_protocol == burst -> im_protocol;
         true -> current_protocol
@@ -199,9 +199,13 @@ handle_event(MM, SM, Term) ->
     {nl, get, status} ->
       send_command(SM, ?TO_MM, burst_protocol, Term);
     {nl, get, statistics, tolerant} ->
-      send_command(SM, ?TO_MM, current_protocol, Term);
+      send_command(SM, ?TO_MM, burst_protocol, Term);
     {nl, get, statistics, data} ->
-      send_command(SM, ?TO_MM, current_protocol, Term);
+      P =
+      if Current_protocol == burst -> im_protocol;
+        true -> current_protocol
+      end,
+      send_command(SM, ?TO_MM, P, Term);
     {nl, get, statistics, _} ->
       send_command(SM, ?TO_MM, discovery_protocol, Term);
     {nl, get, _} ->
