@@ -277,6 +277,10 @@ set_routing(Routing, Protocol, Default) ->
       Default;
     _ when (Routing =/= []) ->
       [TupleRouting] = Routing,
-      [{?ADDRESS_MAX, ?ADDRESS_MAX} | tuple_to_list(TupleRouting)];
+      L = [{?ADDRESS_MAX, ?ADDRESS_MAX} | tuple_to_list(TupleRouting)],
+      lists:foldr(fun
+        ({S, D}, A) -> [{S, D, 0} | A];
+        (X, A) -> [X | A]
+      end, [], L);
     _ -> Default
   end.
