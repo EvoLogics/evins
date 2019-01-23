@@ -43,7 +43,7 @@ start(Role_ID, Mod_ID, MM) ->
   _ = {time, period},
   _ = {source, relay},
   _ = {sensitive, alarm, tolerant, broadcast},
-  _ = {set, get, address, start, stop, protocolinfo, protocol, protocols, routing, neighbours, neighbour, state, states, paths, data, statistics, flush, polling, discovery, buffer, time},
+  _ = {set, get, address, start, stop, protocolinfo, protocol, protocols, routing, neighbours, neighbour, state, states, service, paths, data, statistics, flush, polling, discovery, buffer, time},
   Cfg = #config{eol = "\r\n"},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
@@ -198,6 +198,24 @@ from_term({nl, state, {State, Event}}, Cfg) when is_atom(State) ->
   [list_to_binary(["NL,state,",atom_to_list(State),$(,atom_to_list(Event),$),Cfg#config.eol]), Cfg];
 from_term({nl, state, {State, Event}}, Cfg) ->
   [list_to_binary(["NL,state,",State,$(,Event,$),Cfg#config.eol]), Cfg];
+%% NL,service,status:P1,P2 service:empty
+%% NL,service,status:P1,P2 service:src,dst,type,decoded,transmitted,rssi,integrity
+from_term({nl, service, Status, []}, Cfg) ->
+  EOL = Cfg#config.eol,
+  {status, P1, P2} = Status,
+  BStatus = lists:flatten([io_lib:format("status:~s ~s service:empty",[P1, P2])]),
+  [list_to_binary(["NL,service,",BStatus, EOL]), Cfg];
+from_term({nl, service, Status, Service}, Cfg) ->
+  EOL = Cfg#config.eol,
+  {recvsrv, Src, Dst, Type, Decoded, Transmitted, RRssi, RIntegrity} = Service,
+  BSrv =
+  list_to_binary([integer_to_list(Src),$,,integer_to_list(Dst),$,,Type,$,,
+                  integer_to_list(Decoded),$,,integer_to_list(Transmitted),$,,
+                  integer_to_list(RRssi),$,,integer_to_list(RIntegrity)]),
+  {status, P1, P2} = Status,
+  BStatus = lists:flatten([io_lib:format("status:~s ~s",[P1, P2])]),
+  BService = lists:flatten([io_lib:format(" service:~s",[BSrv])]),
+  [list_to_binary(["NL,service,",BStatus, BService, EOL]), Cfg];
 %% NL,states,<EOL>State1(Event1)<EOL>...StateN(EventN)<EOL><EOL>
 from_term({nl, states, []}, Cfg) ->
   EOL = Cfg#config.eol,
