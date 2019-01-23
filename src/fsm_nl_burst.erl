@@ -43,7 +43,8 @@
                  [{try_transmit, sensing},
                   {routing_updated, sensing},
                   {recv_data, recv},
-                  {reset, idle}
+                  {reset, idle},
+                  {no_routing, idle}
                  ]},
 
                 {recv,
@@ -518,11 +519,14 @@ set_routing(SM, Routing) ->
 
   State = SM#sm.state,
   Routing_handler =
-  fun (LSM, idle) when Data_buffer =/= {[],[]} ->
-       fsm:set_event(LSM, routing_updated);
-      (LSM, sensing) when Routing == [{default,63}];
+  fun (LSM, sensing) when Routing == [{default,63}];
                           not Exist ->
        fsm:set_event(LSM, no_routing);
+      (LSM, idle) when Routing == [{default,63}];
+                          not Exist ->
+       fsm:set_event(LSM, no_routing);
+      (LSM, idle) when Data_buffer =/= {[],[]} ->
+       fsm:set_event(LSM, routing_updated);
       (LSM, sensing) when Exist ->
        fsm:set_event(LSM, routing_updated);
       (LSM, _) ->

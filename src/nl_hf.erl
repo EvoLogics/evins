@@ -50,7 +50,7 @@
 -export([update_path/2, update_routing/2, update_received/2, routing_exist/2, routing_to_list/1]).
 -export([getv/2, geta/1, replace/3, drop_postponed/2]).
 -export([add_to_paths/7, get_stable_path/4, get_stable_path/3, remove_old_paths/3, if_path_packet/1,has_path_packets/3, check_tranmission_path/2]).
--export([check_binary/1, add_bits/1, cut_add_bits/2, process_async_status/1]).
+-export([check_binary/1, add_bits/1, cut_add_bits/2, cut_add_bits/1, process_async_status/1]).
 
 set_event_params(SM, Event_Parameter) ->
   SM#sm{event_params = Event_Parameter}.
