@@ -124,10 +124,19 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, busy}});
     {nl, send, _} when Send_routing == true ->
       env:put(SM, send_routing, false);
-    {nl, send, tolerant, _Src, _Data} ->
-      send_command(SM, ?TO_MM, burst_protocol, Term);
-    {nl, send, _Src, _Data} ->
-      send_command(SM, ?TO_MM, current_protocol, Term);
+    {nl, send, _} ->
+      fsm:cast(SM, nl_impl, {send, Term});
+    {nl, send, tolerant, Src, Data} ->
+      Payload = encode_mux(SM, mux, Data),
+      send_command(SM, ?TO_MM, burst_protocol, {nl, send, tolerant, Src, Payload});
+    {nl, send, Src, Data} ->
+      Payload = encode_mux(SM, mux, Data),
+      Current_protocol = share:get(SM, current_protocol),
+      P =
+      if Current_protocol == burst -> im_protocol;
+        true -> current_protocol
+      end,
+      send_command(SM, ?TO_MM, P, {nl, send, Src, Payload});
     {nl, routing, Routing} when Clear_routing == true ->
       [env:put(__, clear_routing, false),
        share:put(__, routing_table, Routing)
@@ -213,9 +222,10 @@ handle_event(MM, SM, Term) ->
       [fsm:cast(__, ProtocolMM, [], {send, Term}, ?TO_MM),
        get_routing(__, ?TO_MM, {nl, get, routing})
       ](SM);
-    {nl, ack, Src, Payload} ->
+    {nl, ack, Src, Data} ->
       Ack_protocol = share:get(SM, ack_protocol),
       ProtocolMM = share:get(SM, Ack_protocol),
+      Payload = encode_mux(SM, nl, Data),
       fsm:cast(SM, ProtocolMM, [], {send, {nl, send, Src, Payload}}, ?TO_MM);
     {nl, path, _, _} ->
       SM;
@@ -251,18 +261,9 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, Event),
        fsm:run_event(MM, __, {})
       ] (SM);
-    % TODO: check if should be shown
-    {nl, recv, _Src, _Dst, <<"D">>} ->
-      SM;
-    {nl, recv, Src, Dst, Data} ->
+    {nl, recv, _Src, _Dst, _Data} ->
       ?INFO(?ID, "Received tuple ~p~n", [Term]),
-      Burst_protocol = share:get(SM, burst_protocol),
-      ProtocolMM = share:get(SM, Burst_protocol),
-      case burst_nl_hf:try_extract_ack(SM, Data) of
-        [] -> fsm:cast(SM, nl_impl, {send, Term});
-        [_Count, _L] ->
-          fsm:cast(SM, ProtocolMM, [], {send, {nl, ack, Src, Dst, Data}}, ?TO_MM)
-      end;
+      process_recv(SM, Term);
     {nl, error, _} when MM#mm.role == nl_impl ->
       ?INFO(?ID, "MM ~p~n", [MM#mm.role]),
       fsm:cast(SM, nl_impl, {send, {nl, error}});
@@ -327,7 +328,8 @@ update_routing(SM, Dst) ->
         ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
         LSM;
       (LSM, _) ->
-        Tuple = {nl, send, Dst, <<"D">> },
+        Payload = encode_mux(SM, nl, <<"D">>),
+        Tuple = {nl, send, Dst, Payload},
         Cleared = {nl, set, routing, clear_routing(SM, Dst)},
         % Delete routing
         [env:put(__, clear_routing, true),
@@ -392,7 +394,6 @@ set_routing(SM, MM, ProtocolMM, Command) ->
   [fsm:cast(__, ProtocolMM, [], {send, Command}, MM),
    env:put(__, wait_routing_sync, true)
   ](SM).
-
 send_command(SM, MM, Protocol_Name, Command) ->
   Discovery_protocol = share:get(SM, Protocol_Name),
   ProtocolMM = share:get(SM, Discovery_protocol),
@@ -404,3 +405,49 @@ send_command(SM, MM, Protocol_Name, Command) ->
         fsm:cast(LSM, ProtocolMM, [], {send, Command}, MM)
   end,
   Protocol_handler(SM, ProtocolMM).
+
+encode_mux(SM, Flag, Data) ->
+  Flag_num = flag_num(Flag),
+  B_Flag = <<Flag_num:1>>,
+  Tmp_Data = <<B_Flag/bitstring, Data/binary>>,
+  Is_binary = nl_hf:check_binary(Tmp_Data),
+  Bin =
+  if not Is_binary ->
+    Add = nl_hf:add_bits(Tmp_Data),
+    <<B_Flag/bitstring, 0:Add, Data/binary>>;
+  true ->
+    Tmp_Data
+  end,
+  ?INFO(?ID, "encode_mux ~p ~w~n", [Flag, Bin]),
+  Bin.
+
+decode_mux(SM, Data) ->
+  <<Flag_Num:1, Rest/bitstring>> = Data,
+  Rest_payload = nl_hf:cut_add_bits(Rest),
+  ?INFO(?ID, "decode_mux ~p ~p ~p~n", [Flag_Num, Rest, Data]),
+  Flag = num_flag(Flag_Num),
+  [Flag, Rest_payload].
+
+process_recv(SM, Term = {nl, recv, _Src, _Dst, Data}) ->
+  [Flag, Payload] = decode_mux(SM, Data),
+  ?INFO(?ID, "Decode mux header ~p ~p~n", [Flag, Payload]),
+  process_recv_helper(SM, Term, Flag, Payload).
+
+process_recv_helper(SM, _Term, nl, <<"D">>) -> SM;
+process_recv_helper(SM, Term, mux, Payload) ->
+  {nl, recv, Src, Dst, _} = Term,
+  fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, Payload}});
+process_recv_helper(SM, Term, nl, Payload) ->
+  {nl, recv, Src, Dst, _} = Term,
+  Burst_protocol = share:get(SM, burst_protocol),
+  ProtocolMM = share:get(SM, Burst_protocol),
+  case burst_nl_hf:try_extract_ack(SM, Payload) of
+    [] -> fsm:cast(SM, nl_impl, {send, Term});
+    [_Count, _L] ->
+      fsm:cast(SM, ProtocolMM, [], {send, {nl, ack, Src, Dst, Payload}}, ?TO_MM)
+  end.
+
+flag_num(nl) -> 1;
+flag_num(mux) -> 0.
+num_flag(1) -> nl;
+num_flag(0) -> mux.

@@ -43,9 +43,14 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
 
 parse_conf(_Mod_ID, ArgS, Share) ->
   Protocols_set = [P  || {protocols, P} <- ArgS],
+  Im_protocol_set = [P  || {im_protocol, P} <- ArgS],
+
   ShareID = #sm{share = Share},
   Protocol_list = parse_protocols(Protocols_set),
-  set_protocols(ShareID, Protocol_list, [{discovery, evoicrppfr}, {burst, burst}, {ack, sncfloodr}]).
+  set_protocols(ShareID, Protocol_list, [{discovery, evoicrppfr}, {burst, burst}, {ack, sncfloodr}]),
+
+  Im_protocol  = set_params(Im_protocol_set, sncfloodr),
+  share:put(ShareID, [{im_protocol, Im_protocol}]).
 
 parse_protocols([]) -> [];
 parse_protocols(Protocols_set) ->
@@ -76,3 +81,9 @@ set_protocols(ShareID, Protocols_set, Default) ->
         _ -> nothing
       end
     end, Protocols).
+
+set_params(Param, Default) ->
+  case Param of
+    []     -> Default;
+    [Value]-> Value
+  end.
