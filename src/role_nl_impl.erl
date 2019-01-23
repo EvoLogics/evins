@@ -43,7 +43,8 @@ start(Role_ID, Mod_ID, MM) ->
   _ = {time, period},
   _ = {source, relay},
   _ = {sensitive, alarm, tolerant, broadcast},
-  _ = {set, get, address, start, stop, protocolinfo, protocol, protocols, routing, neighbours, neighbour, state, states, service, paths, data, statistics, flush, polling, discovery, buffer, time},
+  _ = {set, get, address, start, stop, protocolinfo, protocol, protocols, routing, neighbours, neighbour, state, states, service, bitrate,
+       status, paths, data, statistics, flush, polling, discovery, buffer, time},
   Cfg = #config{eol = "\r\n"},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
@@ -216,6 +217,15 @@ from_term({nl, service, Status, Service}, Cfg) ->
   BStatus = lists:flatten([io_lib:format("status:~s ~s",[P1, P2])]),
   BService = lists:flatten([io_lib:format(" service:~s",[BSrv])]),
   [list_to_binary(["NL,service,",BStatus, BService, EOL]), Cfg];
+%% NL,bitrate,empty
+%% NL,bitrate,bitrate
+from_term({nl, bitrate, empty}, Cfg) ->
+  [list_to_binary(["NL,bitrate,empty", Cfg#config.eol]), Cfg];
+from_term({nl, bitrate, Bitrate}, Cfg) ->
+  [list_to_binary(["NL,bitrate,",integer_to_list(Bitrate), Cfg#config.eol]), Cfg];
+%% NL,status,Status
+from_term({nl, status, Status}, Cfg) ->
+  [list_to_binary(["NL,status,",Status, Cfg#config.eol]), Cfg];
 %% NL,states,<EOL>State1(Event1)<EOL>...StateN(EventN)<EOL><EOL>
 from_term({nl, states, []}, Cfg) ->
   EOL = Cfg#config.eol,

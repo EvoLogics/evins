@@ -237,6 +237,10 @@ nl_extract_subject(<<"get">>, <<"routing">>) ->
   {nl, get, routing};
 nl_extract_subject(<<"get">>, <<"service">>) ->
   {nl, get, service};
+nl_extract_subject(<<"get">>, <<"bitrate">>) ->
+  {nl, get, bitrate};
+nl_extract_subject(<<"get">>, <<"status">>) ->
+  {nl, get, status};
 nl_extract_subject(<<"update">>, <<"routing,", Params/binary>>) ->
   Dst = binary_to_integer(Params),
   {nl, update, routing, Dst};
@@ -245,24 +249,20 @@ nl_extract_subject(<<"ack">>, <<Params/binary>>) ->
   [BDst, Data] = re:split(Params,",",[{parts,2}]),
   Dst = binary_to_integer(BDst),
   {nl, ack, Dst, Data};
-%% NL,send, ack, Src, Dst, Data
-% nl_extract_subject(<<"ack">>, <<Params/binary>>) ->
-%   [BSrc,BDst,Data] = binary:split(Params,<<$,>>, [global]),
-%   [Src,Dst] = [binary_to_integer(V) || V <- [BSrc,BDst]],
-%   {nl, ack, Src, Dst, Data};
-
 %% NL,statistics,neighbours,<EOL> <relay or source> neighbours:<neighbours> count:<count> total:<total><EOL>...<EOL><EOL>
 %% NL,statistics,neighbours,
-%%  source neighbour:3 count:8 total:10
-%%  source neighbour:2 count:4 total:10
+%%  neighbour:3 duration:Time count:8 total:10
+%%  neighbour:2 duration:Time count:4 total:10
 %% -> [{Role,Neighbours,Count,Total}]
+nl_extract_subject(<<"statistics">>, <<"neighbours,empty",_/binary>>) ->
+  {nl,statistics,neighbours,empty};
 nl_extract_subject(<<"statistics">>, <<"neighbours,",Params/binary>>) ->
   Lines = tl(re:split(Params,"\r?\n")),
   {nl,statistics,neighbours,
    lists:map(fun(Line) ->
-                 {match, [Role,Values]} =
-                   re:run(Line, " ([^ ]*) neighbour:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4], binary}]),
-                 list_to_tuple([binary_to_existing_atom(Role, utf8) | [binary_to_integer(V) || V <- Values]])
+                 {match, [A,U,C,T]} =
+                   re:run(Line, "neighbour:(\\d+) last update:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4], binary}]),
+                 list_to_tuple([binary_to_integer(V) || V <- [A,U,C,T]])
              end, Lines)};
 %% NL,statistics,paths,<EOL> <relay or source> path:<path> duration:<duration> count:<count> total:<total><EOL>...<EOL><EOL>
 %% NL,statistics,paths,
@@ -275,14 +275,22 @@ nl_extract_subject(<<"statistics">>, <<"paths,error",_/binary>>) ->
   {nl,statistics,paths,error};
 nl_extract_subject(<<"statistics">>, <<"paths,",Params/binary>>) ->
   Lines = tl(re:split(Params,"\r?\n")),
+  Regexp1 = "path:([^ ]*) duration:(\\d+) count:(\\d+) total:(\\d+)",
+  Regexp2 = "path:([^ ]*) count:(\\d+) total:(\\d+)",
   {nl,statistics,paths,
    lists:map(fun(Line) ->
-                 {match, [Role,Path,Values]} =
-                   re:run(Line, " ([^ ]*) path:([^ ]*) duration:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4,5], binary}]),
-                 PathList = [binary_to_integer(I) || I <- binary:split(Path,<<$,>>)],
-                 list_to_tuple([binary_to_existing_atom(Role, utf8), PathList | [binary_to_integer(V) || V <- Values]])
+                 case re:run(Line, Regexp1, [{capture, [1,2,3,4], binary}]) of
+                  {match, [Path,Duration,Count,Total]} ->
+                     PathList = [binary_to_integer(I) || I <- binary:split(Path,<<$,>>,[global])],
+                     Values = [Duration,Count,Total],
+                     list_to_tuple([PathList | [binary_to_integer(V) || V <- Values]]);
+                  _ ->
+                    {match, [Path,Count,Total]} = re:run(Line, Regexp2, [{capture, [1,2,3], binary}]),
+                    PathList = [binary_to_integer(I) || I <- binary:split(Path,<<$,>>,[global])],
+                    Values = [Count,Total],
+                    list_to_tuple([PathList | [binary_to_integer(V) || V <- Values]])
+                  end
              end, Lines)};
-
 %% NL,service,status:P1,P2 service:empty
 %% NL,service,status:P1,P2 service:src,dst,type,decoded,transmitted,rssi,integrity
 nl_extract_subject(<<"service">>, <<"status:", Params/binary>>) ->
@@ -302,6 +310,15 @@ nl_extract_subject(<<"service">>, <<"status:", Params/binary>>) ->
                               binary_to_integer(Transmitted), binary_to_integer(RRssi),
                               binary_to_integer(RIntegrity)}}
   end;
+%% NL,status,Status
+nl_extract_subject(<<"status">>, <<Params/binary>>) ->
+  {nl,status,binary_to_list(Params)};
+%% NL,bitrate,empty
+%% NL,bitrate,bitrate
+nl_extract_subject(<<"bitrate">>, <<"empty">>) ->
+  {nl,bitrate,empty};
+nl_extract_subject(<<"bitrate">>, <<Params/binary>>) ->
+  {nl,bitrate,binary_to_integer(Params)};
 %% NL,statistics,data,<EOL> <relay or source> data:<hash> len:<length> duration:<duration> state:<state> total:<total> dst:<dst> hops:<hops><EOL>...<EOL><EOL>
 %% NL,statistics,data,
 %%  source data:0xabde len:4 duration:5.6 state:delivered total:1 dst:4 hops:1

@@ -89,6 +89,7 @@
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       ->
   [init_nl_burst(__),
+   env:put(__, status, "Idle"),
    env:put(__, channel_state, initiation_listen),
    env:put(__, channel_state_msg, {status, 'INITIATION', 'LISTEN'}),
    env:put(__, service_msg, [])
@@ -182,6 +183,12 @@ handle_event(MM, SM, Term) ->
       Status = env:get(SM, channel_state_msg),
       SRV = env:get(SM, service_msg),
       fsm:cast(SM, nl_impl, {send, {nl, service, Status, SRV}});
+    {nl, get, bitrate} ->
+      Bitrate = share:get(SM, nothing, bitrate, empty),
+      fsm:cast(SM, nl_impl, {send, {nl, bitrate, Bitrate}});
+    {nl, get, status} ->
+      Status = env:get(SM, status),
+      fsm:cast(SM, nl_impl, {send, {nl, status, Status}});
     {nl, get, Command} ->
       nl_hf:process_get_command(SM, Command);
     {nl, delete, neighbour, Address} ->
@@ -329,17 +336,20 @@ handle_idle(_MM, #sm{event = no_routing} = SM, _Term) ->
   Params = nl_hf:find_event_params(SM, no_routing),
   Routing_handler =
   fun (LSM, {no_routing, Dst}) ->
-        fsm:cast(LSM, nl_impl, {send, {nl, update, routing, Dst}});
-      (LSM, _) -> LSM
+        Status = lists:flatten([io_lib:format("Update routing to ~p",[Dst])]),
+        [env:put(__, status, Status),
+         fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}})
+        ](LSM);
+      (LSM, _) -> env:put(LSM, status, "Idle")
   end,
-
   [Routing_handler(__, Params),
    nl_hf:update_states(__),
    fsm:set_event(__, eps)
   ](SM);
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_idle ~120p~n", [Term]),
-  [nl_hf:update_states(__),
+  [env:put(__, status, "Idle"),
+   nl_hf:update_states(__),
    fsm:set_event(__, eps)
   ](SM).
 
@@ -390,7 +400,8 @@ handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
         fsm:set_event(LSM, no_routing)
   end,
   Exist = burst_nl_hf:check_routing_existance(SM),
-  [Cast_handler(__, Ev),
+  [env:put(__, status, "Check channel state and try transmit"),
+   Cast_handler(__, Ev),
    nl_hf:update_states(__),
    Routing_handler(__, Exist)
   ](SM);
@@ -423,12 +434,14 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
       [PC, PC_local, Src, Dst] = burst_nl_hf:getv([id_at, id_local, src, dst], T),
       Data = burst_nl_hf:create_nl_burst_header(LSM, T),
       Route_Addr = nl_hf:get_routing_address(LSM, Dst),
-
+      Status = lists:flatten([io_lib:format("Transmitting packet ~p", [PC_local])]),
       AT = {at, {pid, Pid}, "*SEND", Route_Addr, Data},
       [P, NTail] = Packet_handler(Rest),
       NT = {send_params, {Whole_len, P, NTail}},
       PCS = share:get(SM, nothing, wait_async_pcs, []),
-      [share:put(__, wait_async_pcs, [PC | PCS]),
+
+      [env:put(__, status, Status),
+       share:put(__, wait_async_pcs, [PC | PCS]),
        nl_hf:add_event_params(__, NT),
        Wait_async_handler(__, Src, Dst, PC_local),
        fsm:set_event(__, eps),
@@ -456,7 +469,10 @@ handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
         fsm:set_event(LSM, pick);
       (LSM) ->
         NT = {send_params, {Whole_len, Packet, Tail}},
-        [share:put(__, wait_async_pcs, []),
+        PC = burst_nl_hf:getv(id_local, Packet),
+        Status = lists:flatten([io_lib:format("Transmitting packet ~p", [PC])]),
+        [env:put(__, status, Status),
+         share:put(__, wait_async_pcs, []),
          fsm:maybe_send_at_command(__, {at, "?PC", ""}),
          nl_hf:add_event_params(__, NT),
          set_timeout(__, 1, pc_timeout),
@@ -475,7 +491,10 @@ handle_transmit(_MM, SM, Term) ->
 
 handle_busy(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_busy ~120p~n", [Term]),
-  [nl_hf:update_states(__),
+  {status, P1, P2} = env:get(SM, channel_state_msg),
+  Status = lists:flatten([io_lib:format("Busy state ~s ~p", [P1, P2])]),
+  [env:put(__, status,Status ),
+   nl_hf:update_states(__),
    fsm:set_event(__, eps)
   ](SM).
 
@@ -509,7 +528,12 @@ set_routing(SM, Routing) ->
       (LSM, _) ->
        fsm:set_event(LSM, eps)
   end,
-  Routing_handler(SM, State).
+
+  Status = lists:flatten(
+            [io_lib:format("Set routing in state ~s", [State])]),
+  [env:put(__, status, Status),
+   Routing_handler(__, State)
+  ](SM).
 
 process_nl_send(SM, _, {nl, send, tolerant, ?ADDRESS_MAX, _Payload}) ->
   fsm:cast(SM, nl_impl, {send, {nl, send, error}});
@@ -587,7 +611,10 @@ process_data(SM, Data) ->
     Packet_handler =
     fun (LSM, EP, Rest) when Rest =< 0 ->
           ?TRACE(?ID, "Packet_handler len ~p~n", [Rest]),
-          [fsm:set_timeout(__, {s, Send_ack}, {send_acks, Src}),
+          Status = lists:flatten(
+            [io_lib:format("Received data ~p", [Id_remote])]),
+          [env:put(__, status, Status),
+           fsm:set_timeout(__, {s, Send_ack}, {send_acks, Src}),
            nl_hf:clear_spec_event_params(__, EP),
            nl_hf:clear_spec_timeout(__, wait_data_tmo),
            fsm:set_event(__, pick)
@@ -596,7 +623,11 @@ process_data(SM, Data) ->
           NT = {Params_name, {Len, Rest}},
           ?TRACE(?ID, "Packet_handler ~p ~p~n", [Len, Rest]),
           Time = calc_burst_time(LSM, Rest),
-          [nl_hf:add_event_params(__, NT),
+          Status = lists:flatten(
+            [io_lib:format("Receive data ~p, wait for ~p bits",
+              [Id_remote, Rest])]),
+          [env:put(__, status, Status),
+           nl_hf:add_event_params(__, NT),
            nl_hf:clear_spec_timeout(__, wait_data_tmo),
            fsm:set_timeout(__, {s, Time}, {wait_data_tmo, Src}),
            fsm:set_event(__, eps)
@@ -607,7 +638,11 @@ process_data(SM, Data) ->
     Wait_handler =
     fun (LSM, []) when Whole_len - Len =< 0 ->
           ?TRACE(?ID, "Wait_handler len ~p~n", [Whole_len - Len]),
-          [fsm:set_timeout(__, {s, Send_ack}, {send_acks, Src}),
+          Status = lists:flatten(
+            [io_lib:format("Receive data ~p, wait for ~p bits",
+              [Id_remote, Whole_len - Len])]),
+          [env:put(__, status, Status),
+           fsm:set_timeout(__, {s, Send_ack}, {send_acks, Src}),
            nl_hf:clear_spec_timeout(__, wait_data_tmo),
            fsm:set_event(__, pick)
           ](LSM);
@@ -615,7 +650,11 @@ process_data(SM, Data) ->
           NT = {Params_name, {Len, Whole_len - Len}},
           ?TRACE(?ID, "Wait_handler ~p ~p~n", [Len, Whole_len]),
           Time = calc_burst_time(LSM, Whole_len),
-          [nl_hf:add_event_params(__, NT),
+          Status = lists:flatten(
+            [io_lib:format("Receive data ~p, wait for ~p bits",
+              [Id_remote, Whole_len - Len])]),
+          [env:put(__, status, Status),
+           nl_hf:add_event_params(__, NT),
            fsm:set_timeout(__, {s, Time}, {wait_data_tmo, Src}),
            fsm:set_event(__, eps)
           ](LSM);
@@ -637,7 +676,8 @@ process_data(SM, Data) ->
             _ -> [Id_remote]
           end,
           ?INFO(?ID, "Updated ack list ~p~n", [Updated]),
-          [nl_hf:add_event_params(__, {Name, Updated}),
+          [env:put(__, status, "Receive data on destination"),
+           nl_hf:add_event_params(__, {Name, Updated}),
            fsm:cast(__, nl_impl, {send, {nl, recv, Src, Dst, Payload}})
           ](LSM);
         (LSM) ->
@@ -707,8 +747,12 @@ send_acks_helper(SM, _, []) -> SM;
 send_acks_helper(SM, Src, {_, Acks}) ->
   ?INFO(?ID, "Send acks ~p to src ~p~n", [Acks, Src]),
   Name = atom_name(acks, Src),
-  Payload = burst_nl_hf:encode_ack(lists:reverse(Acks)),
-  [nl_hf:add_event_params(__, {Name, []}),
+  A = lists:reverse(Acks),
+  Payload = burst_nl_hf:encode_ack(A),
+  L = lists:flatten(lists:join(",",[integer_to_list(I) || I <- A])),
+  Status = lists:flatten([io_lib:format("Sending ack of packets ~p to ~p",[L, Src])]),
+  [env:put(__, status, Status),
+   nl_hf:add_event_params(__, {Name, []}),
    fsm:cast(__, nl_impl, {send, {nl, ack, Src, Payload}})
   ](SM).
 
