@@ -317,7 +317,7 @@ get_packets(SM, Q, Addr, Packets) ->
   Dst = getv(dst, Q_Tuple),
 
   Packet_handler =
-  fun (LSM, A, L) when A == Dst, L < Max_queue ->
+  fun (LSM, A, L) when A == Dst, L =< Max_queue ->
         get_packets(LSM, Q_Tail, A, [Q_Tuple | Packets]);
       (LSM, A, _L) when A == Dst ->
         get_packets(LSM, [Q_Tuple | Packets]);

@@ -113,10 +113,13 @@ handle_event(MM, SM, Term) ->
        fsm:run_event(MM, __, {})
       ](SM);
     {timeout, {wait_data_tmo, Src}} when State == recv ->
+      Send_ack = share:get(SM, send_ack_tmo),
       [fsm:set_event(__, pick),
-       send_acks(__, Src),
+       fsm:set_timeout(__, {s, Send_ack}, {send_acks, Src}),
        fsm:run_event(MM, __, {})
       ](SM);
+    {timeout, {send_acks, Src}} ->
+      send_acks(SM, Src);
     {timeout, pc_timeout} when State == busy ->
       SM;
     {timeout, pc_timeout} ->
@@ -580,14 +583,13 @@ process_data(SM, Data) ->
       burst_nl_hf:getv([id_remote, src, dst, len, whole_len, payload], Tuple),
     Params_name = atom_name(wait_len, Dst),
     Params = nl_hf:find_event_params(SM, Params_name),
-
+    Send_ack = share:get(SM, send_ack_tmo),
     Packet_handler =
     fun (LSM, EP, Rest) when Rest =< 0 ->
           ?TRACE(?ID, "Packet_handler len ~p~n", [Rest]),
-          [send_acks(__, Src),
+          [fsm:set_timeout(__, {s, Send_ack}, {send_acks, Src}),
            nl_hf:clear_spec_event_params(__, EP),
            nl_hf:clear_spec_timeout(__, wait_data_tmo),
-           %fsm:clear_timeout(__, {wait_data_tmo, Src}),
            fsm:set_event(__, pick)
           ](LSM);
         (LSM, _EP, Rest) ->
@@ -595,7 +597,6 @@ process_data(SM, Data) ->
           ?TRACE(?ID, "Packet_handler ~p ~p~n", [Len, Rest]),
           Time = calc_burst_time(LSM, Rest),
           [nl_hf:add_event_params(__, NT),
-           %fsm:clear_timeout(__, {wait_data_tmo, Src}),
            nl_hf:clear_spec_timeout(__, wait_data_tmo),
            fsm:set_timeout(__, {s, Time}, {wait_data_tmo, Src}),
            fsm:set_event(__, eps)
@@ -606,8 +607,7 @@ process_data(SM, Data) ->
     Wait_handler =
     fun (LSM, []) when Whole_len - Len =< 0 ->
           ?TRACE(?ID, "Wait_handler len ~p~n", [Whole_len - Len]),
-          [send_acks(__, Src),
-           %fsm:clear_timeout(__, {wait_data_tmo, Src}),
+          [fsm:set_timeout(__, {s, Send_ack}, {send_acks, Src}),
            nl_hf:clear_spec_timeout(__, wait_data_tmo),
            fsm:set_event(__, pick)
           ](LSM);
@@ -632,10 +632,11 @@ process_data(SM, Data) ->
           case Acks of
             {Name, UAcks} ->
               Member = lists:member(Id_remote, UAcks),
-              ?INFO(?ID, "Add ack ~p to ~p, is member ~p~n", [Id_remote, UAcks, Member]),
+              ?INFO(?ID, "Add ack ~p to ~w, is member ~p~n", [Id_remote, UAcks, Member]),
               if Member -> UAcks; true -> [Id_remote | UAcks] end;
             _ -> [Id_remote]
           end,
+          ?INFO(?ID, "Updated ack list ~p~n", [Updated]),
           [nl_hf:add_event_params(__, {Name, Updated}),
            fsm:cast(__, nl_impl, {send, {nl, recv, Src, Dst, Payload}})
           ](LSM);
