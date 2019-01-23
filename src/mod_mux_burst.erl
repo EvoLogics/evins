@@ -44,8 +44,13 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
 parse_conf(_Mod_ID, ArgS, Share) ->
   Protocols_set = [P  || {protocols, P} <- ArgS],
   ShareID = #sm{share = Share},
+  Protocol_list = parse_protocols(Protocols_set),
+  set_protocols(ShareID, Protocol_list, [{discovery, evoicrppfr}, {burst, burst}, {ack, sncfloodr}]).
 
-  set_protocols(ShareID, Protocols_set, [{discovery, evoicrppfr}, {burst, burst}, {ack, sncfloodr}]).
+parse_protocols([]) -> [];
+parse_protocols(Protocols_set) ->
+  [P] = Protocols_set,
+  if is_tuple(P) -> tuple_to_list(P); true -> [] end.
 
 set_protocols(ShareID, Protocols_set, Default) ->
  Protocols =

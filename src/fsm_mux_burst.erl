@@ -66,7 +66,12 @@
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> SM.
+init(SM)       ->
+  [env:put(__, wait_routing_async, false),
+   env:put(__, wait_routing_sync, false),
+   env:put(__, clear_routing, false),
+   env:put(__, send_routing, false)
+  ](SM).
 trans()        -> ?TRANS.
 final()        -> [alarm].
 init_event()   -> internal.
@@ -77,11 +82,10 @@ stop(_SM)      -> ok.
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
   ?TRACE(?ID, "state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.event, Term]),
-  {wait_routing_sync, Wait_routing_sync} = nl_hf:find_event_params(SM, wait_routing_sync),
-  {wait_routing_async, Wait_routing_async} =
-    nl_hf:find_event_params(SM, wait_routing_async),
-  {clear_routing, Clear_routing} = nl_hf:find_event_params(SM, clear_routing),
-  {send_routing, Send_routing} = nl_hf:find_event_params(SM, send_routing),
+  Wait_routing_sync = env:get(SM, wait_routing_sync),
+  Wait_routing_async = env:get(SM, wait_routing_async),
+  Clear_routing = env:get(SM, clear_routing),
+  Send_routing = env:get(SM, send_routing),
 
   State = SM#sm.state,
   case Term of
@@ -119,13 +123,13 @@ handle_event(MM, SM, Term) ->
     {nl, update, routing, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, busy}});
     {nl, send, _} when Send_routing == true ->
-      nl_hf:add_event_params(SM, {send_routing, false});
+      env:put(SM, send_routing, false);
     {nl, send, tolerant, _Src, _Data} ->
       send_command(SM, ?TO_MM, burst_protocol, Term);
     {nl, send, _Src, _Data} ->
       send_command(SM, ?TO_MM, current_protocol, Term);
     {nl, routing, Routing} when Clear_routing == true ->
-      [nl_hf:add_event_params(__, {clear_routing, false}),
+      [env:put(__, clear_routing, false),
        share:put(__, routing_table, Routing)
       ](SM);
     {nl, routing, Routing} when Wait_routing_sync == false ->
@@ -139,10 +143,10 @@ handle_event(MM, SM, Term) ->
       fun (LSM, false) ->
             fsm:cast(LSM, nl_impl, {send, Term});
           (LSM, true) ->
-            nl_hf:add_event_params(LSM, {wait_routing_async, false})
+            env:put(LSM, wait_routing_async, false)
       end,
       [share:put(__, routing_table, Routing),
-       nl_hf:add_event_params(__, {wait_routing_sync, false}),
+       env:put(__, wait_routing_sync, false),
        Cast_handler(__, Wait_routing_async),
        fsm:set_event(__, eps),
        fsm:run_event(MM, __, {})
@@ -169,8 +173,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
     {nl, get, routing} ->
       Cast_handler =
-      fun (LSM, nl) ->
-             nl_hf:add_event_params(LSM, {wait_routing_async, true});
+      fun (LSM, nl) -> env:put(LSM, wait_routing_async, true);
           (LSM, nl_impl) -> LSM
       end,
       [Cast_handler(__, MM#mm.role),
@@ -262,11 +265,7 @@ handle_event(MM, SM, Term) ->
 %%--------------------------------Handler functions-------------------------------
 handle_idle(_MM, #sm{event = internal} = SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  [nl_hf:add_event_params(__, {wait_routing_async, false}),
-   nl_hf:add_event_params(__, {wait_routing_sync, false}),
-   nl_hf:add_event_params(__, {clear_routing, false}),
-   nl_hf:add_event_params(__, {send_routing, false}),
-   share:put(__, configured_protocols, []),
+  [share:put(__, configured_protocols, []),
    fsm:set_event(__, init)
   ](SM);
 handle_idle(_MM, SM, Term) ->
@@ -321,8 +320,8 @@ update_routing(SM, Dst) ->
         Tuple = {nl, send, Dst, <<"D">> },
         Cleared = {nl, set, routing, clear_routing(SM, Dst)},
         % Delete routing
-        [nl_hf:add_event_params(__, {clear_routing, true}),
-         nl_hf:add_event_params(__, {send_routing, true}),
+        [env:put(__, clear_routing, true),
+         env:put(__, send_routing, true),
          fsm:cast(__, ProtocolMM, [], {send, Cleared}, ?TO_MM),
          fsm:cast(__, ProtocolMM, [], {send, Tuple}, ?TO_MM)
         ](LSM)
@@ -372,6 +371,7 @@ process_routing(SM, NL) ->
 get_routing(SM, MM, Command)->
   Discovery_protocol = share:get(SM, discovery_protocol),
   ProtocolMM = share:get(SM, Discovery_protocol),
+  ?INFO(?ID, "get_routing ~p ~p ~n", [Discovery_protocol, ProtocolMM]),
   fsm:cast(SM, ProtocolMM, [], {send, Command}, MM).
 
 set_routing(SM, MM, Protocol_Name, Command) when is_atom(Protocol_Name) ->
@@ -380,7 +380,7 @@ set_routing(SM, MM, Protocol_Name, Command) when is_atom(Protocol_Name) ->
   set_routing(SM, MM, ProtocolMM, Command);
 set_routing(SM, MM, ProtocolMM, Command) ->
   [fsm:cast(__, ProtocolMM, [], {send, Command}, MM),
-   nl_hf:add_event_params(__, {wait_routing_sync, true})
+   env:put(__, wait_routing_sync, true)
   ](SM).
 
 send_command(SM, MM, Protocol_Name, Command) ->
