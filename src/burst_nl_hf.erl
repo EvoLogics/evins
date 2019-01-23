@@ -353,7 +353,6 @@ update_statistics_tolerant(SM, time, T) ->
 update_statistics_tolerant(SM, _, _, {[],[]}, Q, _) ->
   share:put(SM, statistics_tolerant, Q);
 update_statistics_tolerant(SM, Value, T, QS, Q, PC) ->
-  ?INFO(?ID, "update_statistics_tolerant ~p ~p ~p ~p ~p~n", [Value, T, QS, Q, PC]),
   {{value, Q_Tuple}, Q_Tail} = queue:out(QS),
   Time = erlang:monotonic_time(milli_seconds),
   QU =
@@ -363,7 +362,8 @@ update_statistics_tolerant(SM, Value, T, QS, Q, PC) ->
       queue:in(NT, Q);
     {Role, PC, Hash, Len, QTime, _, Src, Dst} when Value == state ->
       Ack_time = from_start(SM, Time),
-      Duration = Ack_time - QTime,
+      Duration = (Ack_time - QTime) / 1000,
+      ?INFO(?ID, "update_state ~p ~p ~p~n", [QTime, Ack_time, Duration]),
       NT = {Role, PC, Hash, Len, Duration, T, Src, Dst},
       queue:in(NT, Q);
     _ ->

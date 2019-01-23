@@ -371,8 +371,9 @@ nl_extract_subject(<<"statistics">>, <<"tolerant,",Params/binary>>) ->
                  {match, [Role,PC,Hash,Len,Duration,State,Src,Dst]} =
                    re:run(Line, Regexp, [{capture, [1,2,3,4,5,6,7,8], binary}]),
                  Time =
-                 if is_float(Duration) -> binary_to_float(Duration);
-                 true -> binary_to_integer(Duration)
+                 try binary_to_float(Duration)
+                 catch error: _ ->
+                    binary_to_integer(Duration)
                  end,
                  list_to_tuple(
                  [binary_to_existing_atom(Role, utf8),
