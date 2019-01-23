@@ -38,6 +38,7 @@
 -export([create_nl_burst_header/2, extract_nl_burst_header/2]).
 -export([geta/1, getv/2, create_default/0, replace/3]).
 -export([check_routing_existance/1]).
+-export([update_statistics_tolerant/3, get_statistics_data/1]).
 -export([burst_len/1, increase_local_pc/2]).
 -export([get_packets/1, pop_delivered/2, failed_pc/2]).
 -export([bind_pc/3, check_dublicated/2, encode_ack/1, try_extract_ack/2]).
@@ -336,3 +337,47 @@ increase_local_pc(SM, Name) ->
   true ->
     share:put(SM, Name, PC + 1)
   end.
+
+update_statistics_tolerant(SM, state, {PC, src, State}) ->
+  QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
+  update_statistics_tolerant(SM, state, State, QS, queue:new(), PC);
+update_statistics_tolerant(SM, time, T) ->
+  Local_address = share:get(SM, local_address),
+  QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
+  [PC_local, PC_remote, Src] =
+    getv([id_local, id_remote, src], T),
+  PC =
+  if Local_address == Src -> PC_local; true -> PC_remote end,
+  update_statistics_tolerant(SM, time, T, QS, queue:new(), PC).
+
+update_statistics_tolerant(SM, _, _, {[],[]}, Q, _) ->
+  share:put(SM, statistics_tolerant, Q);
+update_statistics_tolerant(SM, Value, T, QS, Q, PC) ->
+  ?INFO(?ID, "update_statistics_tolerant ~p ~p ~p ~p ~p~n", [Value, T, QS, Q, PC]),
+  {{value, Q_Tuple}, Q_Tail} = queue:out(QS),
+  Time = erlang:monotonic_time(milli_seconds),
+  QU =
+  case Q_Tuple of
+    {Role, PC, Hash, Len, _, unknown, Src, Dst} when Value == time ->
+      NT = {Role, PC, Hash, Len, from_start(SM, Time), sent, Src, Dst},
+      queue:in(NT, Q);
+    {Role, PC, Hash, Len, QTime, _, Src, Dst} when Value == state ->
+      Ack_time = from_start(SM, Time),
+      Duration = Ack_time - QTime,
+      NT = {Role, PC, Hash, Len, Duration, T, Src, Dst},
+      queue:in(NT, Q);
+    _ ->
+      queue:in(Q_Tuple, Q)
+  end,
+  update_statistics_tolerant(SM, Value, T, Q_Tail, QU, PC).
+
+from_start(_SM, Time) when Time == empty -> 0;
+from_start(SM, Time) -> Time - share:get(SM, nl_start_time).
+
+get_statistics_data(Q) when Q == {[],[]} -> empty;
+get_statistics_data(Q) ->
+  Data =
+  lists:map(fun({Role, PC, Hash, Len, Duration, State, Src, Dst}) ->
+                {Role, PC, Hash, Len, Duration, State, Src, Dst}
+            end, queue:to_list(Q)),
+  case Data of []  -> empty; _ -> Data end.

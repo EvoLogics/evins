@@ -127,7 +127,9 @@ handle_event(MM, SM, Term) ->
     {timeout, pc_timeout} ->
       fsm:maybe_send_at_command(SM, {at, "?PC", ""});
     {timeout, {wait_nl_async, Dst, PC}} ->
-      fsm:cast(SM, nl_impl, {send, {nl, failed, PC, Local_address, Dst}});
+      [burst_nl_hf:update_statistics_tolerant(__, satte, {PC, src, failed}),
+       fsm:cast(__, nl_impl, {send, {nl, failed, PC, Local_address, Dst}})
+      ](SM);
     {timeout, Event} ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
@@ -166,6 +168,10 @@ handle_event(MM, SM, Term) ->
        fsm:clear_timeouts(__),
        fsm:cast(__, nl_impl, {send, {nl, buffer, ok}})
       ] (SM);
+    {nl,get,statistics,tolerant} ->
+      QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
+      Statistics = burst_nl_hf:get_statistics_data(QS),
+      fsm:cast(SM, nl_impl, {send, {nl, statistics, tolerant, Statistics}});
     {nl, get, protocol} ->
       fsm:cast(SM, nl_impl, {send, {nl, protocol, Protocol_Name}});
     {nl, get, help} ->
@@ -440,8 +446,8 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
       [P, NTail] = Packet_handler(Rest),
       NT = {send_params, {Whole_len, P, NTail}},
       PCS = share:get(SM, nothing, wait_async_pcs, []),
-
-      [env:put(__, status, Status),
+      [burst_nl_hf:update_statistics_tolerant(__, time, T),
+       env:put(__, status, Status),
        share:put(__, wait_async_pcs, [PC | PCS]),
        nl_hf:add_event_params(__, NT),
        Wait_async_handler(__, Src, Dst, PC_local),
@@ -544,6 +550,14 @@ process_nl_send(SM, _, {nl, send, tolerant, ?ADDRESS_MAX, _Payload}) ->
 process_nl_send(SM, _, T) ->
   push_tolerant_queue(SM, T).
 
+get_role(SM, Src, Dst) ->
+  Local_address = share:get(SM, local_address),
+  case Src of
+    Local_address -> source;
+    _ when Dst == Local_address -> destination;
+    _ -> relay
+  end.
+
 push_tolerant_queue(SM, {nl, send, tolerant, Dst, Payload}) ->
   LocalPC = share:get(SM, local_pc),
   Len = byte_size(Payload),
@@ -554,10 +568,15 @@ push_tolerant_queue(SM, {nl, send, tolerant, Dst, Payload}) ->
                       [LocalPC, LocalPC, Src, Dst, Len, Payload],
               burst_nl_hf:create_default()),
 
-  Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
   ?TRACE(?ID, "Add to burst queue ~p~n", [Tuple]),
+  Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
+  QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
 
+  Role = get_role(SM, Src, Dst),
+  <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
+  STuple = {Role, LocalPC, Hash, Len, 0, unknown, Src, Dst},
   [burst_nl_hf:increase_local_pc(__, local_pc),
+   share:put(__, statistics_tolerant, queue:in(STuple, QS)),
    share:put(__, burst_data_buffer, queue:in(Tuple, Q)),
    fsm:cast(__, nl_impl, {send, {nl, send, LocalPC}})
   ](SM).
@@ -769,7 +788,8 @@ recv_ack_helper(SM, Dst, [PC | T]) ->
   ?INFO(?ID, "Wait_ack ~p: ~p ~n", [Dst, PC]),
   if Wait_ack ->
     Local_address = share:get(SM, local_address),
-    [fsm:cast(__, nl_impl, {send, {nl, delivered, PC, Local_address, Dst}}),
+    [burst_nl_hf:update_statistics_tolerant(__, state, {PC, src, delivered}),
+     fsm:cast(__, nl_impl, {send, {nl, delivered, PC, Local_address, Dst}}),
      fsm:clear_timeout(__, {wait_nl_async, Dst, PC}),
      recv_ack_helper(__, Dst, T)
     ](SM);

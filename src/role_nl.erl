@@ -261,7 +261,7 @@ nl_extract_subject(<<"statistics">>, <<"neighbours,",Params/binary>>) ->
   {nl,statistics,neighbours,
    lists:map(fun(Line) ->
                  {match, [A,U,C,T]} =
-                   re:run(Line, "neighbour:(\\d+) last update:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4], binary}]),
+                   re:run(Line, " neighbour:(\\d+) last update:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4], binary}]),
                  list_to_tuple([binary_to_integer(V) || V <- [A,U,C,T]])
              end, Lines)};
 %% NL,statistics,paths,<EOL> <relay or source> path:<path> duration:<duration> count:<count> total:<total><EOL>...<EOL><EOL>
@@ -275,8 +275,8 @@ nl_extract_subject(<<"statistics">>, <<"paths,error",_/binary>>) ->
   {nl,statistics,paths,error};
 nl_extract_subject(<<"statistics">>, <<"paths,",Params/binary>>) ->
   Lines = tl(re:split(Params,"\r?\n")),
-  Regexp1 = "path:([^ ]*) duration:(\\d+) count:(\\d+) total:(\\d+)",
-  Regexp2 = "path:([^ ]*) count:(\\d+) total:(\\d+)",
+  Regexp1 = " path:([^ ]*) duration:(\\d+) count:(\\d+) total:(\\d+)",
+  Regexp2 = " path:([^ ]*) count:(\\d+) total:(\\d+)",
   {nl,statistics,paths,
    lists:map(fun(Line) ->
                  case re:run(Line, Regexp1, [{capture, [1,2,3,4], binary}]) of
@@ -331,20 +331,59 @@ nl_extract_subject(<<"statistics">>, <<"data,error",_/binary>>) ->
   {nl,statistics,data,error};
 nl_extract_subject(<<"statistics">>, <<"data,",Params/binary>>) ->
   Lines = tl(re:split(Params,"\r?\n")),
-  Regexp = " ([^ ]*) data:0x([^ ]*) len:(\\d+) duration:([0-9.]*) state:([^ ]*) total:(\\d+) dst:(\\d+) hops:(\\d+)",
+  Regexp1 = " ([^ ]*) data:0x([^ ]*) len:(\\d+) duration:([0-9.]*) state:([^ ]*) src:(\\d+) dst:(\\d+) hops:(\\d+)",
+  Regexp2 = " ([^ ]*) data:0x([^ ]*) len:(\\d+) send_time:([0-9.]*) recv_time:([^ ]*) src:(\\d+) dst:(\\d+) last_ttl:(\\d+)",
   {nl,statistics,data,
    lists:map(fun(Line) ->
-                 {match, [Role,Hash,Len,Duration,State,Values]} =
+      case re:run(Line, Regexp1, [{capture, [1,2,3,4,5,6,7,8], binary}]) of
+       {match, [Role,Hash,Len,Duration,State,Total,Dst,Hops]} ->
+         list_to_tuple(
+           [binary_to_existing_atom(Role, utf8),
+            binary_to_integer(Hash, 16),
+            binary_to_integer(Len),
+            binary_to_float(Duration),
+            binary_to_existing_atom(State,utf8),
+            binary_to_integer(Total),
+            binary_to_integer(Dst),
+            binary_to_integer(Hops)]);
+        _ ->
+         {match, [Role,Hash,Len,STime,RTime,Src,Dst,TTL]} =
+          re:run(Line, Regexp2, [{capture, [1,2,3,4,5,6,7,8], binary}]),
+         list_to_tuple(
+           [binary_to_existing_atom(Role, utf8),
+            binary_to_integer(Hash, 16),
+            binary_to_integer(Len),
+            binary_to_integer(STime),
+            binary_to_integer(RTime),
+            binary_to_integer(Src),
+            binary_to_integer(Dst),
+            binary_to_integer(TTL)])
+      end
+   end, Lines)};
+%% NL,statistics,tolerant,<EOL> <relay or source> data:<data hash> len:<length> duration:<duration> state:<state> src:<total> dst:<dst><EOL>...<EOL><EOL>
+nl_extract_subject(<<"statistics">>, <<"tolerant,empty",_/binary>>) ->
+  {nl,statistics,tolerant,empty};
+nl_extract_subject(<<"statistics">>, <<"tolerant,",Params/binary>>) ->
+  Lines = tl(re:split(Params,"\r?\n")),
+  Regexp = " ([^ ]*) id:(\\d+) data:0x([^ ]*) len:(\\d+) duration:([0-9.]*) state:([^ ]*) src:(\\d+) dst:(\\d+)",
+  {nl,statistics,tolerant,
+   lists:map(fun(Line) ->
+                 {match, [Role,PC,Hash,Len,Duration,State,Src,Dst]} =
                    re:run(Line, Regexp, [{capture, [1,2,3,4,5,6,7,8], binary}]),
+                 Time =
+                 if is_float(Duration) -> binary_to_float(Duration);
+                 true -> binary_to_integer(Duration)
+                 end,
                  list_to_tuple(
-                   [binary_to_existing_atom(Role, utf8),
-                    binary_to_integer(Hash, 16),
-                    binary_to_integer(Len),
-                    binary_to_float(Duration),
-                    binary_to_existing_atom(State,utf8) |
-                    [binary_to_integer(V) || V <- Values]])
+                 [binary_to_existing_atom(Role, utf8),
+                  binary_to_integer(PC),
+                  binary_to_integer(Hash, 16),
+                  binary_to_integer(Len),
+                  Time,
+                  binary_to_existing_atom(State,utf8),
+                  binary_to_integer(Src),
+                  binary_to_integer(Dst)])
              end, Lines)};
-
 %% NL,polling,Addr1,..,AddrN
 nl_extract_subject(<<"buffer">>, <<"ok">>) ->
   {nl, buffer, ok};
