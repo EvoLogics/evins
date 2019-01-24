@@ -137,6 +137,8 @@ handle_event(MM, SM, Term) ->
         true -> current_protocol
       end,
       send_command(SM, ?TO_MM, P, {nl, send, Src, Payload});
+    {nl, delete, neighbour, _N} ->
+      send_command(SM, ?TO_MM, discovery_protocol,Term);
     {nl, routing, Routing} when Clear_routing == true ->
       [env:put(__, clear_routing, false),
        share:put(__, routing_table, Routing)

@@ -41,6 +41,7 @@
 -define(TRANS, [
                 {idle,
                  [{try_transmit, sensing},
+                  {initiation_listen, idle},
                   {routing_updated, sensing},
                   {recv_data, recv},
                   {reset, idle},
@@ -54,6 +55,7 @@
                   {pick, sensing},
                   {busy_online, recv},
                   {reset, idle},
+                  {initiation_listen, recv},
                   {connection_failed, idle}
                  ]},
 
@@ -77,6 +79,7 @@
                   {busy_online, busy},
                   {no_routing, idle},
                   {reset, idle},
+                  {initiation_listen, transmit},
                   {connection_failed, idle}
                  ]},
 
@@ -265,7 +268,7 @@ handle_event(MM, SM, Term) ->
       ](SM);
     {sync,"*SEND",{error, _}} ->
       [share:put(__, wait_sync, false),
-       fsm:cast(__, nl_impl, {send, {nl, send, error}}),
+       %fsm:cast(__, nl_impl, {send, {nl, send, error}}),
        set_timeout(__, 1, check_state),
        fsm:clear_timeout(__, answer_timeout),
        fsm:set_event(__, busy_online),
@@ -354,6 +357,8 @@ init_nl_burst(SM) ->
 %------------------------------Handle functions---------------------------------
 handle_idle(_MM, #sm{event = connection_failed} = SM, _Term) ->
   fsm:set_event(SM, no_routing);
+handle_idle(_MM, #sm{event = initiation_listen} = SM, _Term) ->
+  fsm:set_event(SM, try_transmit);
 handle_idle(_MM, #sm{event = no_routing} = SM, _Term) ->
   Params = nl_hf:find_event_params(SM, no_routing),
   Update_retries = share:get(SM, update_retries),
@@ -444,6 +449,9 @@ handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
         fsm:set_event(LSM, no_routing)
   end,
   Exist = burst_nl_hf:check_routing_existance(SM),
+
+  ?INFO(?ID, "Sensing ~p ~p ~p~n", [Ev, env:get(SM, channel_state), Exist]),
+
   [env:put(__, status, "Check channel state and try transmit"),
    Cast_handler(__, Ev),
    nl_hf:update_states(__),
@@ -560,14 +568,16 @@ set_routing(SM, Routing) ->
     _ -> false
   end,
 
+  No_routing =
+  (Data_buffer =/= {[],[]}) and
+  ((Routing == [{default,63}]) or (not Exist)),
+
   State = SM#sm.state,
   Routing_handler =
-  fun (LSM, sensing) when Routing == [{default,63}];
-                          not Exist ->
+  fun (LSM, _) when No_routing ->
        fsm:set_event(LSM, no_routing);
-      (LSM, idle) when Routing == [{default,63}];
-                          not Exist ->
-       fsm:set_event(LSM, no_routing);
+      %(LSM, idle) when No_routing ->
+      % fsm:set_event(LSM, no_routing);
       (LSM, idle) when Data_buffer =/= {[],[]} ->
        [env:put(__, updating, false),
         fsm:set_event(__, routing_updated)

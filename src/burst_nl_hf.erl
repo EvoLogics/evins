@@ -225,8 +225,6 @@ pop_delivered(SM, PC) ->
   end, QL),
 
   NQ = queue:from_list(NL),
-
-  ?TRACE(?ID, "Pop delivered ~p ~p~n", [QL, NL]),
   [process_asyncs(__, PC),
     share:put(__, burst_data_buffer, NQ)
   ](SM).
