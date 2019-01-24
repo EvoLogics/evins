@@ -428,7 +428,7 @@ encode_mux(SM, Flag, Data) ->
 decode_mux(SM, Data) ->
   <<Flag_Num:1, Rest/bitstring>> = Data,
   Rest_payload = nl_hf:cut_add_bits(Rest),
-  ?INFO(?ID, "decode_mux ~p ~p ~p~n", [Flag_Num, Rest, Data]),
+  ?INFO(?ID, "decode_mux ~p ~p~n", [Flag_Num, Rest]),
   Flag = num_flag(Flag_Num),
   [Flag, Rest_payload].
 
