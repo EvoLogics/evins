@@ -2091,6 +2091,7 @@ process_async_status({status, Status, Reason}) ->
     'INITIATION' when Reason == 'LISTEN'-> initiation_listen;
     'INITIATION' -> busy_online;
     'ONLINE'-> busy_online;
+    'OFFLINE' when Reason == 'CONNECTION_FAILED' -> connection_failed;
     'OFFLINE' -> busy_online;
     'BACKOFF' -> busy_backoff;
     'BUSY' when Reason == 'BACKOFF' -> busy_backoff;

@@ -44,14 +44,17 @@
                   {routing_updated, sensing},
                   {recv_data, recv},
                   {reset, idle},
-                  {no_routing, idle}
+                  {busy_online, idle},
+                  {no_routing, idle},
+                  {connection_failed, idle}
                  ]},
 
                 {recv,
                  [{recv_data, recv},
                   {pick, sensing},
                   {busy_online, recv},
-                  {reset, idle}
+                  {reset, idle},
+                  {connection_failed, idle}
                  ]},
 
                 {sensing,
@@ -63,7 +66,8 @@
                   {busy_backoff, busy},
                   {busy_online, busy},
                   {recv_data, recv},
-                  {reset, idle}
+                  {reset, idle},
+                  {connection_failed, idle}
                  ]},
 
                 {transmit,
@@ -71,13 +75,18 @@
                   {next_packet, transmit},
                   {recv_data, recv},
                   {busy_online, busy},
-                  {reset, idle}
+                  {no_routing, idle},
+                  {reset, idle},
+                  {connection_failed, idle}
                  ]},
 
                 {busy,
                  [{initiation_listen, sensing},
                   {recv_data, recv},
-                  {reset, idle}
+                  {busy_online, busy},
+                  {no_routing, idle},
+                  {reset, idle},
+                  {connection_failed, idle}
                  ]},
 
                 {alarm,
@@ -93,6 +102,7 @@ init(SM)       ->
    env:put(__, status, "Idle"),
    env:put(__, channel_state, initiation_listen),
    env:put(__, channel_state_msg, {status, 'INITIATION', 'LISTEN'}),
+   env:put(__, updating, false),
    env:put(__, service_msg, [])
   ](SM).
 trans()        -> ?TRANS.
@@ -127,7 +137,7 @@ handle_event(MM, SM, Term) ->
     {timeout, pc_timeout} ->
       fsm:maybe_send_at_command(SM, {at, "?PC", ""});
     {timeout, {wait_nl_async, Dst, PC}} ->
-      [burst_nl_hf:update_statistics_tolerant(__, satte, {PC, src, failed}),
+      [burst_nl_hf:update_statistics_tolerant(__, state, {PC, src, failed}),
        fsm:cast(__, nl_impl, {send, {nl, failed, PC, Local_address, Dst}})
       ](SM);
     {timeout, Event} ->
@@ -256,7 +266,10 @@ handle_event(MM, SM, Term) ->
     {sync,"*SEND",{error, _}} ->
       [share:put(__, wait_sync, false),
        fsm:cast(__, nl_impl, {send, {nl, send, error}}),
-       run_hook_handler(MM, __, Term, error)
+       set_timeout(__, 1, check_state),
+       fsm:clear_timeout(__, answer_timeout),
+       fsm:set_event(__, busy_online),
+       fsm:run_event(MM, __, {})
       ](SM);
     {sync,"*SEND", {busy, _}} ->
       [fsm:clear_timeout(__, answer_timeout),
@@ -300,7 +313,7 @@ handle_event(MM, SM, Term) ->
        check_pcs(__),
        fsm:run_event(MM, __, {})
       ](SM);
-    {async, {failed, PC, _Src}} ->
+    {async, {failed, PC, _}} ->
       [burst_nl_hf:failed_pc(__, PC),
        check_pcs(__),
        fsm:run_event(MM, __, {})
@@ -339,13 +352,37 @@ init_nl_burst(SM) ->
   ]).
 
 %------------------------------Handle functions---------------------------------
+handle_idle(_MM, #sm{event = connection_failed} = SM, _Term) ->
+  fsm:set_event(SM, no_routing);
 handle_idle(_MM, #sm{event = no_routing} = SM, _Term) ->
   Params = nl_hf:find_event_params(SM, no_routing),
+  Update_retries = share:get(SM, update_retries),
+
+  Update_handler=
+  fun (LSM, Dst) ->
+      case env:get(LSM, update) of
+        {C, D} when D == Dst, C >= Update_retries ->
+          %TODO: remove packets to same dst
+          [env:put(__, update, {0, Dst}),
+           fsm:set_event(__, eps)
+          ](LSM);
+        {C, D} when D == Dst ->
+          [fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}}),
+           env:put(__, updating, true),
+           env:put(__, update, {C + 1, D})
+          ](LSM);
+        _ ->
+          [fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}}),
+           env:put(__, updating, true),
+           env:put(__, update, {0, Dst})
+          ](LSM)
+      end
+  end,
   Routing_handler =
   fun (LSM, {no_routing, Dst}) ->
         Status = lists:flatten([io_lib:format("Update routing to ~p",[Dst])]),
         [env:put(__, status, Status),
-         fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}})
+         Update_handler(__, Dst)
         ](LSM);
       (LSM, _) -> env:put(LSM, status, "Idle")
   end,
@@ -532,9 +569,13 @@ set_routing(SM, Routing) ->
                           not Exist ->
        fsm:set_event(LSM, no_routing);
       (LSM, idle) when Data_buffer =/= {[],[]} ->
-       fsm:set_event(LSM, routing_updated);
+       [env:put(__, updating, false),
+        fsm:set_event(__, routing_updated)
+       ](LSM);
       (LSM, sensing) when Exist ->
-       fsm:set_event(LSM, routing_updated);
+       [env:put(__, updating, false),
+        fsm:set_event(__, routing_updated)
+       ](LSM);
       (LSM, _) ->
        fsm:set_event(LSM, eps)
   end,
