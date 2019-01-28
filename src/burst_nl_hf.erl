@@ -127,7 +127,6 @@ code_header(Size, Payload) ->
   << <<N:W>> || N <- Payload>>.
 
 create_nl_burst_header(SM, T) ->
-  ?TRACE(?ID, "create_payload_nl_burst_header ~p~n", [T]),
   [Flag, RPkgID, Src, Dst, Len, Whole_len, Payload] =
     getv([flag, id_remote, src, dst, len, whole_len, payload], T),
 
@@ -209,7 +208,6 @@ bind_pc(SM, PC, Packet) ->
     end
   end, queue:new(), Q_data),
 
-  ?TRACE(?ID, "bind pc ~p~n", [NQ]),
   share:put(SM, burst_data_buffer, NQ).
 
 pop_delivered(SM, PC) ->
@@ -249,7 +247,7 @@ failed_pc(SM, PC) ->
     true -> queue:in(X, Q)
     end
   end, queue:new(), QL),
-  ?TRACE(?ID, "Update failed ~p~n", [NQ]),
+  ?TRACE(?ID, "Failed PC ~p~n", [PC]),
   [process_asyncs(__, PC),
    share:put(__, burst_data_buffer, NQ)
   ](SM).
@@ -267,7 +265,7 @@ get_packets(SM) ->
                       P = replace(whole_len, Whole_len, X),
                       [P | A]
                   end, [], Packets),
-      ?TRACE(?ID, "Burst data Whole len ~p ~p~n", [Whole_len, NPackets]),
+      ?TRACE(?ID, "Burst data Whole len ~p~n", [Whole_len]),
       [H | T] = NPackets,
       [Whole_len, H, T]
   end.
@@ -330,6 +328,7 @@ burst_len(P) ->
 
 increase_local_pc(SM, Name) ->
   PC = share:get(SM, Name),
+  ?INFO(?ID, "Local PC ~p for ~p~n",[PC, Name]),
   if PC > 127 ->
     share:put(SM, Name, 1);
   true ->

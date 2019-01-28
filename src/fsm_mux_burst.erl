@@ -412,20 +412,17 @@ send_command(SM, MM, Protocol_Name, Command) ->
   end,
   Protocol_handler(SM, ProtocolMM).
 
-encode_mux(SM, Flag, Data) ->
+encode_mux(_SM, Flag, Data) ->
   Flag_num = flag_num(Flag),
   B_Flag = <<Flag_num:1>>,
   Tmp_Data = <<B_Flag/bitstring, Data/binary>>,
   Is_binary = nl_hf:check_binary(Tmp_Data),
-  Bin =
   if not Is_binary ->
     Add = nl_hf:add_bits(Tmp_Data),
     <<B_Flag/bitstring, 0:Add, Data/binary>>;
   true ->
     Tmp_Data
-  end,
-  ?INFO(?ID, "encode_mux ~p ~w~n", [Flag, Bin]),
-  Bin.
+  end.
 
 decode_mux(SM, Data) ->
   <<Flag_Num:1, Rest/bitstring>> = Data,
