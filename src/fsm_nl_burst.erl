@@ -52,6 +52,7 @@
 
                 {recv,
                  [{recv_data, recv},
+                  {no_routing, recv}, 
                   {pick, sensing},
                   {busy_online, recv},
                   {reset, idle},
@@ -101,7 +102,8 @@
 
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       ->
-  [init_nl_burst(__),
+  ?INFO(?ID, "init nl burst ~n",[]),
+   [init_nl_burst(__),
    env:put(__, status, "Idle"),
    env:put(__, channel_state, initiation_listen),
    env:put(__, channel_state_msg, {status, 'INITIATION', 'LISTEN'}),
@@ -119,6 +121,9 @@ handle_event(MM, SM, Term) ->
   Pid = share:get(SM, pid),
   State = SM#sm.state,
   Protocol_Name = share:get(SM, nl_protocol),
+ 
+  BD = share:get(SM, nothing, burst_data_buffer, queue:new()),
+  if BD == {[],[]} -> ?INFO(?ID, "EMPTY BUFFER!~n", []); true -> nothing end,
 
   case Term of
     {timeout, answer_timeout} ->
@@ -288,7 +293,8 @@ handle_event(MM, SM, Term) ->
     {async, Notification = {status, _, _}} ->
       Channel_state = nl_hf:process_async_status(Notification),
       Busy_handler =
-      fun (LSM, initiation_listen) when SM#sm.state == busy ->
+      fun (LSM, initiation_listen) when SM#sm.state == busy;
+                                        SM#sm.state == idle->
            fsm:set_event(LSM, initiation_listen);
           (LSM, _) -> LSM
       end,
@@ -508,7 +514,7 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
         Transmit_handler(LSM, T, Rest)
   end,
 
-  ?INFO(?ID, "try transmit ~p Rest ~p~n", [Tuple, Tail]),
+  ?INFO(?ID, "try transmit ~p~n", [Tuple]),
   [nl_hf:update_states(__),
    Params_handler(__, Tuple, Tail)
   ](SM);
@@ -619,7 +625,6 @@ push_tolerant_queue(SM, {nl, send, tolerant, Dst, Payload}) ->
                       [LocalPC, LocalPC, Src, Dst, Len, Payload],
               burst_nl_hf:create_default()),
 
-  ?TRACE(?ID, "Add to burst queue ~p~n", [Tuple]),
   Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
   QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
 
@@ -660,7 +665,6 @@ process_pc(SM, LPC) ->
   Send_params = nl_hf:find_event_params(SM, send_params),
   case Send_params of
     {send_params, {Whole_len, Tuple, Tail}} when Tuple =/= nothing ->
-      ?INFO(?ID, "process_pc for ~p~n", [Tuple]),
       PC_Tuple = burst_nl_hf:replace(id_at, PC, Tuple),
       NT = {send_params, {Whole_len, PC_Tuple, Tail}},
       [init_pc(__, PC),
