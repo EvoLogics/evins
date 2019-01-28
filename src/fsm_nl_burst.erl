@@ -47,7 +47,8 @@
                   {reset, idle},
                   {busy_online, idle},
                   {no_routing, idle},
-                  {connection_failed, idle}
+                  {connection_failed, idle},
+                  {next_packet, idle}
                  ]},
 
                 {recv,
@@ -579,16 +580,16 @@ set_routing(SM, Routing) ->
   ((Routing == [{default,63}]) or (not Exist)),
 
   State = SM#sm.state,
+  ?INFO(?ID, "SET_ROUTING State ~p ~p ~p ~p ~n", [State, Data_buffer == {[],[]}, Routing, Exist]),
+
   Routing_handler =
   fun (LSM, _) when No_routing ->
        fsm:set_event(LSM, no_routing);
-      %(LSM, idle) when No_routing ->
-      % fsm:set_event(LSM, no_routing);
-      (LSM, idle) when Data_buffer =/= {[],[]} ->
+      (LSM, idle) when Data_buffer =/= {[],[]}, Exist ->
        [env:put(__, updating, false),
         fsm:set_event(__, routing_updated)
        ](LSM);
-      (LSM, sensing) when Exist ->
+      (LSM, sensing) when Data_buffer =/= {[],[]}, Exist ->
        [env:put(__, updating, false),
         fsm:set_event(__, routing_updated)
        ](LSM);
