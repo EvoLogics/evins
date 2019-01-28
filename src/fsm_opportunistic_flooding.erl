@@ -90,6 +90,7 @@
                 {collision,
                  [{relay, collision},
                   {initiation_listen, collision},
+                  {sensing_timeout, collision},
                   {pick, transmit},
                   {idle, idle},
                   {reset, idle}
