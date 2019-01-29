@@ -40,7 +40,7 @@
 -export([check_routing_existance/1]).
 -export([update_statistics_tolerant/3, get_statistics_data/1]).
 -export([burst_len/1, increase_local_pc/2]).
--export([get_packets/1, pop_delivered/2, failed_pc/2]).
+-export([get_packets/1, pop_delivered/2, failed_pc/2, remove_packet/2]).
 -export([bind_pc/3, check_dublicated/2, encode_ack/1, try_extract_ack/2]).
 
 %----------------------------- Get from tuple ----------------------------------
@@ -250,6 +250,32 @@ failed_pc(SM, PC) ->
   ?TRACE(?ID, "Failed PC ~p~n", [PC]),
   [process_asyncs(__, PC),
    share:put(__, burst_data_buffer, NQ)
+  ](SM).
+
+remove_packet(SM, Dst) ->
+  QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
+  Local_address = share:get(SM, local_address),
+  {NQ, Failed} =
+  lists:foldl(
+  fun(X, {Q, LF}) ->
+    [PC, Src, D] = getv([id_local, src, dst], X),
+    if Dst == D ->
+      ?INFO(?ID, "Removed packet ~p to dst ~p LF ~p ~n", [PC, D, LF]),
+      L = if Local_address == Src -> [PC | LF]; true -> LF end,
+      {Q, L};
+    true -> {queue:in(X, Q), LF}
+    end
+  end, {queue:new(), []}, QL),
+  [cast_failed(__, Dst, Failed),
+   share:put(__, burst_data_buffer, NQ)
+  ](SM).
+
+cast_failed(SM, _, []) -> SM;
+cast_failed(SM, Dst, [PC | T]) ->
+  Local_address = share:get(SM, local_address),
+  [burst_nl_hf:update_statistics_tolerant(__, state, {PC, src, failed}),
+   fsm:cast(__, nl_impl, {send, {nl, failed, PC, Local_address, Dst}}),
+   cast_failed(__, Dst, T)
   ](SM).
 
 get_packets(SM) ->

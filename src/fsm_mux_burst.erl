@@ -194,6 +194,8 @@ handle_event(MM, SM, Term) ->
       send_command(SM, ?TO_MM, current_protocol, Term);
     {nl, get, buffer} ->
       send_command(SM, ?TO_MM, burst_protocol, Term);
+    {nl, flush, buffer} ->
+      send_command(SM, ?TO_MM, burst_protocol, Term);
     {nl, get, service} ->
       send_command(SM, ?TO_MM, burst_protocol, Term);
     {nl, get, bitrate} ->

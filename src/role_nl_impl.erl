@@ -332,10 +332,10 @@ from_term({nl, buffer, Buffer}, Cfg) when is_list(Buffer) ->
                             <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
                             lists:flatten([io_lib:format("data:0x~4.16.0b dst:~B type:~s",
                             [Hash, Dst, XMsgType]), EOL]);
-                           ({Payload, Src, Dst, Len}) ->
+                           ({Payload, Src, Dst, Len, PC}) ->
                             <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
-                            lists:flatten([io_lib:format("data:0x~4.16.0b src:~B dst:~B len:~B",
-                            [Hash, Src, Dst, Len]), EOL])
+                            lists:flatten([io_lib:format("data:0x~4.16.0b src:~B dst:~B len:~B id:~B",
+                            [Hash, Src, Dst, Len, PC]), EOL])
                         end, Buffer),
   [list_to_binary(["NL,buffer,",EOL, BufferLst, EOL]), Cfg];
 
