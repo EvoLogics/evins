@@ -395,7 +395,7 @@ nl_extract_subject(<<"buffer">>, <<"empty">>) ->
 nl_extract_subject(<<"buffer">>, Params) ->
   Lines = tl(re:split(Params,"\r?\n")),
   Regexp1 = "data:(.*?) dst:(\\d+) type:([^ ]*)",
-  Regexp2 = "data:(.*?) src:(\\d+) dst:(\\d+) len:(\\d+)",
+  Regexp2 = "data:(.*?) src:(\\d+) dst:(\\d+) len:(\\d+) id:(\\d+)",
 
   {nl, buffer,
    lists:map(fun(Line) ->
@@ -404,12 +404,13 @@ nl_extract_subject(<<"buffer">>, Params) ->
                     list_to_tuple( [Hash,
                                     binary_to_integer(Dst), Type]);
                   _ ->
-                    {match, [Hash, Src, Dst, Len]} =
-                      re:run(Line, Regexp2, [{capture, [1,2,3,4], binary}]),
+                    {match, [Hash, Src, Dst, Len, PC]} =
+                      re:run(Line, Regexp2, [{capture, [1,2,3,4,5], binary}]),
                     list_to_tuple( [Hash,
                                     binary_to_integer(Src),
                                     binary_to_integer(Dst),
-                                    binary_to_integer(Len)])
+                                    binary_to_integer(Len),
+                                    binary_to_integer(PC)])
                 end
              end, Lines)}.
 

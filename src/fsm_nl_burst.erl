@@ -48,6 +48,7 @@
                   {busy_online, idle},
                   {no_routing, idle},
                   {connection_failed, idle},
+                  {pick, sensing},
                   {next_packet, idle}
                  ]},
 
@@ -71,11 +72,13 @@
                   {busy_online, busy},
                   {recv_data, recv},
                   {reset, idle},
+                  {pick, sensing},
                   {connection_failed, idle}
                  ]},
 
                 {transmit,
-                 [{pick, sensing},
+                 [{routing_updated, sensing},
+                  {pick, sensing},
                   {next_packet, transmit},
                   {recv_data, recv},
                   {busy_online, busy},
@@ -230,8 +233,9 @@ handle_event(MM, SM, Term) ->
     {nl, send, tolerant, Local_address, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, send, tolerant, _, _} ->
+      Updating = env:get(SM, updating),
       Event_handler =
-      fun (LSM) when LSM#sm.state == idle ->
+      fun (LSM) when LSM#sm.state == idle, Updating == false ->
             fsm:set_event(LSM, try_transmit);
           (LSM) ->
             fsm:set_event(LSM, eps)
@@ -365,18 +369,28 @@ init_nl_burst(SM) ->
 handle_idle(_MM, #sm{event = connection_failed} = SM, _Term) ->
   fsm:set_event(SM, no_routing);
 handle_idle(_MM, #sm{event = initiation_listen} = SM, _Term) ->
-  fsm:set_event(SM, try_transmit);
+  BD = share:get(SM, nothing, burst_data_buffer, queue:new()),
+  Updating = env:get(SM, updating),
+  Transmit = (BD =/= {[],[]}) and (Updating == false),
+  if Transmit ->
+    fsm:set_event(SM, try_transmit);
+  true ->
+    fsm:set_event(SM, eps) end;
 handle_idle(_MM, #sm{event = no_routing} = SM, _Term) ->
   Params = nl_hf:find_event_params(SM, no_routing),
   Update_retries = share:get(SM, update_retries),
-
+  Updating = env:get(SM, updating),
+  ?INFO(?ID, "Check retries ~p ~p ~p~n", [Update_retries, Params, env:get(SM, update)]),
   Update_handler=
-  fun (LSM, Dst) ->
+  fun (LSM, _Dst, true) -> LSM;
+      (LSM, Dst, false) -> 
       case env:get(LSM, update) of
         {C, D} when D == Dst, C >= Update_retries ->
-          %TODO: remove packets to same dst
-          [env:put(__, update, {0, Dst}),
-           fsm:set_event(__, eps)
+          [burst_nl_hf:remove_packet(__, Dst),
+           env:put(__, update, nothing),
+           env:put(__, updating, false),
+           nl_hf:clear_spec_event_params(__, {no_routing, Dst}),
+           fsm:set_event(__, try_transmit)
           ](LSM);
         {C, D} when D == Dst ->
           [fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}}),
@@ -386,7 +400,7 @@ handle_idle(_MM, #sm{event = no_routing} = SM, _Term) ->
         _ ->
           [fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}}),
            env:put(__, updating, true),
-           env:put(__, update, {0, Dst})
+           env:put(__, update, {1, Dst})
           ](LSM)
       end
   end,
@@ -394,13 +408,14 @@ handle_idle(_MM, #sm{event = no_routing} = SM, _Term) ->
   fun (LSM, {no_routing, Dst}) ->
         Status = lists:flatten([io_lib:format("Update routing to ~p",[Dst])]),
         [env:put(__, status, Status),
-         Update_handler(__, Dst)
+         Update_handler(__, Dst, Updating)
         ](LSM);
-      (LSM, _) -> env:put(LSM, status, "Idle")
+      (LSM, _) ->
+        env:put(LSM, status, "Idle")
   end,
-  [Routing_handler(__, Params),
-   nl_hf:update_states(__),
-   fsm:set_event(__, eps)
+  [fsm:set_event(__, eps),
+   Routing_handler(__, Params),
+   nl_hf:update_states(__)
   ](SM);
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_idle ~120p~n", [Term]),
@@ -570,6 +585,7 @@ set_routing(SM, Routing) ->
   Params = nl_hf:find_event_params(SM, no_routing),
   Exist =
   case Params of
+    [] -> true;
     {no_routing, Dst} ->
       nl_hf:routing_exist(SM, Dst);
     _ -> false
@@ -577,19 +593,21 @@ set_routing(SM, Routing) ->
 
   No_routing =
   (Data_buffer =/= {[],[]}) and
-  ((Routing == [{default,63}]) or (not Exist)),
+  ((Routing == [{default,63}]) or (Exist == false)),
+
+  Routing_updated =
+  (Data_buffer =/= {[],[]}) and (Exist == true),
 
   State = SM#sm.state,
-  ?INFO(?ID, "SET_ROUTING State ~p ~p ~p ~p ~n", [State, Data_buffer == {[],[]}, Routing, Exist]),
+  ?INFO(?ID, "SET_ROUTING State ~p ~p ~p ~p ~p ~n", [Params, State, Data_buffer == {[],[]}, Routing, Exist]),
 
   Routing_handler =
   fun (LSM, _) when No_routing ->
-       fsm:set_event(LSM, no_routing);
-      (LSM, idle) when Data_buffer =/= {[],[]}, Exist ->
-       [env:put(__, updating, false),
-        fsm:set_event(__, routing_updated)
-       ](LSM);
-      (LSM, sensing) when Data_buffer =/= {[],[]}, Exist ->
+      [env:put(__, updating, false),
+       fsm:set_event(__, no_routing)
+      ](LSM);
+      (LSM, Ev) when Routing_updated and
+                    ((Ev == idle) or (Ev == sensing) or (Ev == transmit)) ->
        [env:put(__, updating, false),
         fsm:set_event(__, routing_updated)
        ](LSM);
@@ -777,8 +795,8 @@ get_buffer(SM) ->
   QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
   lists:foldl(
   fun(X, A) ->
-    [Src, Dst, Len, Payload] = burst_nl_hf:getv([src, dst, len, payload], X),
-    [{Payload, Src, Dst, Len} | A]
+    [PC, Src, Dst, Len, Payload] = burst_nl_hf:getv([id_local, src, dst, len, payload], X),
+    [{Payload, Src, Dst, Len, PC} | A]
   end, [], QL).
 
 clear_buffer(SM) ->
