@@ -89,7 +89,8 @@
                  ]},
 
                 {busy,
-                 [{initiation_listen, sensing},
+                 [{next_packet, busy},
+                  {initiation_listen, sensing},
                   {recv_data, recv},
                   {busy_online, busy},
                   {no_routing, idle},
@@ -134,6 +135,10 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, error, <<"ANSWER TIMEOUT">>}});
     {timeout, check_state} ->
       [fsm:maybe_send_at_command(__, {at, "?S", ""}),
+       fsm:run_event(MM, __, {})
+      ](SM);
+    {timeout, update_routing} ->
+      [fsm:set_event(__, no_routing),
        fsm:run_event(MM, __, {})
       ](SM);
     {timeout, {wait_data_tmo, Src}} when State == recv ->
@@ -376,14 +381,14 @@ handle_idle(_MM, #sm{event = initiation_listen} = SM, _Term) ->
     fsm:set_event(SM, try_transmit);
   true ->
     fsm:set_event(SM, eps) end;
-handle_idle(_MM, #sm{event = no_routing} = SM, _Term) ->
+handle_idle(_MM, #sm{event = no_routing, env = #{channel_state := initiation_listen}} = SM, _Term) ->
   Params = nl_hf:find_event_params(SM, no_routing),
   Update_retries = share:get(SM, update_retries),
   Updating = env:get(SM, updating),
   ?INFO(?ID, "Check retries ~p ~p ~p~n", [Update_retries, Params, env:get(SM, update)]),
   Update_handler=
   fun (LSM, _Dst, true) -> LSM;
-      (LSM, Dst, false) -> 
+      (LSM, Dst, false) ->
       case env:get(LSM, update) of
         {C, D} when D == Dst, C >= Update_retries ->
           [burst_nl_hf:remove_packet(__, Dst),
@@ -416,6 +421,11 @@ handle_idle(_MM, #sm{event = no_routing} = SM, _Term) ->
   [fsm:set_event(__, eps),
    Routing_handler(__, Params),
    nl_hf:update_states(__)
+  ](SM);
+handle_idle(_MM, #sm{event = no_routing} = SM, Term) ->
+  ?TRACE(?ID, "handle_idle ~120p~n", [Term]),
+  [fsm:set_timeout(__, {s, 1}, update_routing),
+   fsm:set_event(__, eps)
   ](SM);
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_idle ~120p~n", [Term]),
@@ -603,9 +613,9 @@ set_routing(SM, Routing) ->
 
   Routing_handler =
   fun (LSM, _) when No_routing ->
-      [env:put(__, updating, false),
-       fsm:set_event(__, no_routing)
-      ](LSM);
+       [env:put(__, updating, false),
+        fsm:set_event(__, no_routing)
+       ](LSM);
       (LSM, Ev) when Routing_updated and
                     ((Ev == idle) or (Ev == sensing) or (Ev == transmit)) ->
        [env:put(__, updating, false),
