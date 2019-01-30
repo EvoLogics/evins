@@ -54,7 +54,7 @@
 
                 {recv,
                  [{recv_data, recv},
-                  {no_routing, recv}, 
+                  {no_routing, recv},
                   {pick, sensing},
                   {busy_online, recv},
                   {reset, idle},
@@ -72,6 +72,7 @@
                   {busy_online, busy},
                   {recv_data, recv},
                   {reset, idle},
+                  {next_packet,transmit},
                   {pick, sensing},
                   {connection_failed, idle}
                  ]},
@@ -126,7 +127,7 @@ handle_event(MM, SM, Term) ->
   Pid = share:get(SM, pid),
   State = SM#sm.state,
   Protocol_Name = share:get(SM, nl_protocol),
- 
+
   BD = share:get(SM, nothing, burst_data_buffer, queue:new()),
   if BD == {[],[]} -> ?INFO(?ID, "EMPTY BUFFER!~n", []); true -> nothing end,
 
@@ -149,6 +150,12 @@ handle_event(MM, SM, Term) ->
       ](SM);
     {timeout, {send_acks, Src}} ->
       send_acks(SM, Src);
+    {timeout, try_transmit} when State == sensing; State == idle ->
+      [fsm:set_event(__, try_transmit),
+      fsm:run_event(MM, __, {})
+      ](SM);
+    {timeout, try_transmit} ->
+      SM;
     {timeout, pc_timeout} when State == busy ->
       SM;
     {timeout, pc_timeout} ->
@@ -172,7 +179,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, debug, ok}});
     {nl, path, failed, Dst} ->
       ?INFO(?ID, "Path to ~p failed to find~n", [Dst]),
-      SM;
+      process_failed_update(SM, Dst);
     {nl, set, address, Address} ->
       nl_hf:process_set_command(SM, {address, Address});
     {nl, set, neighbours, Neighbours} ->
@@ -283,7 +290,6 @@ handle_event(MM, SM, Term) ->
       ](SM);
     {sync,"*SEND",{error, _}} ->
       [share:put(__, wait_sync, false),
-       %fsm:cast(__, nl_impl, {send, {nl, send, error}}),
        set_timeout(__, 1, check_state),
        fsm:clear_timeout(__, answer_timeout),
        fsm:set_event(__, busy_online),
@@ -342,8 +348,6 @@ handle_event(MM, SM, Term) ->
       SM
   end.
 
-%nl_hf:add_neighbours(__, NL_Src, {Rssi, Integrity}
-
 check_pcs(SM) ->
   State = SM#sm.state,
   PCS = share:get(SM, nothing, wait_async_pcs, []),
@@ -371,6 +375,29 @@ init_nl_burst(SM) ->
   ]).
 
 %------------------------------Handle functions---------------------------------
+process_failed_update(SM, Dst) ->
+  Update_retries = share:get(SM, update_retries),
+  ?INFO(?ID, "Check retries ~p ~p~n", [Update_retries, env:get(SM, update)]),
+  case env:get(SM, update) of
+    {C, D} when D == Dst, C >= Update_retries ->
+      [burst_nl_hf:remove_packet(__, Dst),
+       env:put(__, update, nothing),
+       nl_hf:clear_spec_event_params(__, {no_routing, Dst}),
+       env:put(__, updating, false),
+       fsm:set_event(__, try_transmit)
+      ](SM);
+    {C, D} when D == Dst ->
+      [fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}}),
+       env:put(__, updating, true),
+       env:put(__, update, {C + 1, D})
+      ](SM);
+    _ ->
+      [fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}}),
+       env:put(__, updating, true),
+       env:put(__, update, {1, Dst})
+      ](SM)
+  end.
+
 handle_idle(_MM, #sm{event = connection_failed} = SM, _Term) ->
   fsm:set_event(SM, no_routing);
 handle_idle(_MM, #sm{event = initiation_listen} = SM, _Term) ->
@@ -383,40 +410,15 @@ handle_idle(_MM, #sm{event = initiation_listen} = SM, _Term) ->
     fsm:set_event(SM, eps) end;
 handle_idle(_MM, #sm{event = no_routing, env = #{channel_state := initiation_listen}} = SM, _Term) ->
   Params = nl_hf:find_event_params(SM, no_routing),
-  Update_retries = share:get(SM, update_retries),
-  Updating = env:get(SM, updating),
-  ?INFO(?ID, "Check retries ~p ~p ~p~n", [Update_retries, Params, env:get(SM, update)]),
-  Update_handler=
-  fun (LSM, _Dst, true) -> LSM;
-      (LSM, Dst, false) ->
-      case env:get(LSM, update) of
-        {C, D} when D == Dst, C >= Update_retries ->
-          [burst_nl_hf:remove_packet(__, Dst),
-           env:put(__, update, nothing),
-           env:put(__, updating, false),
-           nl_hf:clear_spec_event_params(__, {no_routing, Dst}),
-           fsm:set_event(__, try_transmit)
-          ](LSM);
-        {C, D} when D == Dst ->
-          [fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}}),
-           env:put(__, updating, true),
-           env:put(__, update, {C + 1, D})
-          ](LSM);
-        _ ->
-          [fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}}),
-           env:put(__, updating, true),
-           env:put(__, update, {1, Dst})
-          ](LSM)
-      end
-  end,
   Routing_handler =
   fun (LSM, {no_routing, Dst}) ->
-        Status = lists:flatten([io_lib:format("Update routing to ~p",[Dst])]),
-        [env:put(__, status, Status),
-         Update_handler(__, Dst, Updating)
-        ](LSM);
-      (LSM, _) ->
-        env:put(LSM, status, "Idle")
+    Status = lists:flatten([io_lib:format("Update routing to ~p",[Dst])]),
+    [env:put(__, status, Status),
+     env:put(__, updating, true),
+     fsm:cast(__, nl_impl, {send, {nl, update, routing, Dst}})
+    ](LSM);
+    (LSM, _) ->
+     env:put(LSM, status, "Idle")
   end,
   [fsm:set_event(__, eps),
    Routing_handler(__, Params),
@@ -447,9 +449,13 @@ handle_recv(_MM, SM, Term) ->
 handle_sensing(_MM, #sm{event = pick} = SM, Term) ->
   ?TRACE(?ID, "handle_sensing ~120p~n", [Term]),
   Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
+  Transmit = nl_hf:rand_float(SM, tmo_transmit),
   Queue_handler =
-  fun (LSM, true)  -> LSM#sm{event = empty};
-      (LSM, false) -> LSM#sm{event = try_transmit}
+  fun (LSM, true)  -> fsm:set_event(LSM, empty);
+      (LSM, false) ->
+        [fsm:set_timeout(__, {ms, Transmit}, try_transmit),
+         fsm:set_event(__, eps)
+        ](LSM)
   end,
   [nl_hf:update_states(__),
    Queue_handler(SM, queue:is_empty(Q))
@@ -854,12 +860,20 @@ send_acks_helper(SM, _, []) -> SM;
 send_acks_helper(SM, Src, {_, Acks}) ->
   ?INFO(?ID, "Send acks ~p to src ~p~n", [Acks, Src]),
   Name = atom_name(acks, Src),
-  A = lists:reverse(Acks),
+  Max = 2 * share:get(SM, max_queue),
+  NA =
+  lists:reverse(
+   lists:foldl(
+    fun(X, A) when length(A) =< Max -> [X | A];
+		   (_X, A) -> A end,
+  [], Acks)),
+
+  A = lists:reverse(NA),
   Payload = burst_nl_hf:encode_ack(A),
   L = lists:flatten(lists:join(",",[integer_to_list(I) || I <- A])),
   Status = lists:flatten([io_lib:format("Sending ack of packets ~p to ~p",[L, Src])]),
   [env:put(__, status, Status),
-   nl_hf:add_event_params(__, {Name, []}),
+   nl_hf:add_event_params(__, {Name, NA}),
    fsm:cast(__, nl_impl, {send, {nl, ack, Src, Payload}})
   ](SM).
 

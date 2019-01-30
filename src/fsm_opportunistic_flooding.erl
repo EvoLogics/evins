@@ -190,7 +190,8 @@ handle_event(MM, SM, Term) ->
              fsm:set_event(LSM, initiation_listen);
             (LSM, _) -> LSM
         end,
-        [Transmit_handler(__, Channel_state),
+        [nl_hf:pause_neighbours(__, Channel_state),
+         Transmit_handler(__, Channel_state),
          env:put(__, channel_state, Channel_state),
          fsm:run_event(MM, __, {})
         ](SM);
