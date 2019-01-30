@@ -51,6 +51,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Wait_ack_set  = [Time  || {wait_ack, Time} <- ArgS],
   Send_ack_set  = [Time  || {send_ack_tmo, Time} <- ArgS],
   Update_retries_set = [P  || {update_retries, P} <- ArgS],
+  Tmo_transmit = [Time || {tmo_transmit, Time} <- ArgS],
 
   Max_queue  = set_params(Max_queue_set, 3),
   Wait_ack  = set_params(Wait_ack_set, 120), %s
@@ -58,15 +59,24 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Max_burst_len  = set_params(Max_burst_len_set, Max_queue * 1000),
   Update_retries  = set_params(Update_retries_set, 3),
 
+  {Tmo_start, Tmo_end}    = set_timeouts(Tmo_transmit, {1, 4}),
+
   share:put(ShareID, [{nl_start_time, Start_time},
                       {nl_protocol, NL_Protocol},
                       {max_queue, Max_queue},
                       {wait_ack, Wait_ack},
                       {send_ack_tmo, Send_ack},
                       {max_burst_len, Max_burst_len},
+		      {tmo_transmit,   {Tmo_start, Tmo_end} },
                       {update_retries, Update_retries}]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]).
+
+set_timeouts(Tmo, Defaults) ->
+  case Tmo of
+    [] -> Defaults;
+    [{Start, End}]-> {Start, End}
+  end.
 
 set_params(Param, Default) ->
   case Param of
