@@ -1,5 +1,5 @@
-CC      = gcc
-STRIP	= strip
+CC      ?= gcc
+STRIP   ?= strip
 CFLAGS  = -std=gnu99 -Iinclude -W -Wall -Werror -pedantic \
 		  -fdata-sections -ffunction-sections \
 		  -D__USE_MINGW_ANSI_STDIO=1
