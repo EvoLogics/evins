@@ -316,6 +316,8 @@ handle_cast_helper({_, {send, Term}}, #ifstate{mm = #mm{iface = {erlang,Target}}
 handle_cast_helper({Src, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Port, socket = Socket, fsm_pids = FSMs, cfg = Cfg} = State) ->
   %% Self = self(),
   case B:from_term(Term, Cfg) of
+    [<<>>, NewCfg] ->
+      {noreply, State#ifstate{cfg = NewCfg}};
     [Bin, NewCfg] ->
       case MM#mm.iface of
         {socket,_,_,_} when Socket == nothing ->

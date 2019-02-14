@@ -698,7 +698,10 @@ extract_nmea(<<"EVOSSB">>, Params) ->
            <<"F">> -> filtered;
            <<"R">> -> reconstructed
          end,
-    Err = binary_to_list(BErr),
+    Err = case BErr of
+              <<>> -> nothing;
+              _ -> binary_to_list(BErr)
+          end,
     {nmea, {evossb, UTC, TID, DID, S, Err, CS, FS, X, Y, Z, Acc, Pr, Vel}}
   catch
     error:_ -> {error, {parseError, evossb, Params}}
@@ -968,7 +971,55 @@ extract_nmea(<<"SMCS">>, Params) ->
     [Roll, Pitch, Heave] = [ safe_binary_to_float(X) || X <- [BRoll,BPitch,BHeave]],
     {nmea, {smcs, Roll, Pitch, Heave}}
   catch
-    error:_ -> {error, {parseError, tnthpr, Params}}
+    error:_ -> {error, {parseError, smcs, Params}}
+  end;
+
+%% $PSIMSSB,UTC,B01,A,,C,H,M,X,Y,Z,Acc,N,,
+extract_nmea(<<"SIMSSB">>, Params) ->
+  try
+    [BUTC,BSAddr,BS,Err,BCS,BHS,BFS,BX,BY,BDepth,BAcc,AddT,BAdd1,BAdd2] = binary:split(Params,<<",">>,[global]),
+    UTC = extract_utc(BUTC),
+    Addr = case BSAddr of <<"B", BAddr/binary>> -> safe_binary_to_integer(BAddr); _ -> nothing end,
+    S = case BS of <<"A">> -> ok; _ -> nok end,
+    {CS, DS} = case {BCS, BHS} of
+                   {<<"C">>, <<"H">>} -> {lf, 1};
+                   {<<"C">>, <<"E">>} -> {enu, 1};
+                   {<<"C">>, <<"N">>} -> {ned, 1};
+                   {<<"R">>, <<"G">>} -> {geod, -1}
+               end,
+    FS = case BFS of
+             <<"M">> -> measured;
+             <<"F">> -> filtered;
+             <<"R">> -> reconstructed
+         end,
+
+    [X, Y, Depth, Acc, Add1, Add2] = [safe_binary_to_float(X) || X <- [BX, BY, BDepth, BAcc, BAdd1, BAdd2]],
+    Z = case Depth of nothing -> nothing; _ -> Depth * DS end,
+
+    {nmea, {simssb,UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2}}
+  catch
+    error:_ -> {error, {parseError, simssb, Params}}
+  end;
+
+% $PHTRO,x.xx,a,y.yy,b*hh<CR><LF>
+%   x.xx is the pitch in degrees
+%       a is ‘M’ for bow up
+%       a is ‘P’ for bow down
+%   y.yy is the roll in degrees
+%       b is ‘B’ for port down
+%       b is ‘T’ for port up
+%
+% $PHTRO,0.16,M,0.01,T*4E
+% $PHTRO,0.09,M,0.12,B*54
+extract_nmea(<<"HTRO">>, Params) ->
+  try
+    [BPitch, PitchSign, BRoll, RollSign] = binary:split(Params,<<",">>,[global]),
+    PitchFactor = case PitchSign of <<"P">> -> -1.0; _ -> 1.0 end,
+    RollFactor = case RollSign of <<"B">> -> -1.0; _ -> 1.0 end,
+    [Roll, Pitch] = [safe_binary_to_float(X) || X <- [BRoll, BPitch]],
+    {nmea, {htro, Pitch * PitchFactor, Roll * RollFactor}}
+  catch
+    error:_ -> {error, {parseError, htro, Params}}
   end;
 
 %% $--DBS,<Df>,f,<DM>,M,<DF>,F
@@ -1418,6 +1469,13 @@ build_smcs(Roll,Pitch,Heave) ->
            safe_fmt(["~.1.3f","~.1.3f","~.1.2f"],
                     [Roll,Pitch,Heave], ",")]).
 
+build_htro(Pitch, Roll) ->
+  PitchSign = case Pitch of P when P >= 0.0 -> "M"; _ -> "P" end,
+  RollSign = case Roll of R when R >= 0.0 -> "T"; _ -> "B" end,
+  (["PHTRO",
+           safe_fmt(["~.2f","~s","~.2f","~s"],
+                    [Pitch, PitchSign, Roll, RollSign], ",")]).
+
 build_dbs(Depth) ->
   Fmts = ["~.2.0f","~.2.0f","~.2.0f"],
   Fields = safe_fmt(Fmts, case Depth of
@@ -1515,6 +1573,8 @@ from_term_helper(Sentense) ->
       build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus);
     {smcs, Roll, Pitch, Heave} ->
       build_smcs(Roll, Pitch, Heave);
+    {htro,Pitch,Roll} ->
+       build_htro(Pitch,Roll);
     {sxn,10,Tok,Roll,Pitch,Heave,UTC,nothing} ->
       build_sxn(10,Tok,Roll,Pitch,Heave,UTC,nothing);
     {sxn,23,Roll,Pitch,Heading,Heave} ->
