@@ -93,7 +93,8 @@ nl_send_extract(L, Cfg) ->
           end,
         [Tuple | split(Tail, Cfg)];
       _ when Len + 1 =< PLLen ->
-        [{nl, error, {parseError, L}}];
+        %[{nl, error, {parseError, L}}];
+        [{nl, send, error}];
       _ ->
         [{more, L}]
     end
@@ -119,6 +120,13 @@ nl_extract_subject(<<"set">>, <<"neighbours,", Params/binary>>) ->
       [4] -> [list_to_tuple([binary_to_integer(I) || I <- Item]) || Item <- Lst]
     end,
   {nl, set, neighbours, Neighbours};
+nl_extract_subject(<<"set">>, <<"debug,", Params/binary>>) ->
+  Flag = case Params of
+         <<"on">> -> on;
+         <<"off">> -> off
+       end,
+  {nl,set,debug,Flag};
+
 %% NL,set,polling,[Addr1,...,AddrN]
 %% NL,set,polling,empty
 nl_extract_subject(<<"set">>, <<"polling,empty">>) ->
@@ -179,6 +187,9 @@ from_term({nl, neighbours, Neighbours}, Cfg) when is_list(Neighbours) ->
 from_term({nl, state, {State, Event}}, Cfg) ->
   [list_to_binary(["NL,state,",atom_to_list(State),$(,atom_to_list(Event),$),Cfg#config.eol]), Cfg];
 %% NL,states,<EOL>State1(Event1)<EOL>...StateN(EventN)<EOL><EOL>
+from_term({nl, states, []}, Cfg) ->
+  EOL = Cfg#config.eol,
+  [list_to_binary(["NL,states,empty",EOL]), Cfg];
 from_term({nl, states, Transitions}, Cfg) ->
   EOL = Cfg#config.eol,
   TransitionsLst =
@@ -205,8 +216,8 @@ from_term({nl,statistics,Type,Report}, Cfg) when is_atom(Type), is_atom(Report) 
 from_term({nl,statistics,neighbours,Neighbours}, Cfg) ->
   EOL = Cfg#config.eol,
   NeighboursLst =
-    lists:map(fun({Role,Neighbour,Count,Total}) ->
-                  lists:flatten([io_lib:format(" ~p neighbour:~B count:~B total:~B",[Role,Neighbour,Count,Total]),EOL])
+    lists:map(fun({Neighbour,Time,Count,Total}) ->
+                  lists:flatten([io_lib:format("neighbour:~p last update:~B count:~B total:~B",[Neighbour,Time,Count,Total]),EOL])
               end, Neighbours),
   [list_to_binary(["NL,statistics,neighbours,",EOL,NeighboursLst,EOL]), Cfg];
 %% NL,statistics,paths,<EOL> <relay or source> path:<path> duration:<duration> count:<count> total:<total><EOL>...<EOL><EOL>
@@ -216,9 +227,12 @@ from_term({nl,statistics,neighbours,Neighbours}, Cfg) ->
 from_term({nl,statistics,paths,Paths}, Cfg) ->
   EOL = Cfg#config.eol,
   PathsLst =
-    lists:map(fun({Role,Path,Duration,Count,Total}) ->
-                  PathS = lists:flatten(lists:join(",",[integer_to_list(I) || I <- Path])),
-                  lists:flatten([io_lib:format(" ~p path:~s duration:~.1.0f count:~B total:~B",[Role,PathS,Duration,Count,Total]),EOL])
+    lists:map(fun({Path,Duration,Count,Total}) ->
+                    PathS = lists:flatten(lists:join(",",[integer_to_list(I) || I <- Path])),
+                    lists:flatten([io_lib:format("path:~s duration:~.1.0f count:~B total:~B",[PathS,Duration,Count,Total]),EOL]);
+                  ({Path,Count,Total}) ->
+                    PathS = lists:flatten(lists:join(",",[integer_to_list(I) || I <- Path])),
+                    lists:flatten([io_lib:format("path:~s count:~B total:~B",[PathS,Count,Total]),EOL])
               end, Paths),
   [list_to_binary(["NL,statistics,paths,",EOL,PathsLst,EOL]), Cfg];
 %% NL,statistics,data,<EOL> <relay or source> data:<data hash> len:<length> duration:<duration> state:<state> total:<total> dst:<dst> hops:<hops><EOL>...<EOL><EOL>
@@ -229,10 +243,16 @@ from_term({nl,statistics,paths,Paths}, Cfg) ->
 from_term({nl,statistics,data,Data}, Cfg) ->
   EOL = Cfg#config.eol,
   DataLst =
-    lists:map(fun({Role,Hash,Len,Duration,State,Total,Dst,Hops}) ->
-                  lists:flatten([io_lib:format(" ~p data:0x~4.16.0b len:~B duration:~.1.0f state:~s total:~B dst:~B hops:~B",
-                                               [Role,Hash,Len,Duration,State,Total,Dst,Hops]),EOL])
-              end, Data),
+    lists:map(fun(Element) ->
+              case Element of
+                {Role,Hash,Len,Duration,State,Src,Dst,Hops} when is_atom(State) ->
+                    lists:flatten([io_lib:format(" ~p data:0x~4.16.0b len:~B duration:~.1.0f state:~s src:~B dst:~B hops:~B",
+                                                 [Role,Hash,Len,Duration,State,Src,Dst,Hops]),EOL]);
+                {Role,Hash,Len,Send_Time,Recv_Time,Src,Dst,TTL} ->
+                    lists:flatten([io_lib:format(" ~p data:0x~4.16.0b len:~B send_time:~p recv_time:~p src:~B dst:~B last_ttl:~B",
+                                                 [Role,Hash,Len,Send_Time,Recv_Time,Src,Dst,TTL]),EOL])
+              end
+            end, Data),
   [list_to_binary(["NL,statistics,data,",EOL,DataLst,EOL]), Cfg];
 %% NL,protocols,Protocol1,...,ProtocolN
 from_term({nl,protocols,Protocols}, Cfg) ->
@@ -250,9 +270,9 @@ from_term({nl, buffer, []}, Cfg) ->
   [list_to_binary(["NL,buffer,",atom_to_list(empty),EOL,EOL]), Cfg];
 from_term({nl, buffer, Buffer}, Cfg) when is_list(Buffer) ->
   EOL = Cfg#config.eol,
-  BufferLst = lists:map(fun({Payload, XStatus, Dst, XMsgType}) ->
-                  lists:flatten([io_lib:format("data:~p state:~s dst:~B type:~s",
-                  [Payload, XStatus, Dst, XMsgType]), EOL])
+  BufferLst = lists:map(fun({Payload, Dst, XMsgType}) ->
+                  lists:flatten([io_lib:format("data:~p dst:~B type:~s",
+                  [Payload, Dst, XMsgType]), EOL])
               end, Buffer),
   [list_to_binary(["NL,buffer,",EOL, BufferLst, EOL]), Cfg];
 

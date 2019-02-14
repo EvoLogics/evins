@@ -85,7 +85,7 @@ handle_idle(_MM, SM, _Term) ->
   fsm:set_event(SM, eps).
 
 handle_recv(_MM, SM, Term) ->
-  [Event_params, SMP] = nl_mac_hf:event_params(SM, Term, recvim),
+  [Event_params, SMP] = mac_hf:event_params(SM, Term, recvim),
   case SM#sm.event of
     recvim ->
       fsm:set_timeout(SM#sm{event = eps}, {s, 1}, {retry_get_multipath, Event_params});
@@ -115,7 +115,7 @@ send_multipath(SM, Tuple) ->
 
 get_multipath(SM, Term, Answer) ->
   SMAT = fsm:clear_timeout(SM, answer_timeout),
-  [Event_params, SMP] = nl_mac_hf:event_params(SMAT, Term, recvim),
+  [Event_params, SMP] = mac_hf:event_params(SMAT, Term, recvim),
   case Event_params of
     {recvim, {Src, Dst}} ->
       ?TRACE(?ID, "Multipath src ~p dst ~p : ~p~n", [Src, Dst, Answer]);

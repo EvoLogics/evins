@@ -288,17 +288,16 @@ nl_extract_subject(<<"buffer">>, <<"ok">>) ->
 %% NL,buffer,empty
 nl_extract_subject(<<"buffer">>, <<"empty">>) ->
   {nl, buffer, empty};
-% NL,statistics,data,<EOL> data:<hash> state:<state> dst:<dst> type:<type><EOL>...<EOL><EOL>
+% NL,statistics,data,<EOL> data:<hash> dst:<dst> type:<type><EOL>...<EOL><EOL>
 nl_extract_subject(<<"buffer">>, Params) ->
   Lines = tl(re:split(Params,"\r?\n")),
-  Regexp = "data:([^ ]*) state:([^ ]*) dst:(\\d+) type:([^ ]*)",
+  Regexp = "data:(.*?) dst:(\\d+) type:([^ ]*)",
   {nl, buffer,
    lists:map(fun(Line) ->
-                 {match, [Data, State, Dst, Type]} =
-                   re:run(Line, Regexp, [{capture, [1,2,3,4], binary}]),
+                 {match, [Data, Dst, Type]} =
+                   re:run(Line, Regexp, [{capture, [1,2,3], binary}]),
                  list_to_tuple(
                    [Data,
-                    State,
                     binary_to_integer(Dst),
                     Type])
              end, Lines)}.

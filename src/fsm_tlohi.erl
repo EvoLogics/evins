@@ -37,7 +37,7 @@
 -export([init/1,handle_event/3,stop/1]).
 
 -export([handle_idle/3, handle_alarm/3]).
--export([handle_maybe_blocking/3, handle_blocking/3, handle_contention/3, handle_prepare_backoff/3, handle_backoff/3, handle_send/3, handle_wait_listen/3]).
+-export([handle_maybe_blocking/3, handle_blocking/3, handle_precontention/3, handle_contention/3, handle_prepare_backoff/3, handle_backoff/3, handle_send/3, handle_wait_listen/3]).
 
 %%  http://www.eecs.harvard.edu/~mdw/course/cs263/papers/t-lohi-infocom08.pdf
 %%  Comparison - http://www.isi.edu/~johnh/PAPERS/Syed08b.pdf
@@ -83,7 +83,7 @@
                 {idle
                 ,[
                   {recvstart, maybe_blocking},
-                  {content, contention},
+                  {content, precontention},
                   {busy, wait_listen},
                   {ctd, idle},
                   {false_ctd, idle},
@@ -108,6 +108,15 @@
                   {sendok, blocking},
                   {sendend, blocking},
                   {frame_timeout, idle}
+                 ]},
+                {precontention
+                ,[{precontent_timeout, contention},
+                  {recvstart, precontention},
+                  {busy, wait_listen},
+                  {ctd, prepare_backoff},
+                  {false_ctd, precontention},
+                  {sendok, precontention},
+                  {sendend, precontention}
                  ]},
                 {contention
                 ,[
@@ -137,7 +146,7 @@
                   {false_ctd, backoff},
                   {sendok, backoff},
                   {sendend, backoff},
-                  {backoff_timeout, contention}
+                  {backoff_timeout, precontention}
                  ]},
                 {send
                 ,[
@@ -206,12 +215,7 @@ run_hook_handler(MM, SM, {sync, Cmd, _} = Term, Event) ->
           _ -> LSM
         end;
        (LSM) when Cmd == "*SENDIM" ->
-        case share:get(SM, cast_sync_sendim) of
-          true ->
-            share:put(SM, cast_sync_sendim, false),
-            fsm:cast(LSM, at_impl, {send, Term});
-          _ -> LSM
-        end;
+        LSM;
        (LSM) ->
         fsm:cast(LSM, at_impl, {send, Term})
     end,
@@ -229,18 +233,16 @@ run_hook_handler(MM, SM, Term, Event) ->
   ] (SM).
 
 handle_event(MM, SM, Term) ->
+  ?INFO(?ID, "HANDLE EVENT  ~150p~n~150p~n", [MM, SM]),
+  ?TRACE(?ID, "~p~n", [Term]),
   Pid = share:get(SM, pid),
-  io:format("Pid: ~p~n", [Pid]),
   case Term of
     {timeout, answer_timeout} ->
       fsm:cast(SM, at_impl, {send, {async, {error, "ANSWER TIMEOUT"}}});
     {timeout, status_timeout} ->
       fsm:maybe_send_at_command(SM, {at, "?S", ""});
-    {timeout, E} when E == frame_timeout; E == content_timeout ->
-      [
-       fsm:set_event(__, E),
-       fsm:run_event(MM, __, Term)
-      ] (SM);
+    {timeout, E} when E == frame_timeout; E == content_timeout; E == backoff_timeout; E == precontent_timeout ->
+      run_hook_handler(MM, SM, Term, E);
     {connected} when MM#mm.role == at_impl ->
       case share:get(SM, pid) of
         nothing -> SM;
@@ -271,7 +273,7 @@ handle_event(MM, SM, Term) ->
         fun(LSM,blocked) ->
             case share:get(LSM, cached_command) of
               nothing -> share:put(LSM, cached_command, Term);
-              _ -> fsm:cast(LSM, at_impl,  {send, {sync, Cmd, {error, "SEQUENCE_ERROR"}}})
+              _ -> fsm:cast(LSM, at_impl,  {send, {async, {error, "SEQUENCE_ERROR"}}})
             end;
            (LSM, ok) -> LSM
         end,
@@ -281,11 +283,11 @@ handle_event(MM, SM, Term) ->
       end,
       fsm:maybe_send_at_command(SM, Term, Handle_cache);
     {at,{pid,P},"*SENDIM",Dst,noack,Bin} ->
-      Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to nl_mac_hf?
+      %% TODO: check whether connected to at
+      Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to mac_hf?
       Tx = {at,{pid,P},"*SENDIM",Dst,noack,<<Hdr/binary,Bin/binary>>},
-      io:format("P: ~p~n", [P]),
-      share:put(SM, tx, Tx), 
-      share:put(SM, cast_sync_sendim, true),
+      share:put(SM, tx, Tx),
+      fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", "OK"}}),
       run_hook_handler(MM, SM, Term, content_actuator(SM, Term));
     %% TODO: add support of other message types
     {at,{pid,_},Cmd,_,_} ->
@@ -304,14 +306,12 @@ handle_event(MM, SM, Term) ->
       run_hook_handler(MM, SM, Term, eps);
     {async, {pid, Pid}, {recvim, Len, P1, P2, P3, P4, P5, P6, P7, Bin}} ->
       %% TODO: generate tone as <<_:5,1:3>>
-      [_, Flag_code, Data, HLen] = nl_mac_hf:extract_payload_mac_flag(Bin),
-      Flag = nl_mac_hf:num2flag(Flag_code, mac),
+      [_, Flag_code, Data, HLen] = mac_hf:extract_payload_mac_flag(Bin),
+      Flag = mac_hf:num2flag(Flag_code, mac),
       Extracted = {recvim, Len - HLen, P1, P2, P3, P4, P5, P6, P7, Data},
-      io:format("Here: term: ~p, pid: ~p, flag: ~p~n", [Term, Pid,Flag]),
       case Flag of
         tone -> SM;
         data ->
-          io:format("-> ~p~n", [{async, {pid, Pid}, Extracted}]),
           fsm:cast(SM, at_impl, {send, {async, {pid, Pid}, Extracted}});
         _ -> ?ERROR(?ID, "Unsupported flag: ~p~n", [Flag]), SM
       end;
@@ -340,10 +340,17 @@ handle_event(MM, SM, Term) ->
 handle_alarm(_MM, SM, _Term) ->
   exit({alarm, SM#sm.module}).
 
-handle_idle(_MM, SM, _Term) ->
+handle_idle(_MM, #sm{event = E} = SM, _Term) ->
+  Event =
+    case share:get(SM, tx) of
+      nothing -> eps;
+      _ when E == frame_timeout; E == false_ctd; E == listen -> content;
+      %% TODO: maybe better to add small random timeout before trying to content
+      _ -> eps
+    end,
   [
-   fsm:clear_timeouts(__, [frame_timeout, backoff_timeout, content_timeout, status_timeout]),
-   fsm:set_event(__, eps)
+   fsm:clear_timeouts(__, [frame_timeout, backoff_timeout, content_timeout, status_timeout, precontent_timeout]),
+   fsm:set_event(__, Event)
   ] (SM).
 
 handle_maybe_blocking(_MM, SM, _Term) ->
@@ -355,30 +362,41 @@ handle_blocking(_MM, SM, _Term) ->
       Frame = share:get(SM, cr_time),
       [
        fsm:set_event(__, eps),
-       fsm:clear_timeout(__, frame_timeout),
+       fsm:clear_timeouts(__, [frame_timeout, backoff_timeout]),
        fsm:set_timeout(__, {ms, Frame}, frame_timeout)
       ] (SM);
     _ ->
       fsm:set_event(SM, eps)
   end.
 
+handle_precontention(_MM, #sm{event = Event} = SM, _Term) ->
+  CR = share:get(SM, cr_time),
+  Contention_handler =
+    fun(LSM) when Event == content; Event == backoff_timeout ->
+        [
+         fsm:clear_timeout(__, content_timeout),
+         fsm:set_timeout(__, {ms, CR}, content_timeout)
+        ] (LSM);
+       (LSM) -> LSM
+    end,
+  [
+   Contention_handler(__),
+   fsm:maybe_set_timeout(__, {ms, 50}, precontent_timeout),
+   fsm:set_event(__, eps)
+  ] (SM).
+       
 handle_contention(_MM, SM, _Term) ->
   case SM#sm.event of
-    E when E == content; E == backoff_timeout ->
+    E when E == content; E == backoff_timeout; E == precontent_timeout ->
       share:put(SM, ctc, 0),
       Pid = share:get(SM, pid),
-      Hdr = <<0:5,(?FLAG2NUM(tone)):3>>, %% TODO: move to nl_mac_hf?
+      Hdr = <<0:5,(?FLAG2NUM(tone)):3>>, %% TODO: move to mac_hf?
       Term = {at,{pid,Pid},"*SENDIM",255,noack,Hdr},
 
       Transmittion_handler =
         fun(LSM, blocked) -> fsm:set_event(LSM, busy);
            (LSM, ok) ->
-            CR = share:get(SM, cr_time),
-            [
-             fsm:clear_timeout(__, content_timeout),
-             fsm:set_timeout(__, {ms, CR}, content_timeout),
-             fsm:set_event(__, eps)
-            ] (LSM)
+           fsm:set_event(LSM, eps)
         end,
       fsm:maybe_send_at_command(SM, Term, Transmittion_handler);
     _ ->
@@ -388,8 +406,11 @@ handle_contention(_MM, SM, _Term) ->
 handle_prepare_backoff(_MM, SM, _Term) ->
   case SM#sm.event of
     ctd ->
-      share:update_with(SM, ctc, fun(I) -> I + 1 end, 0),
-      fsm:set_event(SM, eps);
+      [
+       fsm:clear_timeout(__, precontent_timeout),
+       share:update_with(__, ctc, fun(I) -> I + 1 end, 0),
+       fsm:set_event(__, eps)
+      ] (SM);
     _ ->
       fsm:set_event(SM, eps)
   end.
@@ -416,7 +437,9 @@ handle_send(_MM, SM, _Term) ->
     content_timeout ->
       Transmittion_handler =
         fun(LSM, blocked) -> fsm:set_event(LSM, busy);
-           (LSM, ok) -> fsm:set_event(LSM, eps)
+           (LSM, ok) ->
+            share:clean(SM, tx),
+            fsm:set_event(LSM, eps)
         end,
       fsm:maybe_send_at_command(SM, TX, Transmittion_handler);
     _ ->
@@ -427,6 +450,7 @@ handle_wait_listen(_MM, SM, _Term) ->
   case SM#sm.event of
     busy ->
       [
+       fsm:clear_timeout(__, precontent_timeout),
        fsm:maybe_send_at_command(__, {at, "?S", ""}),
        fsm:set_interval(__, {s, 1}, status_timeout),
        fsm:set_event(__, eps)

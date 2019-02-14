@@ -87,37 +87,36 @@ handle_event(MM, SM, Term) ->
   Alarm_data = share:get(SM, alarm_data),
 
   case Term of
+    {timeout, reset_state} ->
+      Burst_protocol = share:get(SM, burst_protocol),
+      ProtocolMM = share:get(SM, Burst_protocol),
+      fsm:cast(SM, ProtocolMM, [], {send, {nl, reset, state}}, ?TO_MM);
     {timeout, discovery_period_tmo} ->
       Discovery_period = share:get(SM, discovery_period),
       get_routing(SM),
-      [
-       fsm:set_timeout(__, {s, Discovery_period}, discovery_period_tmo),
+      [fsm:set_timeout(__, {s, Discovery_period}, discovery_period_tmo),
        fsm:set_event(__, discovery_period),
        fsm:run_event(MM, __, {})
-      ] (SM);
+      ](SM);
     {timeout, discovery_end_tmo} ->
       %% get neighbours
-      [
-       get_neighbours(__),
+      [get_neighbours(__),
        fsm:clear_timeout(__, discovery_period_tmo),
        fsm:set_event(__, discovery_end),
        fsm:run_event(MM, __, {})
-      ] (SM);
+      ](SM);
     {timeout, {get_protocol, Some_MM}} ->
-      [
-       fsm:set_timeout(__, {s, 1}, {get_protocol, Some_MM}),
+      [fsm:set_timeout(__, {s, 1}, {get_protocol, Some_MM}),
        fsm:cast(__, Some_MM, [], {send, {nl, get, protocol}}, ?TO_MM)
-      ] (SM);
+      ](SM);
     {timeout, Event} ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
     {connected} ->
       case MM#mm.role of
         nl ->
-          SM1 = SM#sm{state = init_roles},
-          [
-           fsm:set_timeout(__, {s, 1}, {get_protocol, MM}),
+          [fsm:set_timeout(__#sm{state = init_roles}, {s, 1}, {get_protocol, MM}),
            fsm:cast(__, MM, [], {send, {nl, get, protocol}}, ?TO_MM)
-          ] (SM1);
+          ](SM);
         _ ->
           SM
       end;
@@ -160,21 +159,22 @@ handle_event(MM, SM, Term) ->
     {nl, get, protocolinfo, Some_protocol} ->
       Burst_protocol = share:get(SM, burst_protocol),
       ProtocolMM =
-        case Some_protocol of
-          Burst_protocol -> share:get(SM, Some_protocol);
-          _ -> share:get(SM, share:get(SM, discovery_protocol))
-        end,
+      case Some_protocol of
+        Burst_protocol -> share:get(SM, Some_protocol);
+        _ -> share:get(SM, share:get(SM, discovery_protocol))
+      end,
       fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
     {nl, get, routing} ->
       NL = share:get(SM, nothing, neighbours, empty),
-      if NL == empty ->
-        Tuple = {nl, routing, empty},
-        fsm:cast(SM, nl_impl, {send, Tuple});
-      true ->
-        Routing_table = lists:map(fun( {A, _I, _R, _T} ) -> {A, A} end, NL),
-        Tuple = {nl, routing, Routing_table},
-        fsm:cast(SM, nl_impl, {send, Tuple})
-      end;
+      NL_handler =
+      fun (LSM, empty) ->
+            fsm:cast(LSM, nl_impl, {send, {nl, routing, empty}});
+          (LSM, _) ->
+            Routing_table = lists:map(fun( {A, _I, _R, _T} ) -> {A, A} end, NL),
+            Tuple = {nl, routing, Routing_table},
+            fsm:cast(LSM, nl_impl, {send, Tuple})
+      end,
+      NL_handler(SM, NL);
     {nl, get, neighbours} when State =/= discovery ->
       get_neighbours(SM);
     {nl, get, neighbours} ->
@@ -190,12 +190,11 @@ handle_event(MM, SM, Term) ->
                      {discovery_period, Discovery_period}]),
       share:put(SM, neighbours, empty),
       fsm:cast(SM, nl_impl, {send, {nl, discovery, ok}}),
-      [
-       stop_polling(__, empty),
+      [stop_polling(__, empty),
        start_discovery(__),
        fsm:set_event(__, discovery_start),
        fsm:run_event(MM, __, {})
-      ] (SM);
+      ](SM);
     {nl,neighbour,ok} ->
       fsm:cast(SM, nl_impl, {send, Term}),
       get_neighbours(SM);
@@ -245,8 +244,8 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, Event),
        fsm:run_event(MM, __, {})
       ] (SM);
-    {nl, polling, ok} when MM#mm.role == nl,
-                           Alarm_data =/= nothing ->
+    {nl, state, ok} when MM#mm.role == nl,
+                         Alarm_data =/= nothing ->
       send_alarm_msg(SM, Alarm_data),
       fsm:clear_timeouts(SM#sm{state = ready_nl});
     {nl, polling, PL} when is_list(PL), State == discovery ->
@@ -255,7 +254,7 @@ handle_event(MM, SM, Term) ->
     {nl, send, alarm, _Src, Data} ->
       %TODO: we do not need a Src in alarm messages, it will be broadcasted
       stop_polling(SM, Data);
-    {nl, recv, _Src, 255, <<"D">>} ->
+    {nl, recv, _Src, ?ADDRESS_MAX, <<"D">>} ->
       SM;
     {nl, recv, Src, Dst, <<"A", DataT/binary>>} ->
       stop_polling(SM, alarm),
@@ -270,7 +269,6 @@ handle_event(MM, SM, Term) ->
       %% TODO: add Subject to busy report
       fsm:cast(SM, nl_impl, {send, {nl, busy}});
     _ when MM#mm.role == nl, State =/= discovery ->
-           %% Waiting_sync == false ->
       fsm:cast(SM, nl_impl, {send, Term});
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p from ~p~n", [?MODULE, UUg, MM#mm.role]),
@@ -278,179 +276,188 @@ handle_event(MM, SM, Term) ->
   end.
 
 %%--------------------------------Handler functions-------------------------------
+handle_idle(_MM, #sm{event = internal} = SM, Term) ->
+  ?TRACE(?ID, "~120p~n", [Term]),
+  [share:put(__, configured_protocols, []),
+   fsm:set_event(__, init)
+  ](SM);
 handle_idle(_MM, SM, Term) ->
   ?TRACE(?ID, "~120p~n", [Term]),
-  case SM#sm.event of
-    internal ->
-      %% NLRoles = [Role || {nl,_,_,_,_} = Role <- SM#sm.roles],
-      %% Protocols = queue:from_list(NLRoles),
-      %% share:put(SM, protocol_roles, Protocols),
-      share:put(SM, configured_protocols, []),
-      %% share:put(SM, setting_routing, false),
-      %% share:put(SM, waiting_sync, false),
-      %% SM1 = init_nl_protocols(SM, Protocols),
-      SM#sm{event = init};
-    _  ->
-      SM#sm{event = eps}
-  end.
+  SM#sm{event = eps}.
 
 handle_init_roles(_MM, SM, Term) ->
-    ?TRACE(?ID, "~120p~n", [Term]),
-    SM#sm{event = eps}.
+  ?TRACE(?ID, "~120p~n", [Term]),
+  SM#sm{event = eps}.
 
 handle_ready_nl(_MM, SM, Term) ->
-    ?TRACE(?ID, "~120p~n", [Term]),
-    SM#sm{event = eps}.
+  ?TRACE(?ID, "~120p~n", [Term]),
+  SM#sm{event = eps}.
 
 handle_discovery(_MM, SM, Term) ->
-    ?TRACE(?ID, "~120p~n", [Term]),
-    SM#sm{event = eps}.
+  ?TRACE(?ID, "~120p~n", [Term]),
+  SM#sm{event = eps}.
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->
-    exit({alarm, SM#sm.module}).
+  exit({alarm, SM#sm.module}).
 
 handle_final(_MM, SM, Term) ->
     ?TRACE(?ID, "Final ~120p~n", [Term]).
 
 %%--------------------------------Helper functions-------------------------------
 set_protocol(SM, Role, Protocol) ->
-  case share:get(SM, Protocol) of
-    nothing ->
-      %% this protocol is not configured yet
-      fsm:cast(SM, nl_impl, {send, {nl, protocol, error}});
-    _ when Role == nl ->
-      share:put(SM, current_protocol, Protocol),
-      fsm:clear_timeouts(SM);
-    _ ->
-      fsm:cast(SM, nl_impl, {send, {nl, protocol, Protocol}}),
-      share:put(SM, current_protocol, Protocol),
-      fsm:clear_timeouts(SM)
-  end.
+  ProtocolMM = share:get(SM, Protocol),
+  Protocol_handler =
+  fun (LSM, nothing) ->
+        fsm:cast(LSM, nl_impl, {send, {nl, protocol, error}});
+      (LSM, _) when Role == nl ->
+        [share:put(__, current_protocol, Protocol),
+         fsm:clear_timeouts(__)
+        ](LSM);
+      (LSM, _) ->
+        [fsm:cast(__, nl_impl, {send, {nl, protocol, Protocol}}),
+         share:put(__, current_protocol, Protocol),
+         fsm:clear_timeouts(__)
+        ](LSM)
+  end,
+  Protocol_handler(SM, ProtocolMM).
 
 process_ul_command(SM, NLCommand) ->
   Discovery_protocol = share:get(SM, current_protocol),
   ProtocolMM = share:get(SM, Discovery_protocol),
-  case ProtocolMM of
-    nothing ->
-      fsm:cast(SM, nl_impl, {send, {nl, error, noprotocol}});
-    _ ->
-      fsm:cast(SM, ProtocolMM, [], {send, NLCommand}, ?TO_MM)
-  end.
+  Protocol_handler =
+  fun (LSM, nothing) ->
+        fsm:cast(LSM, nl_impl, {send, {nl, error, noprotocol}});
+      (LSM, _) ->
+        fsm:cast(LSM, ProtocolMM, [], {send, NLCommand}, ?TO_MM)
+  end,
+  Protocol_handler(SM, ProtocolMM).
 
 stop_polling(SM, Data) ->
-    Burst_protocol = share:get(SM, burst_protocol),
-    ProtocolMM = share:get(SM, Burst_protocol),
-    case ProtocolMM of
-      nothing ->
-        ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
-        SM;
-      _ when Data == empty ->
-        Tuple = {nl, stop, polling},
-        fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM);
-      _ ->
-        Tuple = {nl, stop, polling},
-        fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM),
-        share:put(SM, alarm_data, Data)
-    end.
+  Burst_protocol = share:get(SM, burst_protocol),
+  ProtocolMM = share:get(SM, Burst_protocol),
+  case ProtocolMM of
+    nothing ->
+      ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+      SM;
+    _ when Data == empty ->
+      Tuple = {nl, stop, polling},
+      fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM);
+    _ ->
+      Tuple = {nl, stop, polling},
+      [share:put(__, alarm_data, Data),
+       fsm:cast(__, ProtocolMM, [], {send, Tuple}, ?TO_MM),
+       fsm:set_timeout(__, {s, 1}, reset_state)
+      ](SM)
+  end.
 
 start_discovery(SM) ->
   Time_discovery  = share:get(SM, time_discovery),
   Discovery_period = share:get(SM, discovery_period),
-  get_routing(SM),
-  [
+  [get_routing(__),
    fsm:set_timeout(__, {s, Time_discovery }, discovery_end_tmo),
    fsm:set_timeout(__, {s, Discovery_period}, discovery_period_tmo)
-  ] (SM).
+  ](SM).
 
 get_routing(SM) ->
   Discovery_protocol = share:get(SM, discovery_protocol),
   ProtocolMM = share:get(SM, Discovery_protocol),
-  case ProtocolMM of
-    nothing ->
-      ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
-      SM;
-    _ ->
-      Tuple = {nl, send, 255, <<"D">> },
-      fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
-  end.
+  Protocol_handler =
+  fun (LSM, nothing) ->
+        ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
+        LSM;
+      (LSM, _) ->
+        Tuple = {nl, send, ?ADDRESS_MAX, <<"D">> },
+        fsm:cast(LSM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
+  end,
+  Protocol_handler(SM, ProtocolMM).
 
 set_routing(SM, []) ->
   Burst_protocol = share:get(SM, burst_protocol),
   ProtocolMM = share:get(SM, Burst_protocol),
-  case ProtocolMM of
-    nothing ->
-      ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
-      SM;
-    _ ->
-      fsm:cast(SM, nl_impl, {send, {nl, routing, []}}),
-      fsm:clear_timeouts(SM#sm{state = ready_nl})
-  end;
+  Protocol_handler =
+  fun (LSM, nothing) ->
+        ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+        LSM;
+      (LSM, _) ->
+        [fsm:cast(__, nl_impl, {send, {nl, routing, []}}),
+         fsm:clear_timeouts(__#sm{state = ready_nl})
+        ](LSM)
+  end,
+  Protocol_handler(SM, ProtocolMM);
 set_routing(SM, empty) ->
   Burst_protocol = share:get(SM, burst_protocol),
   ProtocolMM = share:get(SM, Burst_protocol),
-  case ProtocolMM of
-    nothing ->
-      ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
-      SM;
-    _ ->
-      fsm:cast(SM, nl_impl, {send, {nl, routing, []}}),
-      fsm:clear_timeouts(SM#sm{state = ready_nl})
-  end;
+  Protocol_handler =
+  fun (LSM, nothing) ->
+        ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+        LSM;
+      (LSM, _) ->
+        [fsm:cast(__, nl_impl, {send, {nl, routing, []}}),
+         fsm:clear_timeouts(__#sm{state = ready_nl})
+        ](LSM)
+  end,
+  Protocol_handler(SM, ProtocolMM);
 set_routing(SM, [H|_] = NL) when is_number(H) ->
   Burst_protocol = share:get(SM, burst_protocol),
   ProtocolMM = share:get(SM, Burst_protocol),
   Routing_table = [ {X, X} ||  X <- NL],
   share:put(SM, neighbours, NL),
-  case ProtocolMM of
-    nothing ->
-      ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
-      SM;
-    _ when SM#sm.state == discovery->
-      fsm:cast(SM, ProtocolMM, [], {send, {nl, set, polling, NL}}, ?TO_MM),
-      fsm:cast(SM, nl_impl, {send, {nl, routing, Routing_table}});
-    _ -> SM
-  end;
+  Protocol_handler =
+  fun (LSM, nothing) ->
+        ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+        LSM;
+      (LSM, _) when LSM#sm.state == discovery ->
+        [fsm:cast(__, ProtocolMM, [], {send, {nl, set, polling, NL}}, ?TO_MM),
+         fsm:cast(__, nl_impl, {send, {nl, routing, Routing_table}})
+        ](LSM);
+      (LSM, _) -> LSM
+  end,
+  Protocol_handler(SM, ProtocolMM);
 set_routing(SM, NL) ->
   Burst_protocol = share:get(SM, burst_protocol),
   ProtocolMM = share:get(SM, Burst_protocol),
   Routing_table = lists:map(fun( {A, _I, _R, _T} ) -> {A, A} end, NL),
   Neighbours    = lists:map(fun( {A, _I, _R, _T} ) -> A end, NL),
   share:put(SM, neighbours, NL),
-  case ProtocolMM of
-    nothing ->
-      ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
-      SM;
-    _ when SM#sm.state == discovery->
-      fsm:cast(SM, ProtocolMM, [], {send, {nl, set, polling, Neighbours}}, ?TO_MM),
-      fsm:cast(SM, nl_impl, {send, {nl, routing, Routing_table}});
-    _ -> SM
-  end.
+  Protocol_handler =
+  fun (LSM, nothing) ->
+        ?ERROR(?ID, "Protocol ~p is not configured ~n", [Burst_protocol]),
+        LSM;
+      (LSM, _) when LSM#sm.state == discovery ->
+        [fsm:cast(__, ProtocolMM, [], {send, {nl, set, polling, Neighbours}}, ?TO_MM),
+         fsm:cast(__, nl_impl, {send, {nl, routing, Routing_table}})
+        ](LSM);
+      (LSM, _) -> LSM
+  end,
+  Protocol_handler(SM, ProtocolMM).
 
 get_neighbours(SM) ->
   Discovery_protocol = share:get(SM, discovery_protocol),
   ProtocolMM = share:get(SM, Discovery_protocol),
-  case ProtocolMM of
-    nothing ->
-      ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
-      SM;
-    _ ->
-      Tuple = {nl, get, neighbours},
-      fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
-  end.
+  Protocol_handler =
+  fun (LSM, nothing) ->
+        ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
+        LSM;
+      (LSM, _) ->
+        Tuple = {nl, get, neighbours},
+        fsm:cast(LSM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
+  end,
+  Protocol_handler(SM, ProtocolMM).
 
 send_alarm_msg(SM, alarm) ->
-    share:clean(SM, alarm_data),
-    SM;
+  share:clean(SM, alarm_data);
 send_alarm_msg(SM, Data) ->
-    Discovery_protocol = share:get(SM, discovery_protocol),
-    ProtocolMM = share:get(SM, Discovery_protocol),
-    case ProtocolMM of
-        nothing ->
-            ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
-            SM;
-        _ ->
-            share:clean(SM, alarm_data),
-            Tuple = {nl, send, 255, <<"A",Data/binary>>},
-            fsm:cast(SM, ProtocolMM, [], {send, Tuple}, ?TO_MM)
-    end.
+  Discovery_protocol = share:get(SM, discovery_protocol),
+  ProtocolMM = share:get(SM, Discovery_protocol),
+  Protocol_handler =
+  fun (LSM, nothing) ->
+        ?ERROR(?ID, "Protocol ~p is not configured ~n", [Discovery_protocol]),
+        LSM;
+      (LSM, _) ->
+        Tuple = {nl, send, ?ADDRESS_MAX, <<"A",Data/binary>>},
+        [share:clean(__, alarm_data),
+         fsm:cast(__, ProtocolMM, [], {send, Tuple}, ?TO_MM)
+        ](LSM)
+  end,
+  Protocol_handler(SM, ProtocolMM).

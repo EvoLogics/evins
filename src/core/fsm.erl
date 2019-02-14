@@ -37,7 +37,7 @@
 -export([clear_timeout/2, clear_timeouts/2, clear_timeouts/1]).
 -export([run_event/3, send_at_command/2, broadcast/3, cast/2, cast/3, cast/5]).
 -export([role_available/2]).
--export([set_event/2, set_timeout/3, set_interval/3, check_timeout/2]).
+-export([set_event/2, set_timeout/3, maybe_set_timeout/3, set_interval/3, check_timeout/2]).
 -export([maybe_send_at_command/2,maybe_send_at_command/3]).
 
 %% gen_server callbacks
@@ -238,6 +238,12 @@ set_timeout(_, {_, Value}, Event) ->
 set_timeout(_, Time, Event) ->
   error({error, lists:flatten(io_lib:format("~p no appliable ~p", [Event, Time]))}).
 
+maybe_set_timeout(SM, Time, Event) ->
+  case check_timeout(SM, Event) of
+    true -> SM;
+    false -> set_timeout(SM, Time, Event)
+  end.
+
 set_interval(SM, Time, Event) ->
   #sm{timeouts = Timeouts} = clear_timeout(SM, Event),
   MS = case Time of
@@ -257,7 +263,7 @@ send_at_command(SM, AT) ->
       cast(SM, at, {send, AT}), ?ANSWER_TIMEOUT, answer_timeout), eps).
 
 maybe_send_at_command(SM, AT) ->
-  maybe_send_at_command(SM, AT, fun(_,_) -> SM end).
+  maybe_send_at_command(SM, AT, fun(LSM,_) -> LSM end).
 
 maybe_send_at_command(SM, AT, Fun) ->
   case fsm:check_timeout(SM, answer_timeout) of

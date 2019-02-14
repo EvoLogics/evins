@@ -47,8 +47,8 @@
 %   3b        6b            6b      LenPath * 6b   REST till / 8
 %   TYPEMSG   MAX_DATA_LEN  LenPath   Path           ADD
 %-------> neighbour_path
-%   3b        6b                LenNeighbours * 6b    6b        LenPath * 6b      REST till / 8
-%   TYPEMSG   LenNeighbours     Neighbours            LenPath   Path              ADD
+%   3b        6b        LenPath * 6b    6b                LenNeighbours * 6b          REST till / 8
+%   TYPEMSG   LenPath   Path            LenNeighbours     Neighbours                  ADD
 %-------> path_addit
 %   3b        6b        LenPath * 6b    2b        LenAdd * 8b       REST till / 8
 %   TYPEMSG   LenPath   Path            LenAdd    Addtional Info    ADD
@@ -60,7 +60,8 @@
 -define(FLAG_MAX, 5).
 -define(TYPE_MSG_MAX, 5).
 -define(TTL, 3).
--define(PKG_ID_MAX, 63).
+-define(TRANSMISSION_QUEUE_SIZE, 30).
+-define(PKG_ID_MAX, 255).
 -define(ADDRESS_MAX, 63).
 -define(MAX_LEN_PATH, 63).
 -define(MAX_LEN_NEIGBOURS, 63).
@@ -69,7 +70,8 @@
 -define(MAX_DATA_LEN, 64).
 
 -define(MAX_IM_LEN, 50).
-
+-define(Q_STATISTICS_SIZE, 300).
+-define(RQ_SIZE, 100).
 -define(LIST_ALL_PROTOCOLS, [staticr,
            staticrack,
            sncfloodr,
@@ -79,14 +81,11 @@
            icrpr,
            sncfloodpfr,
            sncfloodpfrack,
-           dblfloodpfr,
-           dblfloodpfrack,
            evoicrppfr,
-           evoicrppfrack,
-           loarpr,
-           loarprack]).
+           evoicrppfrack
+          ]).
 
--record(pr_conf,{stat=false, brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, dbl=false, evo=false, lo=false, rm=false}).
+-record(pr_conf,{stat=false, brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, evo=false}).
 
 -define(LIST_ALL_PARAMS, [
         stat,   % static routing
@@ -95,13 +94,11 @@
         ack,    % with acknowledgement
         ry_only,  % relay only data without knowing path
         pf,   % path finder
-          % if ry_only and pf are use together, it means thay data will be relayed and on the way
-          % the path will be established, this path on dst will be used for sending ack back
+                % if ry_only and pf are use together, it means thay data will be relayed and on the way
+                % the path will be established, this path on dst will be used for sending ack back
         prob,   % probabilsitic flooding
-        dbl,    % double waves (two flooding waves)
-        evo,    % evologics special type, to add info like Rssi and Integrity
-        lo,   % low overhead
-        rm]).   % route maintenance
+        evo    % evologics special type, to add info like Rssi and Integrity
+        ]).
 
 
 -define(PROTOCOL_NL_PID(P),
@@ -115,40 +112,32 @@
     icrpr           -> 6;
     sncfloodpfr     -> 7;
     sncfloodpfrack  -> 8;
-    dblfloodpfr     -> 9;
-    dblfloodpfrack  -> 10;
-    evoicrppfr      -> 11;
-    evoicrppfrack   -> 12;
-    loarpr          -> 13;
-    loarprack       -> 14
+    evoicrppfr      -> 9;
+    evoicrppfrack   -> 10
   end).
 
 -define(PROTOCOL_MAC_PID(P),
   case P of
     mac_burst  -> 0;
-    csma_alh   -> 1;
+    csma_aloha -> 1;
     cut_lohi   -> 2;
     aut_lohi   -> 3;
     dacap      -> 4
   end).
 
 -define(PROTOCOL_CONF, [
-      {staticr, [{stat, ry_only}, fsm_nl_flood]}, % Simple static routing
-      {staticrack, [{stat, ry_only, br_na, ack}, fsm_nl_flood]},  % Simple static routing with acknowledgement
-      {sncfloodr, [{ry_only}, fsm_nl_flood]}, % Sequence number controlled flooding
-      {sncfloodrack, [{ry_only, br_na, ack}, fsm_nl_flood]},  % Sequence number controlled flooding with acknowledgement
-      {dpfloodr, [{ry_only, prob},    fsm_nl_flood]}, % Dynamic Probabilistic Flooding
-      {dpfloodrack, [{ry_only, prob, br_na, ack},fsm_nl_flood]},  % Dynamic Probabilistic Flooding with acknowledgement
-      {icrpr, [{ry_only, pf, br_na, ack},  fsm_nl_flood]},  % Information Carrying Routing Protocol
-      {sncfloodpfr, [{pf, brp, br_na}, fsm_nl_flood]},  % Pathfind and relay, based on sequence number controlled flooding
-      {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_nl_flood]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
-      {dblfloodpfr, [{pf, dbl, br_na}, fsm_nl_flood]},  % Double flooding path finder
-      {dblfloodpfrack,[{pf, dbl, br_na, ack}, fsm_nl_flood]}, % Double flooding path finder with acknowledgement
-      {evoicrppfr, [{pf, br_na, lo, evo}, fsm_nl_flood]}, % Evologics Information Carrying routing protocol
-      {evoicrppfrack, [{pf, br_na, lo, evo, ack}, fsm_nl_flood]}, % Evologics Information Carrying routing protocol with acknowledgement
-      {loarpr, [{pf, br_na, lo, rm}, fsm_nl_flood]},  % Low overhead routing protocol
-      {loarprack, [{pf, br_na, lo, rm, ack}, fsm_nl_flood]} % Low overhead routing protocol with acknowledgement
-           ]).
+      {staticr, [{stat, ry_only}, fsm_opportunistic_flooding]}, % Simple static routing
+      {staticrack, [{stat, ry_only, br_na, ack}, fsm_opportunistic_flooding]},  % Simple static routing with acknowledgement
+      {sncfloodr, [{ry_only}, fsm_opportunistic_flooding]}, % Sequence number controlled flooding
+      {sncfloodrack, [{ry_only, br_na, ack}, fsm_opportunistic_flooding]},  % Sequence number controlled flooding with acknowledgement
+      {dpfloodr, [{ry_only, prob},    fsm_opportunistic_flooding]}, % Dynamic Probabilistic Flooding
+      {dpfloodrack, [{ry_only, prob, br_na, ack},fsm_opportunistic_flooding]},  % Dynamic Probabilistic Flooding with acknowledgement
+      {icrpr, [{ry_only, pf, br_na, ack},  fsm_opportunistic_flooding]},  % Information Carrying Routing Protocol
+      {sncfloodpfr, [{pf, brp, br_na}, fsm_opportunistic_flooding]},  % Pathfind and relay, based on sequence number controlled flooding
+      {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_opportunistic_flooding]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
+      {evoicrppfr, [{pf, br_na, evo}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol
+      {evoicrppfrack, [{pf, br_na, evo, ack}, fsm_opportunistic_flooding]} % Evologics Information Carrying routing protocol with acknowledgement
+    ]).
 
 -define(PROTOCOL_DESCR, ["\n",
        "staticr        - simple static routing, in config file f.e. {routing,{{7,1},2}}\n",
@@ -159,8 +148,6 @@
        "sncfloodpfrack - pathfind and relay to destination with acknowledgement\n",
        "evoicrppfr     - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header\n"
        "evoicrppfrack  - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header with acknowledgement\n"
-       "dblfloodpfr    - double flooding path finder, based on 3 waves, going through the network to find path\n"
-       "dblfloodpfrack - double flooding path finder, based on 3 waves, going through the network to find path with acknowledgement\n"
        "dpfloodr       - dynamic probabilistic flooding\n"
        "dpfloodrack    - dynamic probabilistic flooding with acknowledgement\n"
        "icrpr          - information carrying routing protocol\n"
@@ -211,17 +198,26 @@
        "======================== Statistics commands for protocols of all types ========================\n",
        "NL,get,statistics,neighbours\t\t\t- Get statistics of all neighbours from start of program till the current time
        \t\t\tAnswer:
-       \t\t\t<Role : relay or source><Neighbours><Duration find path><Count found this path><Total count try findpath>\n"
+       \t\t\tneighbour:<Neighbour>nast update:<Time>count:<Count>Total count:<Total count>\n"
        "\n",
        "================== Statistics commands only for protocols of path finding type ==================\n",
        "NL,get,statistics,paths\t\t\t\t- Get statistics of all paths from start of program till the current time
        \t\t\tAnswer:
-       \t\t\t<Role : relay or source><Path><Duration find path><Count found this path><Total count try findpath>\n"
+       \t\t\t<Path><Duration find path><Count found this path><Total count try findpath>\n
+       \t\t\t<Path><Count found this path><Total count try findpath>\n"
        "\n",
+       "========================= Statistics commands only for protocols without ack ========================\n",
+       "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time
+       \t\t\tAnswer:
+       \t\t\t<relay/source/destination><Data> send_time:<Time> recv_time:<Time> src:<Address> dst:<Address> last_ttl:<TTL>"
+       "\n\n\n",
        "========================= Statistics commands only for protocols with ack ========================\n",
        "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time
        \t\t\tAnswer:
-       \t\t\t<Role : relay or source><Data><Length><Duration find path and transmit data><State: delivered or failed><Total count try findpath>"
+       \t\t\t<relay or source> data:<Data> len:<Len> duration:<Time between data transmission and getting ack> state:<Delivered/Failed> total:<Tries> dst:<Adderss> hops:<Hops>"
+       "\n\n\n",
+       "========================= Time commands ========================\n",
+       "NL,get,time,monotonic\t\t\t\t-Get monotonic time, time in milliseconds from the start\n"
        "\n\n\n",
        "========================= Clear commands ========================\n",
        "NL,delete,neighbour,<Addr>\t\t\t-Remove a neighbour from the current neighbour list and updates the routing table\n",
@@ -312,7 +308,7 @@
       %% NL layer
       0        -> neighbours; % n:(.*)
       1        -> path_data;  % p:(.*),d:(.*)
-      2        -> neighbours_path; % n:(.*),p:(.*)
+      2        -> path_neighbours; % n:(.*),p:(.*)
       3        -> path_addit; % p:(.*),a:(.*)
       4        -> data
   end).
@@ -322,7 +318,7 @@
       %% NL layer
       neighbours  -> 0;
       path_data   -> 1;
-      neighbours_path -> 2;
+      path_neighbours -> 2;
       path_addit -> 3;
       data -> 4
   end).

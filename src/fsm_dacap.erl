@@ -223,7 +223,7 @@ handle_event(MM, SM, Term) ->
     {sync, Req, Answer} ->
       SMAT = fsm:clear_timeout(SM, answer_timeout),
       fsm:cast(SMAT, at_impl, {send, {sync, Answer} }),
-      [Param_Term, SM1] = nl_mac_hf:event_params(SMAT, Term, rcv_rts_fm),
+      [Param_Term, SM1] = mac_hf:event_params(SMAT, Term, rcv_rts_fm),
       [SM2, Param] = process_sync(SM1, Req, Answer, Param_Term),
       fsm:run_event(MM, SM2, Param);
     UUg ->
@@ -254,7 +254,7 @@ handle_wcts(_MM, SM, Term) ->
     {send_rts, IDst, Msg} when Answer_timeout =:= true->
       fsm:set_timeout(SM, {ms, 50}, {send_rts, IDst, Msg});
     {send_rts, IDst, Msg} ->
-      SM1 = nl_mac_hf:send_helpers(SM, at, Msg, rts),
+      SM1 = mac_hf:send_helpers(SM, at, Msg, rts),
       Tmin = get_distance(SM, IDst) / share:get(SM, sound_speed),
       SM2 = fsm:set_timeout(SM1, {s, Tmin}, tmo_defer_trans),
       RTT = get_current_rtt(SM2, IDst),
@@ -283,7 +283,7 @@ handle_scts(_MM, SM, Term) ->
     {rcv_rts_fm, SM2, STuple}->
       share:put(SM2, wait_data, STuple),
       C = share:get(SM2, sound_speed),
-      Dst_addr = nl_mac_hf:get_dst_addr(STuple),
+      Dst_addr = mac_hf:get_dst_addr(STuple),
       U =
       case Val = share:get(SM2, u, Dst_addr) of
        nothing -> share:get(SM2, u);
@@ -294,7 +294,7 @@ handle_scts(_MM, SM, Term) ->
   end.
 
 handle_ws_data(_MM, SMP, Term) ->
-  [Param_Term, SM] = nl_mac_hf:event_params(SMP, Term, rcv_cts_fm),
+  [Param_Term, SM] = mac_hf:event_params(SMP, Term, rcv_cts_fm),
   ?TRACE(?ID, "~120p~n", [Term]),
   SM1 = fsm:clear_timeout(SM, wcts_end),
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
@@ -309,7 +309,7 @@ handle_ws_data(_MM, SMP, Term) ->
       fsm:set_timeout(SM1#sm{event = eps}, {ms, 50}, send_data);
     send_data ->
       Current_pkg = share:get(SM, current_pkg),
-      SM2 = nl_mac_hf:send_mac(SM1, at, data, Current_pkg),
+      SM2 = mac_hf:send_mac(SM1, at, data, Current_pkg),
       share:clean(SM2, current_pkg),
       SM2#sm{event = data_sent};
     {rcv_warn} ->
@@ -324,13 +324,13 @@ handle_backoff(_MM, SM, Term) ->
     send_warn when Answer_timeout =:= true->
       fsm:set_timeout(SM#sm{event = eps}, {ms, 50}, send_warn);
     send_warn ->
-      Tmo_backoff = nl_mac_hf:rand_float(SM, tmo_backoff),
+      Tmo_backoff = mac_hf:rand_float(SM, tmo_backoff),
       STuple = share:get(SM, wait_data),
-      SM1 = nl_mac_hf:send_helpers(SM, at, STuple, warn),
+      SM1 = mac_hf:send_helpers(SM, at, STuple, warn),
       SM2 = fsm:set_timeout(SM1, {ms, Tmo_backoff}, backoff_end),
       SM2#sm{event = send_warn};
     wcts_end ->
-      Tmo_backoff = nl_mac_hf:rand_float(SM, tmo_backoff),
+      Tmo_backoff = mac_hf:rand_float(SM, tmo_backoff),
       fsm:set_timeout(SM#sm{event = eps}, {ms, Tmo_backoff}, backoff_end);
     _ -> SM#sm{event = eps}
   end.
@@ -377,14 +377,14 @@ update_wcts(SM, RTmo, IDst) ->
     {0, 0} -> nothing;
     {T1, T2} ->
       Tot = T2 - T1,
-      RTT = nl_mac_hf:convert_t((Tot - RTmo), {us, s}),
+      RTT = mac_hf:convert_t((Tot - RTmo), {us, s}),
       T = RTT / 2,
       U = T * C,
       ?TRACE(?ID, "T1 ~p T2 ~p Tot ~p RTmo ~p RTT ~p T ~p ~n", [T1, T2, Tot, RTmo, RTT, T]),
       ?TRACE(?ID, "Distance between ~p and ~p is U = ~p ~n", [LA, IDst, U]),
       share:put(SM, u, IDst, U),
       Delta_d = T/4 * C,
-      CTot = nl_mac_hf:convert_t(Tot, {us, s}),
+      CTot = mac_hf:convert_t(Tot, {us, s}),
       share:put(SM, rtt, IDst, CTot + 2 * Delta_d / C)
   end.
 
@@ -419,10 +419,10 @@ process_recv(SM, T) ->
 process_recv_helper(SM, Len, Src, 255, P1, P2, P3, P4, P5, Payl) ->
   [SM, {raw, {Len, Src, 255, P1, P2, P3, P4, P5, Payl}}];
 process_recv_helper(SM, Len, Src, Dst, P1, P2, P3, P4, P5, Payl) ->
-  [BPid, BFlag, Data, LenAdd] = nl_mac_hf:extract_payload_mac_flag(Payl),
+  [BPid, BFlag, Data, LenAdd] = mac_hf:extract_payload_mac_flag(Payl),
   CurrentPid = ?PROTOCOL_MAC_PID(share:get(SM, macp)),
     if CurrentPid == BPid ->
-      Flag = nl_mac_hf:num2flag(BFlag, mac),
+      Flag = mac_hf:num2flag(BFlag, mac),
       ShortTuple = {Len - LenAdd, Src, Dst, P1, P2, P3, P4, P5, Data},
       process_recv_helper(SM, BPid, Flag, ShortTuple, Dst);
     true ->
@@ -452,7 +452,7 @@ process_sync(SM1, Req, Answer, {rcv_rts_fm, STuple}) when Req =:= "?CLOCK" ->
   case Cts_rts_time_total of
     {Timestemp1, 0} ->
       TDiff  = Timestemp2 - Timestemp1,
-      SM2 = nl_mac_hf:send_cts(SM1, at, STuple, Timestemp2, 1000000, TDiff),
+      SM2 = mac_hf:send_cts(SM1, at, STuple, Timestemp2, 1000000, TDiff),
       {at, _, _, IDst, _, _} = STuple,
       C = share:get(SM2, sound_speed),
       U = get_distance(SM2, IDst),
@@ -502,14 +502,14 @@ process_rcv_flag(SM, PID, Flag, Tuple, RTuple) ->
       SM1 = SM#sm{event = rcv_cts_fm},
       [SM1, {rcv_cts_fm, binary_to_integer(Data), Src}];
     rts_nfm ->
-      Tmo_backoff = nl_mac_hf:rand_float(SM, tmo_backoff),
+      Tmo_backoff = mac_hf:rand_float(SM, tmo_backoff),
       SM1 = fsm:set_timeout(SM, {ms, Tmo_backoff}, backoff_end),
       SM2 = SM1#sm{event = rcv_rts_nfm},
       [SM2, {}];
     cts_nfm when ((State =:= wcts) and Tmo_defer_trans) ->
       [SM, {}];
     cts_nfm ->
-      Tmo_backoff = nl_mac_hf:rand_float(SM, tmo_backoff),
+      Tmo_backoff = mac_hf:rand_float(SM, tmo_backoff),
       SM1 = fsm:set_timeout(SM, {ms, Tmo_backoff}, backoff_end),
       SM2 = SM1#sm{event = rcv_cts_nfm},
       [SM2, {}];
