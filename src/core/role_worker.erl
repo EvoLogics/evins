@@ -207,7 +207,6 @@ connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) -
       open_port(Port,PortSettings);
     {Application, Executable} when is_atom(Application), is_atom(Executable) ->
       Path = code:priv_dir(Application) ++ "/" ++ atom_to_list(Executable),
-      io:format("Path: ~p, PortSettings: ~p~n", [Path, PortSettings]),
       open_port({spawn, Path}, PortSettings)
   end,
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
