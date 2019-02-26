@@ -206,7 +206,7 @@ connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) -
     {Type, _} when Type == spawn; Type == spawn_driver; Type == spawn_executable; Type == fd ->
       open_port(Port,PortSettings);
     {Application, Executable} when is_atom(Application), is_atom(Executable) ->
-      Path = code:priv_dir(Application) ++ "/" ++ atom_to_list(Executable),
+      Path = "\"" ++ code:priv_dir(Application) ++ "/" ++ atom_to_list(Executable) ++ "\"",
       open_port({spawn, Path}, PortSettings)
   end,
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
@@ -214,7 +214,7 @@ connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) -
 
 connect(#ifstate{id = ID, mm = #mm{iface = {serial,Port,BaudRate,DataBits,Parity,StopBits,FlowControl}}} = State) ->
   process_flag(trap_exit, true),
-  PortID = open_port({spawn, code:priv_dir(evins) ++ "/evo_serial"}, [binary, {packet, 1}, overlapped_io]),
+  PortID = open_port({spawn, "\"" ++ code:priv_dir(evins) ++ "/evo_serial\""}, [binary, {packet, 1}, overlapped_io]),
   Par = case Parity of
             none -> 0;
             odd -> 1;
