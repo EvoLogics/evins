@@ -74,7 +74,7 @@
 
                 {transmit,
                  [{transmitted, sensing},
-                 {wait, sensing},
+                 {wait, collision},
                  {path, sensing},
                  {reset, idle}
                  ]},
@@ -89,6 +89,8 @@
 
                 {collision,
                  [{relay, collision},
+                  {initiation_listen, collision},
+                  {sensing_timeout, collision},
                   {pick, transmit},
                   {idle, idle},
                   {reset, idle}
@@ -98,7 +100,10 @@
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> init_flood(SM).
+init(SM)       ->
+  [init_flood(__),
+   env:put(__, channel_state, initiation_listen)
+  ](SM).
 trans()        -> ?TRANS.
 final()        -> [alarm].
 init_event()   -> eps.
@@ -113,6 +118,7 @@ handle_event(MM, SM, Term) ->
     Protocol_Name = share:get(SM, protocol_name),
     Pid = share:get(SM, pid),
     Debug = share:get(SM, debug),
+    Path_max_retries = share:get(SM, path_retries),
     Establish_retries = share:get(SM, nothing, path_establish, 0),
 
     case Term of
@@ -134,14 +140,21 @@ handle_event(MM, SM, Term) ->
       {timeout, {sensing_timeout, _Send_Tuple}} ->
         ?INFO(?ID, "St ~p Ev ~p ~n", [SM#sm.event, SM#sm.state]),
         fsm:run_event(MM, SM#sm{event = sensing_timeout}, {});
-      {timeout, {path_establish, Dst}} when Establish_retries > 1 ->
+      {timeout, {path_establish, Src, Dst}} when Establish_retries >= Path_max_retries ->
+        Cast_handler =
+        fun (LSM) when Src == Local_Address ->
+              fsm:cast(LSM, nl_impl, {send, {nl, path, failed, Dst}});
+            (LSM) -> LSM
+        end,
+
         [nl_hf:drop_postponed(__, Dst),
          share:put(__, path_establish, 0),
          share:put(__, waiting_path, false),
+         Cast_handler(__),
          fsm:set_event(__, relay),
          fsm:run_event(MM, __, {})
         ](SM);
-      {timeout, {path_establish, _}} ->
+      {timeout, {path_establish, _, _}} ->
         [share:put(__, waiting_path, false),
          fsm:set_event(__, relay),
          fsm:run_event(MM, __, {})
@@ -166,6 +179,22 @@ handle_event(MM, SM, Term) ->
         ?INFO(?ID, "Overheard message: ~p~n", [Recv_Tuple]),
         [process_overheared_packet(__, Recv_Tuple),
         fsm:run_event(MM, __, {})](SM);
+      {async, Recv_Tuple = {recvsrv,Src,_,_,_,_,_,_}} when Src =/=0 ->
+        ?INFO(?ID, "Received service message: ~p~n", [Recv_Tuple]),
+        [process_overheared_packet(__, Recv_Tuple),
+        fsm:run_event(MM, __, {})](SM);
+      {async, Notification = {status, _, _}} ->
+        Channel_state = nl_hf:process_async_status(Notification),
+        Transmit_handler =
+        fun (LSM, initiation_listen) when SM#sm.state == collision ->
+             fsm:set_event(LSM, initiation_listen);
+            (LSM, _) -> LSM
+        end,
+        [nl_hf:pause_neighbours(__, Channel_state),
+         Transmit_handler(__, Channel_state),
+         env:put(__, channel_state, Channel_state),
+         fsm:run_event(MM, __, {})
+        ](SM);
       {async, Notification} when Debug == on ->
         process_async(SM, Notification);
       {sync, _, _} ->
@@ -290,7 +319,7 @@ handle_transmit(_MM, SM, Term) ->
     false when Waiting_path, not Is_path ->
       fsm:set_event(SM, path);
     false ->
-      [fsm:clear_timeout(__, {path_establish, nl_hf:getv(src, Head)}),
+      [fsm:clear_timeout(__, {path_establish, nl_hf:getv(dst, Head), nl_hf:getv(src, Head)}),
        try_transmit(__, Head)
       ] (SM)
   end.
@@ -311,6 +340,8 @@ handle_collision(_MM, SM, _Term) ->
   ?INFO(?ID, "collision state ~p~n", [SM#sm.event]),
   nl_hf:update_states(SM),
   case SM#sm.event of
+    initiation_listen ->
+      maybe_pick(SM);
     sensing_timeout ->
       % 1. decreace TTL for every packet in the queue
       % 2. delete packets withh TTL 0 or < 0
@@ -360,7 +391,7 @@ establish_path(SM, NL) ->
   [Src, Dst] = nl_hf:getv([src, dst], NL),
 
   [share:put(__, path_establish, Retries + 1),
-   fsm:set_timeout(__, {s, Wpath_tmo}, {path_establish, Dst}),
+   fsm:set_timeout(__, {s, Wpath_tmo}, {path_establish, Src, Dst}),
    establish_path(__, Src == Local_address, Dst, NL)
   ](SM).
 
@@ -370,15 +401,20 @@ establish_path(SM, true, Dst, _NL) ->
   Protocol_name = share:get(SM, protocol_name),
   Protocol_config = share:get(SM, protocol_config, Protocol_name),
 
+  Path_max_retries = share:get(SM, path_retries),
+  Establish = share:get(SM, nothing, path_establish, 0),
+  ?TRACE(?ID, "establish_path ~p ~p~n", [Establish, Path_max_retries]),
+  Retries = Path_max_retries - Establish,
+
   MType =
   if Protocol_config#pr_conf.evo -> path_addit;
   true -> path_neighbours end,
 
-  ?INFO(?ID, "establish_path ~p ~p~n", [Protocol_config#pr_conf.evo, MType]),
+  ?INFO(?ID, "establish_path retries ~p ~p~n", [Protocol_config#pr_conf.evo, MType]),
 
   Tuple = nl_hf:prepare_path(SM, path, MType, Local_address, Dst),
   [share:put(__, waiting_path, true),
-   fsm:cast(__, nl_impl, {send, {nl, path, Dst}}),
+   fsm:cast(__, nl_impl, {send, {nl, path, Retries, Dst}}),
    nl_hf:fill_transmission(__, filo, Tuple),
    try_transmit(__, Tuple)
   ](SM);
@@ -400,12 +436,17 @@ try_transmit(SM, error, _, _) ->
   fsm:set_event(SM, transmitted);
 try_transmit(SM, AT, L, Head) ->
   Transmission_handler =
-  fun(_LSM, blocked) -> fsm:set_event(SM, wait);
+  fun(#sm{env = #{channel_state := busy_backoff}}, _) ->
+      ?INFO(?ID, "NL in backoff state ~n", []),
+      fsm:set_event(SM, wait);
+     (_LSM, blocked) ->
+      fsm:set_event(SM, wait);
      (_LSM, ok) ->
       ?INFO(?ID, "Transmit tuples ~p~n", [L]),
       transmit_combined(SM, AT, Head, lists:reverse(L), 0)
   end,
 
+  ?INFO(?ID, "Channel_state ~p~n", [env:get(SM, channel_state)]),
   [fsm:set_event(__, eps),
    fsm:maybe_send_at_command(__, AT, Transmission_handler)
   ](SM).
@@ -484,11 +525,14 @@ maybe_transmit_next(SM) ->
 process_overheared_packet(SM, Tuple) ->
   {Src, Rssi, Integrity} =
   case Tuple of
+    {recvsrv, RSrc,_,_,_,_,RRssi,RIntegrity} ->
+      {RSrc, RRssi, RIntegrity};
     {recvpbm,_,RSrc,_,_,  RRssi,RIntegrity,_,_} ->
       {RSrc, RRssi, RIntegrity};
+    {recv,_,RSrc,_,_,RRssi,RIntegrity,_,_,_} ->
+      {RSrc, RRssi, RIntegrity};
     {Format,_,RSrc,_,_,_,RRssi,RIntegrity,_,_} when Format == recvim;
-                                                    Format == recvims;
-                                                    Format == recv ->
+                                                    Format == recvims ->
       {RSrc, RRssi, RIntegrity}
   end,
 
@@ -775,18 +819,18 @@ set_stable_path(SM, path_addit, Tuple, Stable_path) ->
 set_stable_ack_path(SM, {NL_Src, NL_Dst}) ->
   Stable_path = nl_hf:get_stable_path(SM, NL_Src, NL_Dst),
   New_path = nl_hf:update_path(SM, Stable_path),
-  
+
   Cast_handler =
   fun(LSM) ->
     Routing = nl_hf:routing_to_list(LSM),
     fsm:cast(LSM, nl_impl, {send, {nl, routing, Routing}})
   end,
-  
+
   ?TRACE(?ID, "Stable Path ~p~n", [Stable_path]),
   [nl_hf:update_routing(__, New_path),
    cancel_wpath(__),
    Cast_handler(__),
-   fsm:clear_timeout(__, {path_establish, NL_Src}),
+   fsm:clear_timeout(__, {path_establish, NL_Dst, NL_Src}),
    nl_hf:remove_old_paths(__, NL_Src, NL_Dst),
    fsm:set_event(__, relay)
   ](SM).
@@ -846,7 +890,7 @@ process_destination(SM, Channel, Recv_tuple) ->
         nl_hf:fill_transmission(__, fifo, Send_tuple),
         Path_handler(__, MType),
         cancel_wpath(__),
-        fsm:clear_timeout(__, {path_establish, NL_Src}),
+        fsm:clear_timeout(__, {path_establish, NL_Dst, NL_Src}),
         fsm:set_event(__, relay)
        ](LSM);
       (LSM, path_neighbours) ->

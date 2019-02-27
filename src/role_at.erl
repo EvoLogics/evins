@@ -177,11 +177,12 @@ answer_split(L,Wait,Request,Pid) ->
         {match, [Recv,_,_,<<>>,<<>>,BLen,Tail]} ->
           recv_extract(L,Recv,binary_to_integer(BLen),Tail,Wait,Request,Pid);
         nomatch ->
-          case re:run(L,"^(RECVSTART|RECVEND,|RECVFAILED,|SEND[^,]*,|BITRATE,|RADDR,|SRCLEVEL,|PHYON|PHYOFF|USBL[^,]*,"
+          case re:run(L,"^(RECVSTART|RECVEND,|RECVFAILED,|RECVSRV,|SEND[^,]*,|BITRATE,|RADDR,|SRCLEVEL,|PHYON|PHYOFF|USBL[^,]*,"
                       "|ECLK,|DROPCNT,|DELIVERED|FAILED|EXPIRED|CANCELED|STATUS,)(.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
             {match, [<<"RECVSTART">>,<<>>,L1]} -> [{async, {recvstart}}  | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVEND,">>,P,L1]}     -> [recvend_extract(P)    | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVFAILED,">>,P,L1]}  -> [recvfailed_extract(P) | answer_split(L1,Wait,Request,Pid)];
+            {match, [<<"RECVSRV,">>,P,L1]}     -> [recvsrv_extract(P) | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"PHYOFF">>,<<>>,L1]}    -> [{async, {phyoff}}     | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"PHYON">>,<<>>,L1]}     -> [{async, {phyon}}      | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"SENDSTART,">>,P,L1]}   -> [sendstart_extract(P)  | answer_split(L1,Wait,Request,Pid)];
@@ -448,6 +449,17 @@ recvfailed_extract(P) ->
     {async,{recvfailed,V,R,I}}
   catch
     error:_ -> {error, {parseError, recvfailed, binary_to_list(P)}}
+  end.
+
+%% RECVSRV,src,dst,type,decode,transmitted,rssi,int
+recvsrv_extract(P) ->
+  try
+    {match, [Bs,Bd,Btype,Bdecode,Btransm,Br,Bi]} =
+      re:run(P,"^([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*)$",[dotall,{capture,[1,2,3,4,5,6,7],binary}]),
+    [S,D,Decode,Transmit,R,I] = [binary_to_integer(X) || X <- [Bs,Bd,Bdecode,Btransm,Br,Bi]],
+    {async,{recvsrv,S,D,binary_to_list(Btype),Decode,Transmit,R,I}}
+  catch
+    error:_ -> {error, {parseError, recvsrv, binary_to_list(P)}}
   end.
 
 recv_extract(L,Brecv,Len,Tail,Wait,Request,Pid) ->

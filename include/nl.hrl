@@ -82,7 +82,8 @@
            sncfloodpfr,
            sncfloodpfrack,
            evoicrppfr,
-           evoicrppfrack
+           evoicrppfrack,
+           burst
           ]).
 
 -record(pr_conf,{stat=false, brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, evo=false}).
@@ -113,7 +114,8 @@
     sncfloodpfr     -> 7;
     sncfloodpfrack  -> 8;
     evoicrppfr      -> 9;
-    evoicrppfrack   -> 10
+    evoicrppfrack   -> 10;
+    burst           -> 11
   end).
 
 -define(PROTOCOL_MAC_PID(P),
@@ -136,7 +138,8 @@
       {sncfloodpfr, [{pf, brp, br_na}, fsm_opportunistic_flooding]},  % Pathfind and relay, based on sequence number controlled flooding
       {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_opportunistic_flooding]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
       {evoicrppfr, [{pf, br_na, evo}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol
-      {evoicrppfrack, [{pf, br_na, evo, ack}, fsm_opportunistic_flooding]} % Evologics Information Carrying routing protocol with acknowledgement
+      {evoicrppfrack, [{pf, br_na, evo, ack}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol with acknowledgement,
+      {burst, [{ack}, fsm_nl_burst]}
     ]).
 
 -define(PROTOCOL_DESCR, ["\n",
@@ -146,13 +149,14 @@
        "sncfloodrack   - sequence number controlled flooding with acknowledgement\n",
        "sncfloodpfr    - pathfind and relay to destination\n",
        "sncfloodpfrack - pathfind and relay to destination with acknowledgement\n",
-       "evoicrppfr     - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header\n"
-       "evoicrppfrack  - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header with acknowledgement\n"
-       "dpfloodr       - dynamic probabilistic flooding\n"
-       "dpfloodrack    - dynamic probabilistic flooding with acknowledgement\n"
-       "icrpr          - information carrying routing protocol\n"
-       "loarp          - low overhead routing protocol\n"
-       "loarpack       - low overhead routing protocol with acknowledgement\n"
+       "evoicrppfr     - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header\n",
+       "evoicrppfrack  - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header with acknowledgement\n",
+       "dpfloodr       - dynamic probabilistic flooding\n",
+       "dpfloodrack    - dynamic probabilistic flooding with acknowledgement\n",
+       "icrpr          - information carrying routing protocol\n",
+       "loarp          - low overhead routing protocol\n",
+       "loarpack       - low overhead routing protocol with acknowledgement\n",
+       "burst          - burst data transmission, transmitting data > 64 bytes with acknowledgement\n"
       ]).
 
 

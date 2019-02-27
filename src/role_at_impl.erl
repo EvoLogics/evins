@@ -172,6 +172,8 @@ from_term({async, Async}, Cfg) ->
         io_lib:format("RECVEND,~b,~b,~b,~b",[Usec,Dur,R,I]);
       {recvfailed,V,R,I} ->
         io_lib:format("RECVFAILED,~.2.0f,~b,~b",[V,R,I]);
+      {recvsrv,S,D,Type,Decode,Transmit,R,I} ->
+        io_lib:format("RECVSRV,~b,~b,~s,~b,~b,~b,~b",[S,D,Type,Decode,Transmit,R,I]);
       {phyoff} ->
         "PHYOFF";
       {phyon} ->

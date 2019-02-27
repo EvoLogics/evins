@@ -37,7 +37,7 @@
 
 -export([fill_transmission/3, increase_pkgid/3, code_send_tuple/2, create_nl_at_command/2, get_params_timeout/2]).
 -export([extract_payload_nl_header/2, clear_spec_timeout/2]).
--export([mac2nl_address/1, num2flag/2, add_neighbours/3, list_push/4]).
+-export([mac2nl_address/1, num2flag/2, add_neighbours/3, list_push/4, pause_neighbours/2]).
 -export([head_transmission/1, exists_received/2, update_received_TTL/2,
          pop_transmission/3, pop_transmission/2, decrease_TTL/1, delete_neighbour/2]).
 -export([init_dets/1, fill_dets/4, get_event_params/2, set_event_params/2, clear_event_params/2, clear_spec_event_params/2]).
@@ -50,6 +50,7 @@
 -export([update_path/2, update_routing/2, update_received/2, routing_exist/2, routing_to_list/1]).
 -export([getv/2, geta/1, replace/3, drop_postponed/2]).
 -export([add_to_paths/7, get_stable_path/4, get_stable_path/3, remove_old_paths/3, if_path_packet/1,has_path_packets/3, check_tranmission_path/2]).
+-export([check_binary/1, add_bits/1, cut_add_bits/2, cut_add_bits/1, process_async_status/1]).
 
 set_event_params(SM, Event_Parameter) ->
   SM#sm{event_params = Event_Parameter}.
@@ -134,6 +135,22 @@ clear_event_params(SM, Event) ->
   EventP = hd(tuple_to_list(SM#sm.event_params)),
   if EventP =:= Event -> SM#sm{event_params = []};
     true -> SM
+  end.
+
+get_timeout(SM, T) ->
+  L = lists:filtermap(
+   fun({E, {Time, _} }) ->
+     case E of
+      T -> {true, Time};
+       _  -> false
+     end
+  end, SM#sm.timeouts),
+  case L of
+    [] -> nothing;
+    Time -> [H | _] = Time,
+    C = (H - erlang:monotonic_time(micro_seconds)) / 1000000,
+    ?INFO(?ID, "TIMES ~p ~p  ~p ~n" , [T, H, C]),
+    C
   end.
 
 get_params_timeout(SM, Spec) ->
@@ -1194,6 +1211,7 @@ create_payload_nl_header(SM, Pid, Allowed, Tuple) ->
   true ->
     [Data_to_Send, [Tuple]]
   end.
+
 check_binary(Data) ->
   is_binary(Data) or
   ((bit_size(Data) rem 8) == 0).
@@ -1600,6 +1618,43 @@ increase_pkgid(SM, Src, Dst) ->
   share:put(SM, {packet_id, Src, Dst}, PkgID),
   PkgID.
 
+
+% TODO: check backoff state
+pause_neighbours(SM, State = busy_online) ->
+  ?INFO(?ID, "Pause neighbours in state ~p ~n", [State]),
+  Neighbours = share:get(SM, nothing, current_neighbours, []),
+  Times = env:get(SM, neighbours_timeout),
+  NT = if Times == nothing -> []; true -> Times end,
+  pause_neighbours_helper(SM, Neighbours, NT, []);
+pause_neighbours(SM, State) ->
+  ?INFO(?ID, "Pause neighbours in state ~p ~n", [State]),
+  L = env:get(SM, neighbours_timeout),
+  [env:put(__, neighbours_timeout, nothing),
+   run_neighbours_timeouts(__, L)
+  ](SM).
+
+pause_neighbours_helper(SM, [], _, L) -> env:put(SM, neighbours_timeout, L);
+pause_neighbours_helper(SM, [A | T], Times, L) ->
+  Member = length(lists:filter(fun({LA,_}) -> A =:= LA end, Times)) >= 1,
+  Time = get_timeout(SM, {neighbour_life, A}),
+  case Time of
+    _ when Time =/= nothing, not Member ->
+      ?INFO(?ID, "Pause neighbour {~p,~p} ~n", [A, Time]),
+      [pause_neighbours_helper(__, T, Times, [{A, Time} | L]),
+       fsm:clear_timeout(__, {neighbour_life, A})
+      ](SM);
+    _ -> pause_neighbours_helper(SM, T, Times, L)
+  end.
+
+run_neighbours_timeouts(SM, nothing) -> SM;
+run_neighbours_timeouts(SM, []) -> SM;
+run_neighbours_timeouts(SM, [H | T]) ->
+  ?INFO(?ID, "Run neighbour_life ~p ~n", [H]),
+  {A, Time} = H,
+  [fsm:set_timeout(__, {s, Time}, {neighbour_life, A}),
+   run_neighbours_timeouts(__, T)
+  ](SM).
+
 add_neighbours(SM, Src, {Rssi, Integrity}) ->
   ?INFO(?ID, "Add neighbour Src ~p, Rssi ~p Integrity ~p ~n", [Src, Rssi, Integrity]),
   N_Channel = share:get(SM, neighbours_channel),
@@ -1682,7 +1737,7 @@ process_set_command(SM, Command) ->
     {routing, Routing} ->
       Routing_Format = lists:map(
                         fun({default, To}) -> To;
-                            ({From, To, _}) -> {From, To}
+                            ({From, To}) -> {From, To, 0}
                         end, Routing),
       share:put(SM, routing_table, Routing_Format),
       {nl, routing, Routing};
@@ -2083,3 +2138,15 @@ process_get_command(SM, Command) ->
       {nl, error}
   end,
   fsm:cast(SM, nl_impl, {send, Cast}).
+%-------------------------------------------------------------
+process_async_status({status, Status, Reason}) ->
+  case Status of
+    'INITIATION' when Reason == 'LISTEN'-> initiation_listen;
+    'INITIATION' -> busy_online;
+    'ONLINE'-> busy_online;
+    'OFFLINE' when Reason == 'CONNECTION_FAILED' -> connection_failed;
+    'OFFLINE' -> busy_online;
+    'BACKOFF' -> busy_backoff;
+    'BUSY' when Reason == 'BACKOFF' -> busy_backoff;
+    'BUSY' -> busy_online
+  end.
