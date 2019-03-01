@@ -724,8 +724,7 @@ process_data(SM, Data) ->
     Packet_handler =
     fun (LSM, EP, Rest) when Rest =< 0 ->
           ?TRACE(?ID, "Packet_handler len ~p~n", [Rest]),
-          Status = lists:flatten(
-            [io_lib:format("Received data ~p", [Id_remote])]),
+          Status = lists:flatten([io_lib:format("Received data ~p", [Id_remote])]),
           [env:put(__, status, Status),
            fsm:set_timeout(__, {s, Send_ack}, {send_acks, Src}),
            nl_hf:clear_spec_event_params(__, EP),
@@ -777,26 +776,26 @@ process_data(SM, Data) ->
     end,
 
     Name = atom_name(acks, Src),
+    Acks = env:get(SM, Name),
+    ?INFO(?ID, "Current acks ~p, got ID ~p~n", [Acks, Id_remote]),
+
     Destination_handler =
     fun (LSM) when Dst == Local_address ->
-          Acks = nl_hf:find_event_params(SM, Name),
           Updated =
-          case Acks of
-            {Name, UAcks} ->
-              Member = lists:member(Id_remote, UAcks),
-              ?INFO(?ID, "Add ack ~p to ~w, is member ~p~n", [Id_remote, UAcks, Member]),
-              if Member -> UAcks; true -> [Id_remote | UAcks] end;
-            _ -> [Id_remote]
+          if Acks == nothing -> [Id_remote];
+          true ->
+            Member = lists:member(Id_remote, Acks),
+            ?INFO(?ID, "Add ack ~p to ~w, is member ~p~n", [Id_remote, Acks, Member]),
+            if Member -> Acks; true -> [Id_remote | Acks] end
           end,
           ?INFO(?ID, "Updated ack list ~p~n", [Updated]),
           [env:put(__, status, "Receive data on destination"),
-           nl_hf:add_event_params(__, {Name, Updated}),
+           env:put(__, Name, Updated),
            fsm:cast(__, nl_impl, {send, {nl, recv, Src, Dst, Payload}})
           ](LSM);
         (LSM) ->
           burst_nl_hf:check_dublicated(LSM, Tuple)
     end,
-
     [Destination_handler(__),
      burst_nl_hf:increase_local_pc(__, local_pc),
      Wait_handler(__, Params)
@@ -854,10 +853,11 @@ process_received(SM, Tuple) ->
 
 send_acks(SM, Src) ->
   Name = atom_name(acks, Src),
-  Acks = nl_hf:find_event_params(SM, Name),
+  Acks = env:get(SM, Name),
   send_acks_helper(SM, Src, Acks).
+send_acks_helper(SM, _, nothing) -> SM;
 send_acks_helper(SM, _, []) -> SM;
-send_acks_helper(SM, Src, {_, Acks}) ->
+send_acks_helper(SM, Src, Acks) ->
   ?INFO(?ID, "Send acks ~p to src ~p~n", [Acks, Src]),
   Name = atom_name(acks, Src),
   Max = 2 * share:get(SM, max_queue),
@@ -868,12 +868,13 @@ send_acks_helper(SM, Src, {_, Acks}) ->
 		   (_X, A) -> A end,
   [], Acks)),
 
+  ?INFO(?ID, "Next acks ~p~n", [NA]),
   A = lists:reverse(NA),
   Payload = burst_nl_hf:encode_ack(A),
   L = lists:flatten(lists:join(",",[integer_to_list(I) || I <- A])),
   Status = lists:flatten([io_lib:format("Sending ack of packets ~p to ~p",[L, Src])]),
   [env:put(__, status, Status),
-   nl_hf:add_event_params(__, {Name, NA}),
+   env:put(__, Name, NA),
    fsm:cast(__, nl_impl, {send, {nl, ack, Src, Payload}})
   ](SM).
 

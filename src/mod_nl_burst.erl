@@ -67,7 +67,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {wait_ack, Wait_ack},
                       {send_ack_tmo, Send_ack},
                       {max_burst_len, Max_burst_len},
-		      {tmo_transmit,   {Tmo_start, Tmo_end} },
+		                  {tmo_transmit,   {Tmo_start, Tmo_end} },
                       {update_retries, Update_retries}]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]).
