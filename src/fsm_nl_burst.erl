@@ -1,3 +1,4 @@
+
 %% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
@@ -296,7 +297,14 @@ handle_event(MM, SM, Term) ->
        fsm:run_event(MM, __, {})
       ](SM);
     {sync,"*SEND", {busy, _}} ->
-      [fsm:clear_timeout(__, answer_timeout),
+      PCS = share:get(SM, nothing, wait_async_pcs, []),
+      PC_handler =
+      fun (LSM, []) -> LSM;
+          (LSM, [PC | _]) -> burst_nl_hf:failed_pc(LSM, PC)
+      end,
+      ?INFO(?ID, "PCS ~w~n", [share:get(SM, wait_async_pcs)]),
+      [PC_handler(__, PCS),
+       fsm:clear_timeout(__, answer_timeout),
        set_timeout(__, 1, check_state),
        fsm:set_event(__, busy_online),
        fsm:run_event(MM, __, {})
