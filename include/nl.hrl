@@ -69,7 +69,7 @@
 -define(ADD_INFO_MAX, 255).
 -define(MAX_DATA_LEN, 64).
 
--define(MAX_IM_LEN, 50).
+-define(MAX_IM_LEN, 60).
 -define(Q_STATISTICS_SIZE, 300).
 -define(RQ_SIZE, 100).
 -define(LIST_ALL_PROTOCOLS, [staticr,
