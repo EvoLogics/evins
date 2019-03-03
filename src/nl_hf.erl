@@ -952,13 +952,14 @@ nl2at(SM, IDst, Tuple) when is_tuple(Tuple) ->
   ?WARNING(?ID, ">>>>>>>> NLPPid: ~p~n", [NLPPid]),
   Payload = getv(payload, Tuple),
   [AT_Payload, L] = create_payload_nl_header(SM, NLPPid, true, Tuple),
-
+  ?INFO(?ID, "Sent tuples : ~p~n", [L]),
   IM = byte_size(Payload) < ?MAX_IM_LEN,
   AT =
   if IM ->
     {at, {pid,PID}, "*SENDIM", IDst, noack, AT_Payload};
   true ->
-    {at, {pid,PID}, "*SEND", IDst, AT_Payload}
+    error
+    %{at, {pid,PID}, "*SEND", IDst, AT_Payload}
   end,
   [AT, L].
 
@@ -984,10 +985,15 @@ create_nl_at_command(SM, NL) ->
       error;
   true ->
       [AT, L] = nl2at(SM, MAC_Route_Addr, NL),
-      Current_RTT = {rtt, Local_address, Dst},
-      ?TRACE(?ID, "Current RTT ~p sending AT command ~p~n", [Current_RTT, AT]),
-      fill_dets(SM, PkgID, Src, Dst),
-      [AT, L]
+      if AT == error ->
+        ?ERROR(?ID, "Message could not be sent, legnth > ~p~n", [?MAX_IM_LEN]),
+        error;
+      true ->
+        Current_RTT = {rtt, Local_address, Dst},
+        ?TRACE(?ID, "Current RTT ~p sending AT command ~p~n", [Current_RTT, AT]),
+        fill_dets(SM, PkgID, Src, Dst),
+        [AT, L]
+      end
   end.
 
 extract_response(Payload) ->
@@ -1200,7 +1206,7 @@ create_payload_nl_header(SM, Pid, Allowed, Tuple) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
   Ack_protocol = Protocol_Config#pr_conf.ack,
-  Combine = Ack_protocol and (byte_size(Data_to_Send) < 64) and Allowed
+  Combine = Ack_protocol and (byte_size(Data_to_Send) < ?MAX_IM_LEN) and Allowed
             and ((Flag == data) or (Mtype == data) or (Mtype == path_data)),
   ?INFO(?ID, "create_payload_nl_header ~p ~p ~p~n",
     [Combine, Ack_protocol, byte_size(Data_to_Send)]),
@@ -1251,10 +1257,12 @@ find_acks(SM, Pid, Tuple, Q, Ack_bin, Acks, true) ->
   Dst = get_routing_address(SM, TDst),
   QRoute = get_routing_address(SM, QDst),
   Same = Tuple == Q_Tuple,
-  if not Same and ((Dst == QRoute) or (Dst == ?ADDRESS_MAX)) ->
+  %if not Same and ((Dst == QRoute) or (Dst == ?ADDRESS_MAX)) ->
+  if not Same and ( (QRoute =/= ?ADDRESS_MAX) or (Dst == QRoute) or (Dst == ?ADDRESS_MAX)) ->
     [Data_bin, _] = create_payload_nl_header(SM, Pid, false, Q_Tuple),
     Len = byte_size(Data_bin) + byte_size(Ack_bin),
-    if Len < 64 ->
+    ?INFO(?ID, "find ack whole len ~p data_len ~p ack_len ~p~n", [Len, byte_size(Data_bin), byte_size(Ack_bin)]),
+    if Len < ?MAX_IM_LEN ->
       find_acks(SM, Pid, Tuple, Q_Tail, <<Data_bin/binary, Ack_bin/binary>>, [Q_Tuple | Acks], false);
     true ->
       find_acks(SM, Pid, Tuple, Q_Tail, Ack_bin, Acks, true)
@@ -1275,7 +1283,7 @@ find_acks(SM, Pid, Tuple, Q, Data, Acks, false) ->
     [Ack_bin, _] = create_payload_nl_header(SM, Pid, false, Q_Tuple),
     ?INFO(?ID, "find_acks ~p ~p~n", [byte_size(Ack_bin), byte_size(Data)]),
     Len = byte_size(Ack_bin) + byte_size(Data),
-    if Len < 64 ->
+    if Len < ?MAX_IM_LEN ->
       ?INFO(?ID, "Combined ~p ~p ~p ~p~n", [QPkgID, PkgID, Data, Ack_bin]),
       find_acks(SM, Pid, Tuple, Q_Tail, <<Data/binary, Ack_bin/binary>>, [Q_Tuple | Acks], false);
     true ->
