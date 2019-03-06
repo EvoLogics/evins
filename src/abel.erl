@@ -27,6 +27,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 -module(abel).
 -export([diff/2,diff/3,diff32/2,diff16/2,diff8/2,add/3,add32/2,add16/2,add8/2,gt/2,mod/2,div_mod/2,inc/1,dec/1,eq/2,timestamp_sub/2]).
+-export([sub/3,sub32/2,sub16/2,sub8/2]).
 
 %% Returns the positive remainder of the division of X by Y, in [0;Y[. 
 %% In Erlang, -5 rem 3 is -2, whereas this function will return 1,  
@@ -68,6 +69,12 @@ add(V1,V2,P) -> mod(V1 + V2, P).
 add32(V1,V2) -> add(V1,V2,16#100000000).
 add16(V1,V2) -> add(V1,V2,16#10000).
 add8(V1,V2) -> add(V1,V2,16#100).
+
+sub(V1,V2,P) -> mod(V1 - V2, P).
+
+sub32(V1,V2) -> sub(V1,V2,16#100000000).
+sub16(V1,V2) -> sub(V1,V2,16#10000).
+sub8(V1,V2) -> sub(V1,V2,16#100).
 
 %% greater then
 gt({_, P} = N1, {_, P} = N2) -> diff(N1, N2) > 0.
