@@ -1,5 +1,5 @@
-
-%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
+%% Copyright (c) 2017, Veronika Kebkal <veronika.kebkal@evologics.de>
+%%                     Oleksiy Kebkal <lesha@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -291,7 +291,7 @@ handle_event(MM, SM, Term) ->
       ](SM);
     {sync,"*SEND",{error, _}} ->
       [share:put(__, wait_sync, false),
-       set_timeout(__, 1, check_state),
+       set_timeout(__, {s, 1}, check_state),
        fsm:clear_timeout(__, answer_timeout),
        fsm:set_event(__, busy_online),
        fsm:run_event(MM, __, {})
@@ -305,13 +305,13 @@ handle_event(MM, SM, Term) ->
       ?INFO(?ID, "PCS ~w~n", [share:get(SM, wait_async_pcs)]),
       [PC_handler(__, PCS),
        fsm:clear_timeout(__, answer_timeout),
-       set_timeout(__, 1, check_state),
+       set_timeout(__, {s, 1}, check_state),
        fsm:set_event(__, busy_online),
        fsm:run_event(MM, __, {})
       ](SM);
     {sync, "*SEND", "OK"} ->
       [fsm:maybe_send_at_command(__, {at, "?PC", ""}),
-       set_timeout(__, 1, pc_timeout),
+       set_timeout(__, {ms, 100}, pc_timeout),
        run_hook_handler(MM, __, Term, eps)
       ](SM);
     {async, Notification = {status, _, _}} ->
@@ -573,7 +573,7 @@ handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
          share:put(__, wait_async_pcs, []),
          fsm:maybe_send_at_command(__, {at, "?PC", ""}),
          nl_hf:add_event_params(__, NT),
-         set_timeout(__, 1, pc_timeout),
+         set_timeout(__, {ms, 100}, pc_timeout),
          fsm:set_event(__, eps)
         ](LSM)
   end,
@@ -840,7 +840,7 @@ atom_name(Name, Dst) ->
 set_timeout(SM, S, Timeout) ->
   Check = fsm:check_timeout(SM, Timeout),
   if not Check ->
-      fsm:set_timeout(SM, {s, S}, Timeout);
+      fsm:set_timeout(SM, S, Timeout);
     true -> SM
   end.
 
@@ -876,9 +876,9 @@ send_acks_helper(SM, Src, Acks) ->
 		   (_X, A) -> A end,
   [], Acks)),
 
-  ?INFO(?ID, "Next acks ~p~n", [NA]),
+  ?INFO(?ID, "Next acks ~w~n", [NA]),
   A = lists:reverse(NA),
-  Payload = burst_nl_hf:encode_ack(A),
+  Payload = burst_nl_hf:encode_ack(SM, A),
   L = lists:flatten(lists:join(",",[integer_to_list(I) || I <- A])),
   Status = lists:flatten([io_lib:format("Sending ack of packets ~p to ~p",[L, Src])]),
   [env:put(__, status, Status),
