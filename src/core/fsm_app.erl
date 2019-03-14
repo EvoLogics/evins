@@ -29,6 +29,15 @@
 -behaviour(application).
 
 -export([start/2, stop/1]).
+-export([delete_standard_report_handler/0]).
+
+delete_standard_report_handler() ->
+  case error_logger:delete_report_handler(log_mf_h) of
+    {_,Dir,MaxB,MaxF,_,_,_,_,Fun} ->
+      error_logger:add_report_handler(fsm_log_mf_h,fsm_log_mf_h:init(Dir,MaxB,MaxF,Fun));
+    _ ->
+      timer:apply_after(100, ?MODULE, delete_standard_report_handler, [])
+  end.
 
 start(_Type, _Args) ->
   case maybe_config(log_output) of
@@ -38,12 +47,7 @@ start(_Type, _Args) ->
     _ ->
       nothing
   end,
-  case error_logger:delete_report_handler(log_mf_h) of
-    {_,Dir,MaxB,MaxF,_,_,_,_,Fun} ->
-      error_logger:add_report_handler(fsm_log_mf_h,fsm_log_mf_h:init(Dir,MaxB,MaxF,Fun));
-    _ ->
-      ok
-  end,
+  timer:apply_after(1, ?MODULE, delete_standard_report_handler, []),
   User_config = maybe_config(user_config),
   Fabric_config = maybe_config(fabric_config),
   fsm_supervisor:start_link([Fabric_config, User_config]).

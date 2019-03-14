@@ -3,7 +3,7 @@
 #ifdef __unix
 
 #include <sys/types.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <limits.h>
