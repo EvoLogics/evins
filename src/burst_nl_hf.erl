@@ -208,9 +208,9 @@ bind_pc(SM, PC, Packet) ->
   NQ =
   lists:foldl(
   fun(X, Q) ->
-    [XPC, XLocalPC, XDst] = getv([id_at, id_local, dst], X),
+    [XPC, XLocalPC, XDst, XPayload] = getv([id_at, id_local, dst, payload], X),
     NT = replace([id_at, payload], [PC, Payload], X),
-    if XPC == unknown, LocalPC == XLocalPC, Dst == XDst ->
+    if XPC == unknown, LocalPC == XLocalPC, Dst == XDst, Payload == XPayload ->
       queue:in(NT, Q);
     true ->
       queue:in(X, Q)
@@ -386,17 +386,22 @@ update_statistics_tolerant(SM, _, _, {[],[]}, Q, _) ->
   share:put(SM, statistics_tolerant, Q);
 update_statistics_tolerant(SM, Value, T, QS, Q, PC) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(QS),
+  Hash = if Value == time ->
+    Payload = getv(payload, T),
+    <<H:16, _/binary>> = crypto:hash(md5,Payload),
+    H;
+  true -> nothing end,
   Time = erlang:monotonic_time(milli_seconds),
   QU =
   case Q_Tuple of
-    {Role, PC, Hash, Len, _, unknown, Src, Dst} when Value == time ->
-      NT = {Role, PC, Hash, Len, from_start(SM, Time), sent, Src, Dst},
+    {Role, PC, QHash, Len, _, unknown, Src, Dst} when Value == time, QHash == Hash->
+      NT = {Role, PC, QHash, Len, from_start(SM, Time), sent, Src, Dst},
       queue:in(NT, Q);
-    {Role, PC, Hash, Len, QTime, _, Src, Dst} when Value == state ->
+    {Role, PC, QHash, Len, QTime, sent, Src, Dst} when Value == state ->
       Ack_time = from_start(SM, Time),
       Duration = (Ack_time - QTime) / 1000,
       ?INFO(?ID, "update_state ~p ~p ~p~n", [QTime, Ack_time, Duration]),
-      NT = {Role, PC, Hash, Len, Duration, T, Src, Dst},
+      NT = {Role, PC, QHash, Len, Duration, T, Src, Dst},
       queue:in(NT, Q);
     _ ->
       queue:in(Q_Tuple, Q)
