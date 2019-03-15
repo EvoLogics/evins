@@ -178,7 +178,7 @@ answer_split(L,Wait,Request,Pid) ->
           recv_extract(L,Recv,binary_to_integer(BLen),Tail,Wait,Request,Pid);
         nomatch ->
           case re:run(L,"^(RECVSTART|RECVEND,|RECVFAILED,|RECVSRV,|SEND[^,]*,|BITRATE,|RADDR,|SRCLEVEL,|PHYON|PHYOFF|USBL[^,]*,"
-                      "|ECLK,|RTO,DROPCNT,|DELIVERED|FAILED|EXPIRED|CANCELED|STATUS,)(.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
+                      "|ECLK,|RTO,|DROPCNT,|DELIVERED|FAILED|EXPIRED|CANCELED|STATUS,)(.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
             {match, [<<"RECVSTART">>,<<>>,L1]} -> [{async, {recvstart}}  | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVEND,">>,P,L1]}     -> [recvend_extract(P)    | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVFAILED,">>,P,L1]}  -> [recvfailed_extract(P) | answer_split(L1,Wait,Request,Pid)];
