@@ -223,6 +223,8 @@ from_term({async, Async}, Cfg) ->
         io_lib:format("DROPCNT,~b",[Val]);
       {eclk,Mono,Clk,Steer,Event,GPS} ->
         io_lib:format("ECLK,~.6.0f,~b,~b,~p,~.6.0f",[Mono,Clk,Steer,Event,GPS]);
+      {rto,Val} ->
+        io_lib:format("RTO,~b",[Val]);
       {error, Reason} ->
         ["ERROR ", Reason];
       _Other ->
