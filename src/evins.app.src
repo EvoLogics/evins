@@ -4,12 +4,6 @@
               {id,"git"},
               {modules,[]},
               {registered,[]},
-              {applications,[
-			     kernel,
-			     stdlib,
-			     sasl,
-			     jsx,
-			     cowboy
-			    ]},
+              {applications,[kernel,stdlib,sasl,jsx,cowboy]},
               {mod,{fsm_app,["/usr/local/etc/fsm.conf"]}},
               {start_phases,[]}]}.
