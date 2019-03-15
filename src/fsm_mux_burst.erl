@@ -169,18 +169,13 @@ handle_event(MM, SM, Term) ->
        fsm:clear_timeouts(__)
       ](SM);
     {nl, get, help} ->
-      NHelp = string:concat(?MUXHELP, ?HELP),
+      NHelp = string:concat(?MUXBURSTHELP, ?HELP),
       fsm:cast(SM, nl_impl, {send, {nl, help, NHelp}});
     {nl, get, protocols} ->
       Tuple = {nl, protocols, share:get(SM, nothing, configured_protocols, [])},
       fsm:cast(SM, nl_impl, {send, Tuple});
-    {nl, get, protocolinfo, Some_protocol} ->
-      Burst_protocol = share:get(SM, burst_protocol),
-      ProtocolMM =
-      case Some_protocol of
-        Burst_protocol -> share:get(SM, Some_protocol);
-        _ -> share:get(SM, share:get(SM, discovery_protocol))
-      end,
+    {nl, get, protocolinfo, _Some_protocol} ->
+      ProtocolMM = share:get(SM, share:get(SM, discovery_protocol)),
       fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
     {nl, get, routing} ->
       Cast_handler =
