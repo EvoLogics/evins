@@ -56,7 +56,7 @@ split(L, Cfg) ->
       nl_recv_extract(L, Cfg);
     [<<"NL,protocolinfo,", _/binary>>, _] -> %% multiline
       nl_multiline_extract(L, Cfg);
-    [<<"NL,states,", _/binary>>, _] -> %% multiline
+    [<<"NL,states,", States/binary>>, _] when States =/= <<"empty">> -> %% multiline
       nl_multiline_extract(L, Cfg);
     [<<"NL,statistics,", _/binary>>, _] -> %% multiline
       nl_multiline_extract(L, Cfg);
@@ -221,6 +221,8 @@ nl_extract_subject(<<"protocolinfo">>, Params) ->
   %% {value, ["name",Protocol], PropList} = lists:keytake("name", 1, KVLst),
   {nl,protocolinfo,binary_to_existing_atom(Protocol,utf8),PropList};
 %% NL,states,<EOL><State1>(<Event1>)<EOL>...<StateN>(<EventN>)<EOL><EOL>
+nl_extract_subject(<<"states">>, <<"empty">>) ->
+  {nl, states, empty};
 nl_extract_subject(<<"states">>, Params) ->
   {nl,states,
    lists:map(fun(Param) ->

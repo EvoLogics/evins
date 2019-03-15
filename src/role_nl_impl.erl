@@ -153,7 +153,7 @@ nl_extract_subject(<<"ack">>, <<Params/binary>>) ->
 nl_extract_subject(Subject, Params) ->
   ParamLst =
     lists:map(fun(<<H:8,_/binary>> = Item) when H >= $0, H =< $9 -> binary_to_integer(Item);
-                 (Item) -> binary_to_existing_atom(Item,utf8)
+                 (Item) when  Item =/= <<>> -> binary_to_existing_atom(Item,utf8)
               end, [Subject | binary:split(Params,<<$,>>,[global])]),
   list_to_tuple([nl | ParamLst]).
 
@@ -227,7 +227,7 @@ from_term({nl, bitrate, Bitrate}, Cfg) ->
 from_term({nl, status, Status}, Cfg) ->
   [list_to_binary(["NL,status,",Status, Cfg#config.eol]), Cfg];
 %% NL,states,<EOL>State1(Event1)<EOL>...StateN(EventN)<EOL><EOL>
-from_term({nl, states, []}, Cfg) ->
+from_term({nl, states, S}, Cfg) when S == empty; S == [] ->
   EOL = Cfg#config.eol,
   [list_to_binary(["NL,states,empty",EOL]), Cfg];
 from_term({nl, states, Transitions}, Cfg) ->
