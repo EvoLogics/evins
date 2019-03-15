@@ -24,7 +24,7 @@ ifeq ($(otp_20plus),0)
 	TEST_ERLC_OPTS += -Dfloor_bif=1
 endif
 
-include erlang.mk
+include $(if $(ERLANG_MK_FILENAME),$(ERLANG_MK_FILENAME),erlang.mk)
 
 APP_VERSION = $(shell cat $(RELX_OUTPUT_DIR)/$(RELX_REL_NAME)/version)
 AR_NAME = $(RELX_OUTPUT_DIR)/$(RELX_REL_NAME)/$(RELX_REL_NAME)-$(APP_VERSION).tar.gz

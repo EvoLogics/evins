@@ -178,7 +178,7 @@ answer_split(L,Wait,Request,Pid) ->
           recv_extract(L,Recv,binary_to_integer(BLen),Tail,Wait,Request,Pid);
         nomatch ->
           case re:run(L,"^(RECVSTART|RECVEND,|RECVFAILED,|RECVSRV,|SEND[^,]*,|BITRATE,|RADDR,|SRCLEVEL,|PHYON|PHYOFF|USBL[^,]*,"
-                      "|ECLK,|DROPCNT,|DELIVERED|FAILED|EXPIRED|CANCELED|STATUS,)(.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
+                      "|ECLK,|RTO,DROPCNT,|DELIVERED|FAILED|EXPIRED|CANCELED|STATUS,)(.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
             {match, [<<"RECVSTART">>,<<>>,L1]} -> [{async, {recvstart}}  | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVEND,">>,P,L1]}     -> [recvend_extract(P)    | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVFAILED,">>,P,L1]}  -> [recvfailed_extract(P) | answer_split(L1,Wait,Request,Pid)];
@@ -200,6 +200,7 @@ answer_split(L,Wait,Request,Pid) ->
             {match, [<<"SRCLEVEL,">>,P,L1]}    -> [srclevel_extract(P)   | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"DROPCNT,">>,P,L1]}     -> [dropcnt_extract(P)    | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"ECLK,">>,P,L1]}        -> [eclk_extract(P)       | answer_split(L1,Wait,Request,Pid)];
+            {match, [<<"RTO,">>,P,L1]}         -> [rto_extract(P)       | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"STATUS,">>,P,L1]}      -> [status_extract(P)     | answer_split(L1,Wait,Request,Pid)];
             {match, [H, P, L1]}                -> [{error, {wrongAsync, binary_to_list(list_to_binary([H, P]))}} | answer_split(L1,Wait,Request,Pid)];
             nomatch ->
@@ -399,6 +400,17 @@ eclk_extract(P) ->
     {async,{eclk,Mono,Clk,Steer,Event,GPS}}
   catch
     error:_ -> {error, {parseError, eclk, binary_to_list(P)}}
+  end.
+
+%% RTO,clock_offset
+%% clock_offset in microseconds
+rto_extract(P) ->
+  try
+    {match, [Bval]} = re:run(P,"^(.*)$",[dotall,{capture,[1],binary}]),
+    Val = binary_to_integer(Bval),
+    {async,{rto,Val}}
+  catch
+    error:_ -> {error, {parseError, rto, binary_to_list(P)}}
   end.
 
 %% STATUS,modem_status,modem_status_parameter
