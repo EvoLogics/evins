@@ -1,0 +1,38 @@
+divert(-1)
+changequote(<<,>>)
+define(<<address>>, esyscmd(<<echo -n $address>>))
+define(<<subnet>>, esyscmd(<<echo -n $subnet>>))
+define(<<emusubnet>>, esyscmd(<<echo -n $emusubnet>>))
+define(<<evins_node>>, <<dnl
+
+{module, mux_nl$1, [{role,nl_impl,iface,{socket,"subnet.$1",1111,server}},
+                {role,nl,iface,{socket,"subnet.$1",1112,client}},
+                {role,nl,iface,{socket,"subnet.$1",1113,client}},
+                {role,nl,iface,{socket,"subnet.$1",1114,client}},
+              {mfa,mod_mux_burst,run,[{max_queue, 10}, {wait_ack, 320}, {protocols, { {discovery, staticr}, {burst, burst}, {ack, sncfloodr}}}]}]}.
+
+{module, alh$1_1, [{role,at,iface,{socket,"emusubnet.$1",9201,client}},
+               {role,at_impl,iface,{socket,"subnet.$1",1101,server}},
+               {mfa,mod_mac,run,[{mac_protocol,csma_aloha}]}]}.
+
+{module, nl$1_1,  [{role,at,iface,{socket,"subnet.$1",1101,client}},
+              {role,nl_impl,iface,{socket,"subnet.$1",1113,server}},
+              {mfa,mod_nl,run,[{nl_protocol,sncfloodr}, {tmo_sensing, {0,1}}, {retries, 3}, {local_addr,$1}]}]}.
+
+
+{module, alh$1_2, [{role,at,iface,{socket,"emusubnet.$1",9202,client}},
+               {role,at_impl,iface,{socket,"subnet.$1",1102,server}},
+               {mfa,mod_mac,run,[{mac_protocol,csma_aloha}]}]}.
+
+{module, nl$1_2,  [{role,at,iface,{socket,"subnet.$1",1102,client}},
+              {role,nl_impl,iface,{socket,"subnet.$1",1114,server}},
+              {mfa,mod_nl,run,[{nl_protocol,staticr}, {routing,{3}}, {neighbour_life, 1000}, {tmo_sensing, {0,1}}, {retries, 2}, {local_addr,$1}]}]}.
+
+
+{module, poll$1, [{role,at,iface,{socket,"emusubnet.$1",9200,client}},
+                  {role,nl_impl,iface,{socket,"subnet.$1",1112,server}},
+                  {mfa,mod_nl_burst,run,[{nl_protocol, burst}, {max_queue,3}]}]}.
+
+>>)
+divert(0)dnl
+evins_node(address)
