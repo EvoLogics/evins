@@ -169,18 +169,13 @@ handle_event(MM, SM, Term) ->
        fsm:clear_timeouts(__)
       ](SM);
     {nl, get, help} ->
-      NHelp = string:concat(?MUXHELP, ?HELP),
+      NHelp = string:concat(?MUXBURSTHELP, ?HELP),
       fsm:cast(SM, nl_impl, {send, {nl, help, NHelp}});
     {nl, get, protocols} ->
       Tuple = {nl, protocols, share:get(SM, nothing, configured_protocols, [])},
       fsm:cast(SM, nl_impl, {send, Tuple});
-    {nl, get, protocolinfo, Some_protocol} ->
-      Burst_protocol = share:get(SM, burst_protocol),
-      ProtocolMM =
-      case Some_protocol of
-        Burst_protocol -> share:get(SM, Some_protocol);
-        _ -> share:get(SM, share:get(SM, discovery_protocol))
-      end,
+    {nl, get, protocolinfo, _Some_protocol} ->
+      ProtocolMM = share:get(SM, share:get(SM, discovery_protocol)),
       fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
     {nl, get, routing} ->
       Cast_handler =
@@ -417,21 +412,13 @@ send_command(SM, MM, Protocol_Name, Command) ->
 encode_mux(_SM, Flag, Data) ->
   Flag_num = flag_num(Flag),
   B_Flag = <<Flag_num:1>>,
-  Tmp_Data = <<B_Flag/bitstring, Data/binary>>,
-  Is_binary = nl_hf:check_binary(Tmp_Data),
-  if not Is_binary ->
-    Add = nl_hf:add_bits(Tmp_Data),
-    <<B_Flag/bitstring, 0:Add, Data/binary>>;
-  true ->
-    Tmp_Data
-  end.
+  <<B_Flag/bitstring, 0:7, Data/binary>>.
 
 decode_mux(SM, Data) ->
-  <<Flag_Num:1, Rest/bitstring>> = Data,
-  Rest_payload = nl_hf:cut_add_bits(Rest),
+  <<Flag_Num:1, _:7, Rest/bitstring>> = Data,
   ?INFO(?ID, "decode_mux ~p ~p~n", [Flag_Num, Rest]),
   Flag = num_flag(Flag_Num),
-  [Flag, Rest_payload].
+  [Flag, Rest].
 
 process_recv(SM, Term = {nl, recv, _Src, _Dst, Data}) ->
   [Flag, Payload] = decode_mux(SM, Data),

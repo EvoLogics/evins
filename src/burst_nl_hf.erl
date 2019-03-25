@@ -41,7 +41,7 @@
 -export([update_statistics_tolerant/3, get_statistics_data/1]).
 -export([burst_len/1, increase_local_pc/2]).
 -export([get_packets/1, pop_delivered/2, failed_pc/2, remove_packet/2]).
--export([bind_pc/3, check_dublicated/2, encode_ack/1, try_extract_ack/2]).
+-export([bind_pc/3, check_dublicated/2, encode_ack/2, try_extract_ack/2]).
 
 %----------------------------- Get from tuple ----------------------------------
 geta(Tuple) ->
@@ -85,19 +85,34 @@ replace_helper([Type | Types], [Value | Values], Tuple) ->
   replace_helper(Types, Values, replace(Type, Value, Tuple)).
 
 %-------------------- Encoding / Decoding data --------------------------------
-encode_ack(Acks) ->
+encode_ack(SM, Acks) ->
   C_Bits_Flag = nl_hf:count_flag_bits(?FLAG_MAX),
   Flag_Num = ?FLAG2NUM(ack),
   B_Flag = <<Flag_Num:C_Bits_Flag>>,
-  Len = length(Acks),
-  B_Len_Burst = <<Len:8>>,
-  Bin = code_header(?PKG_ID_MAX, Acks),
-  Tmp_Data = <<B_Flag/bitstring, B_Len_Burst/bitstring, Bin/bitstring>>,
 
+  Len = length(Acks),
+  Max_addr = lists:max(Acks),
+
+  B_Len_Burst = <<Len:8>>,
+  Max_addr_len = nl_hf:count_flag_bits(?PKG_ID_MAX),
+  B_Max_addr = <<Max_addr:Max_addr_len>>,
+
+  Bitmask_default = <<0:Max_addr>>,
+  Bitmask_coded =
+  lists:foldr(fun(X, A) ->
+    Len_mask = bit_size(Bitmask_default),
+    Before = Len_mask - X,
+    After = Len_mask - Before - 1,
+    if Before == 0 -> <<_:1,BN2:After>> = A, <<1:1, BN2:After>>;
+      true -> <<BN1:Before,_:1,BN2:After>> = A, <<BN1:Before, 1:1, BN2:After>>
+    end
+  end, Bitmask_default, Acks),
+  Tmp_Data = <<B_Flag/bitstring, B_Len_Burst/bitstring, B_Max_addr/bitstring, Bitmask_coded/bitstring>>,
+  ?INFO(?ID, "encode_ack ~p ~w encoded len ~p~n", [Len, Acks, byte_size(Bitmask_coded)]),
   Is_binary = nl_hf:check_binary(Tmp_Data),
   if not Is_binary ->
     Add = nl_hf:add_bits(Tmp_Data),
-    <<B_Flag/bitstring, B_Len_Burst/bitstring, Bin/bitstring, 0:Add>>;
+    <<B_Flag/bitstring, B_Len_Burst/bitstring, B_Max_addr/bitstring, 0:Add, Bitmask_coded/bitstring>>;
   true ->
     Tmp_Data
   end.
@@ -106,25 +121,19 @@ try_extract_ack(SM, Payload) ->
   try
     C_Bits_Flag = nl_hf:count_flag_bits(?FLAG_MAX),
     C_Bits_PkgId = nl_hf:count_flag_bits(?PKG_ID_MAX),
-    <<Flag_Num:C_Bits_Flag, Count:8, Rest/bitstring>> = Payload,
+
+    <<Flag_Num:C_Bits_Flag, Count:8, _B_Max_addr:C_Bits_PkgId, Rest/bitstring>> = Payload,
     ?INFO(?ID, "try_extract_ack ~p ~p ~p~n", [Flag_Num, Count, Rest]),
-    Width = Count * C_Bits_PkgId,
-    <<BField:Width/bitstring, _/bitstring>> = Rest,
-    Acks = decode_header(?PKG_ID_MAX, BField),
+    L_bits = [N || <<N:1>> <= Rest],
+    {_, Acks} = lists:foldr( fun(X, {I, A}) -> NA = if X =/= 0 -> [ I + 1| A]; true -> A end, {I + 1, NA}  end, {0, []}, L_bits),
+
+    ?INFO(?ID, "extracted acks ~w ~n", [Acks]),
     ack = nl_hf:num2flag(Flag_Num, nl),
     Count = length(Acks),
-    [Count, Acks]
+    [Count, lists:reverse(Acks)]
   catch error: _Reason ->
     []
   end.
-
-decode_header(Size, Payload) ->
-  W = nl_hf:count_flag_bits(Size),
-  [N || <<N:W>> <= Payload].
-
-code_header(Size, Payload) ->
-  W = nl_hf:count_flag_bits(Size),
-  << <<N:W>> || N <- Payload>>.
 
 create_nl_burst_header(SM, T) ->
   [Flag, RPkgID, Src, Dst, Len, Whole_len, Payload] =
@@ -199,9 +208,9 @@ bind_pc(SM, PC, Packet) ->
   NQ =
   lists:foldl(
   fun(X, Q) ->
-    [XPC, XLocalPC, XDst] = getv([id_at, id_local, dst], X),
+    [XPC, XLocalPC, XDst, XPayload] = getv([id_at, id_local, dst, payload], X),
     NT = replace([id_at, payload], [PC, Payload], X),
-    if XPC == unknown, LocalPC == XLocalPC, Dst == XDst ->
+    if XPC == unknown, LocalPC == XLocalPC, Dst == XDst, Payload == XPayload ->
       queue:in(NT, Q);
     true ->
       queue:in(X, Q)
@@ -355,7 +364,7 @@ burst_len(P) ->
 increase_local_pc(SM, Name) ->
   PC = share:get(SM, Name),
   ?INFO(?ID, "Local PC ~p for ~p~n",[PC, Name]),
-  if PC > 127 ->
+  if PC > ?PKG_ID_MAX - 1 ->
     share:put(SM, Name, 1);
   true ->
     share:put(SM, Name, PC + 1)
@@ -377,17 +386,22 @@ update_statistics_tolerant(SM, _, _, {[],[]}, Q, _) ->
   share:put(SM, statistics_tolerant, Q);
 update_statistics_tolerant(SM, Value, T, QS, Q, PC) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(QS),
+  Hash = if Value == time ->
+    Payload = getv(payload, T),
+    <<H:16, _/binary>> = crypto:hash(md5,Payload),
+    H;
+  true -> nothing end,
   Time = erlang:monotonic_time(milli_seconds),
   QU =
   case Q_Tuple of
-    {Role, PC, Hash, Len, _, unknown, Src, Dst} when Value == time ->
-      NT = {Role, PC, Hash, Len, from_start(SM, Time), sent, Src, Dst},
+    {Role, PC, QHash, Len, _, unknown, Src, Dst} when Value == time, QHash == Hash->
+      NT = {Role, PC, QHash, Len, from_start(SM, Time), sent, Src, Dst},
       queue:in(NT, Q);
-    {Role, PC, Hash, Len, QTime, _, Src, Dst} when Value == state ->
+    {Role, PC, QHash, Len, QTime, sent, Src, Dst} when Value == state ->
       Ack_time = from_start(SM, Time),
       Duration = (Ack_time - QTime) / 1000,
       ?INFO(?ID, "update_state ~p ~p ~p~n", [QTime, Ack_time, Duration]),
-      NT = {Role, PC, Hash, Len, Duration, T, Src, Dst},
+      NT = {Role, PC, QHash, Len, Duration, T, Src, Dst},
       queue:in(NT, Q);
     _ ->
       queue:in(Q_Tuple, Q)

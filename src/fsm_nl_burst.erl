@@ -1,4 +1,5 @@
-%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
+%% Copyright (c) 2017, Veronika Kebkal <veronika.kebkal@evologics.de>
+%%                     Oleksiy Kebkal <lesha@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -290,20 +291,27 @@ handle_event(MM, SM, Term) ->
       ](SM);
     {sync,"*SEND",{error, _}} ->
       [share:put(__, wait_sync, false),
-       set_timeout(__, 1, check_state),
+       set_timeout(__, {s, 1}, check_state),
        fsm:clear_timeout(__, answer_timeout),
        fsm:set_event(__, busy_online),
        fsm:run_event(MM, __, {})
       ](SM);
     {sync,"*SEND", {busy, _}} ->
-      [fsm:clear_timeout(__, answer_timeout),
-       set_timeout(__, 1, check_state),
+      PCS = share:get(SM, nothing, wait_async_pcs, []),
+      PC_handler =
+      fun (LSM, []) -> LSM;
+          (LSM, [PC | _]) -> burst_nl_hf:failed_pc(LSM, PC)
+      end,
+      ?INFO(?ID, "PCS ~w~n", [share:get(SM, wait_async_pcs)]),
+      [PC_handler(__, PCS),
+       fsm:clear_timeout(__, answer_timeout),
+       set_timeout(__, {s, 1}, check_state),
        fsm:set_event(__, busy_online),
        fsm:run_event(MM, __, {})
       ](SM);
     {sync, "*SEND", "OK"} ->
       [fsm:maybe_send_at_command(__, {at, "?PC", ""}),
-       set_timeout(__, 1, pc_timeout),
+       set_timeout(__, {ms, 100}, pc_timeout),
        run_hook_handler(MM, __, Term, eps)
       ](SM);
     {async, Notification = {status, _, _}} ->
@@ -565,7 +573,7 @@ handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
          share:put(__, wait_async_pcs, []),
          fsm:maybe_send_at_command(__, {at, "?PC", ""}),
          nl_hf:add_event_params(__, NT),
-         set_timeout(__, 1, pc_timeout),
+         set_timeout(__, {ms, 100}, pc_timeout),
          fsm:set_event(__, eps)
         ](LSM)
   end,
@@ -724,8 +732,7 @@ process_data(SM, Data) ->
     Packet_handler =
     fun (LSM, EP, Rest) when Rest =< 0 ->
           ?TRACE(?ID, "Packet_handler len ~p~n", [Rest]),
-          Status = lists:flatten(
-            [io_lib:format("Received data ~p", [Id_remote])]),
+          Status = lists:flatten([io_lib:format("Received data ~p", [Id_remote])]),
           [env:put(__, status, Status),
            fsm:set_timeout(__, {s, Send_ack}, {send_acks, Src}),
            nl_hf:clear_spec_event_params(__, EP),
@@ -777,26 +784,26 @@ process_data(SM, Data) ->
     end,
 
     Name = atom_name(acks, Src),
+    Acks = env:get(SM, Name),
+    ?INFO(?ID, "Current acks ~p, got ID ~p~n", [Acks, Id_remote]),
+
     Destination_handler =
     fun (LSM) when Dst == Local_address ->
-          Acks = nl_hf:find_event_params(SM, Name),
           Updated =
-          case Acks of
-            {Name, UAcks} ->
-              Member = lists:member(Id_remote, UAcks),
-              ?INFO(?ID, "Add ack ~p to ~w, is member ~p~n", [Id_remote, UAcks, Member]),
-              if Member -> UAcks; true -> [Id_remote | UAcks] end;
-            _ -> [Id_remote]
+          if Acks == nothing -> [Id_remote];
+          true ->
+            Member = lists:member(Id_remote, Acks),
+            ?INFO(?ID, "Add ack ~p to ~w, is member ~p~n", [Id_remote, Acks, Member]),
+            if Member -> Acks; true -> [Id_remote | Acks] end
           end,
           ?INFO(?ID, "Updated ack list ~p~n", [Updated]),
           [env:put(__, status, "Receive data on destination"),
-           nl_hf:add_event_params(__, {Name, Updated}),
+           env:put(__, Name, Updated),
            fsm:cast(__, nl_impl, {send, {nl, recv, Src, Dst, Payload}})
           ](LSM);
         (LSM) ->
           burst_nl_hf:check_dublicated(LSM, Tuple)
     end,
-
     [Destination_handler(__),
      burst_nl_hf:increase_local_pc(__, local_pc),
      Wait_handler(__, Params)
@@ -833,7 +840,7 @@ atom_name(Name, Dst) ->
 set_timeout(SM, S, Timeout) ->
   Check = fsm:check_timeout(SM, Timeout),
   if not Check ->
-      fsm:set_timeout(SM, {s, S}, Timeout);
+      fsm:set_timeout(SM, S, Timeout);
     true -> SM
   end.
 
@@ -854,10 +861,11 @@ process_received(SM, Tuple) ->
 
 send_acks(SM, Src) ->
   Name = atom_name(acks, Src),
-  Acks = nl_hf:find_event_params(SM, Name),
+  Acks = env:get(SM, Name),
   send_acks_helper(SM, Src, Acks).
+send_acks_helper(SM, _, nothing) -> SM;
 send_acks_helper(SM, _, []) -> SM;
-send_acks_helper(SM, Src, {_, Acks}) ->
+send_acks_helper(SM, Src, Acks) ->
   ?INFO(?ID, "Send acks ~p to src ~p~n", [Acks, Src]),
   Name = atom_name(acks, Src),
   Max = 2 * share:get(SM, max_queue),
@@ -868,12 +876,13 @@ send_acks_helper(SM, Src, {_, Acks}) ->
 		   (_X, A) -> A end,
   [], Acks)),
 
+  ?INFO(?ID, "Next acks ~w~n", [NA]),
   A = lists:reverse(NA),
-  Payload = burst_nl_hf:encode_ack(A),
+  Payload = burst_nl_hf:encode_ack(SM, A),
   L = lists:flatten(lists:join(",",[integer_to_list(I) || I <- A])),
   Status = lists:flatten([io_lib:format("Sending ack of packets ~p to ~p",[L, Src])]),
   [env:put(__, status, Status),
-   nl_hf:add_event_params(__, {Name, NA}),
+   env:put(__, Name, NA),
    fsm:cast(__, nl_impl, {send, {nl, ack, Src, Payload}})
   ](SM).
 
