@@ -346,12 +346,13 @@ get_packets(_, {[],[]}, _, Packets) -> Packets;
 get_packets(SM, Q, Addr, Packets) ->
   Max_queue = share:get(SM, max_queue),
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  Dst = getv(dst, Q_Tuple),
-
+  [PC, Dst] = getv([id_at, dst], Q_Tuple),
+  PCS = share:get(SM, nothing, wait_async_pcs, []),
+  Member = lists:member(PC, PCS),
   Packet_handler =
-  fun (LSM, A, L) when A == Dst, L =< Max_queue ->
+  fun (LSM, A, L) when A == Dst, L =< Max_queue, not Member ->
         get_packets(LSM, Q_Tail, A, [Q_Tuple | Packets]);
-      (LSM, A, _L) when A == Dst ->
+      (LSM, A, _L) when A == Dst, not Member ->
         get_packets(LSM, [Q_Tuple | Packets]);
       (LSM, A, _L) ->
         get_packets(LSM, Q_Tail, A, Packets)

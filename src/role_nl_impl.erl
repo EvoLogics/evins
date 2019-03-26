@@ -159,9 +159,9 @@ nl_extract_subject(Subject, Params) ->
 
 from_term({nl, help, Bin}, Cfg) ->
   [Bin, Cfg];
-%% NL,ack,Dst,Data
-from_term({nl, ack, Dst, Data}, Cfg) ->
-  [list_to_binary(["NL,ack,",integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
+%% NL,send,ack,Len,Dst,Data
+from_term({nl, send, ack, Len, Dst, Data}, Cfg) ->
+  [list_to_binary(["NL,send,ack,",integer_to_binary(Len),$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
 %% NL,recv,Datalen,Src,Dst,Data
 from_term({nl, recv, Src, Dst, Data}, Cfg) ->
   BLen = integer_to_binary(byte_size(Data)),
