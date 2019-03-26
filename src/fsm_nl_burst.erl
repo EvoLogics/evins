@@ -478,6 +478,8 @@ handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
   Cast_handler =
   fun (LSM, try_transmit) ->
         fsm:cast(LSM, nl_impl, {send, {nl, get, routing}});
+      (LSM, initiation_listen) ->
+        fsm:cast(LSM, nl_impl, {send, {nl, get, routing}});
       (LSM, _) -> LSM
   end,
 
@@ -883,7 +885,7 @@ send_acks_helper(SM, Src, Acks) ->
   Status = lists:flatten([io_lib:format("Sending ack of packets ~p to ~p",[L, Src])]),
   [env:put(__, status, Status),
    env:put(__, Name, NA),
-   fsm:cast(__, nl_impl, {send, {nl, ack, Src, Payload}})
+   fsm:cast(__, nl_impl, {send, {nl, send, ack, byte_size(Payload), Src, Payload}})
   ](SM).
 
 recv_ack(SM, Dst, L) ->

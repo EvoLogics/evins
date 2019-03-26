@@ -54,6 +54,8 @@ split(L, Cfg) ->
   case re:split(L,"\r?\n",[{parts,2}]) of
     [<<"NL,recv,", _/binary>>, _] -> %% binary
       nl_recv_extract(L, Cfg);
+    [<<"NL,send,ack,", _/binary>>, _] -> %% binary
+      nl_ack_extract(L, Cfg);
     [<<"NL,protocolinfo,", _/binary>>, _] -> %% multiline
       nl_multiline_extract(L, Cfg);
     [<<"NL,states,", States/binary>>, _] when States =/= <<"empty">> -> %% multiline
@@ -85,6 +87,23 @@ nl_recv_extract(L, Cfg) ->
     case re:run(Rest, "^(.{" ++ integer_to_list(Len) ++ "})\r?\n(.*)",[dotall,{capture,[1,2],binary}]) of
       {match, [Data, Tail]} ->
         [{nl, recv, Src, Dst, Data} | split(Tail, Cfg)];
+      _ when Len + 1 =< PLLen ->
+        [{nl, error, {parseError, L}}];
+      _ ->
+        [{more, L}]
+    end
+  catch error: _Reason -> [{nl, error, {parseError, L}}]
+  end.
+
+nl_ack_extract(L, Cfg) ->
+  try
+    {match, [BLen, BDst, Rest]} = re:run(L,"NL,send,ack,([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3], binary}]),
+    [Len, Dst] = [binary_to_integer(I) || I <- [BLen, BDst]],
+
+    PLLen = byte_size(Rest),
+    case re:run(Rest, "^(.{" ++ integer_to_list(Len) ++ "})\r?\n(.*)",[dotall,{capture,[1,2],binary}]) of
+      {match, [Data, Tail]} ->
+        [{nl, ack, Dst, Data} | split(Tail, Cfg)];
       _ when Len + 1 =< PLLen ->
         [{nl, error, {parseError, L}}];
       _ ->
@@ -246,11 +265,6 @@ nl_extract_subject(<<"get">>, <<"status">>) ->
 nl_extract_subject(<<"update">>, <<"routing,", Params/binary>>) ->
   Dst = binary_to_integer(Params),
   {nl, update, routing, Dst};
-%% NL,ack,Dst,Data
-nl_extract_subject(<<"ack">>, <<Params/binary>>) ->
-  [BDst, Data] = re:split(Params,",",[{parts,2}]),
-  Dst = binary_to_integer(BDst),
-  {nl, ack, Dst, Data};
 %% NL,statistics,neighbours,<EOL> <relay or source> neighbours:<neighbours> count:<count> total:<total><EOL>...<EOL><EOL>
 %% NL,statistics,neighbours,
 %%  neighbour:3 duration:Time count:8 total:10

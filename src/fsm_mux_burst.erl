@@ -70,7 +70,9 @@ init(SM)       ->
   [env:put(__, wait_routing_async, false),
    env:put(__, wait_routing_sync, false),
    env:put(__, clear_routing, false),
-   env:put(__, send_routing, false)
+   env:put(__, send_routing, false),
+   env:put(__, send_ack, false),
+   env:put(__, wait_data_sync, false)
   ](SM).
 trans()        -> ?TRANS.
 final()        -> [alarm].
@@ -84,10 +86,11 @@ handle_event(MM, SM, Term) ->
   ?TRACE(?ID, "state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.event, Term]),
   Wait_routing_sync = env:get(SM, wait_routing_sync),
   Wait_routing_async = env:get(SM, wait_routing_async),
+  Wait_data_sync = env:get(SM, wait_data_sync),
   Clear_routing = env:get(SM, clear_routing),
   Send_routing = env:get(SM, send_routing),
   Current_protocol = share:get(SM, current_protocol),
-
+  Send_ack = env:get(SM, send_ack),
   State = SM#sm.state,
   case Term of
     {timeout, reset_state} ->
@@ -123,23 +126,27 @@ handle_event(MM, SM, Term) ->
       ](SM);
     {nl, update, routing, _} ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, busy}});
-    {nl, send, _} when Send_routing == true ->
+    {nl, send, _} when Send_routing ->
       env:put(SM, send_routing, false);
-    {nl, send, _} ->
-      fsm:cast(SM, nl_impl, {send, Term});
+    {nl, send, _} when Send_ack ->
+      env:put(SM, send_ack, false);
+    {nl, send, Pkg} when Wait_data_sync, is_integer(Pkg) ->
+      [fsm:cast(__, nl_impl, {send, Term}),
+       env:put(__, wait_data_sync, false)
+      ](SM);
     {nl, send, tolerant, Src, Data} ->
       Payload = encode_mux(SM, mux, Data),
-      send_command(SM, ?TO_MM, burst_protocol, {nl, send, tolerant, Src, Payload});
+      send_data(SM, ?TO_MM, burst_protocol, {nl, send, tolerant, Src, Payload});
     {nl, send, Src, Data} ->
       Payload = encode_mux(SM, mux, Data),
       P =
       if Current_protocol == burst -> im_protocol;
         true -> current_protocol
       end,
-      send_command(SM, ?TO_MM, P, {nl, send, Src, Payload});
+      send_data(SM, ?TO_MM, P, {nl, send, Src, Payload});
     {nl, delete, neighbour, _N} ->
       send_command(SM, ?TO_MM, discovery_protocol,Term);
-    {nl, routing, Routing} when Clear_routing == true ->
+    {nl, routing, Routing} when Clear_routing ->
       [env:put(__, clear_routing, false),
        share:put(__, routing_table, Routing)
       ](SM);
@@ -219,7 +226,6 @@ handle_event(MM, SM, Term) ->
     {nl, failed, _, _, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, path, failed, _} ->
-      %TODO: move stack
       Burst_protocol = share:get(SM, burst_protocol),
       ProtocolMM = share:get(SM, Burst_protocol),
       [fsm:cast(__, ProtocolMM, [], {send, Term}, ?TO_MM),
@@ -229,7 +235,9 @@ handle_event(MM, SM, Term) ->
       Ack_protocol = share:get(SM, ack_protocol),
       ProtocolMM = share:get(SM, Ack_protocol),
       Payload = encode_mux(SM, nl, Data),
-      fsm:cast(SM, ProtocolMM, [], {send, {nl, send, Src, Payload}}, ?TO_MM);
+      [env:put(__, send_ack, true),
+       fsm:cast(__, ProtocolMM, [], {send, {nl, send, Src, Payload}}, ?TO_MM)
+      ](SM);
     {nl, path, _, _} ->
       SM;
     {nl, neighbours, _} ->
@@ -396,6 +404,11 @@ set_routing(SM, MM, Protocol_Name, Command) when is_atom(Protocol_Name) ->
 set_routing(SM, MM, ProtocolMM, Command) ->
   [fsm:cast(__, ProtocolMM, [], {send, Command}, MM),
    env:put(__, wait_routing_sync, true)
+  ](SM).
+
+send_data(SM, MM, Protocol_Name, Command) ->
+  [env:put(__, wait_data_sync, true),
+   send_command(__, MM, Protocol_Name, Command)
   ](SM).
 send_command(SM, MM, Protocol_Name, Command) ->
   Discovery_protocol = share:get(SM, Protocol_Name),
