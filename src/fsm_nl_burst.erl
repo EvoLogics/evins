@@ -83,9 +83,9 @@
                   {pick, sensing},
                   {next_packet, transmit},
                   {recv_data, recv},
-                  {busy_online, busy},
                   {no_routing, idle},
                   {reset, idle},
+                  {busy_online, transmit},
                   {initiation_listen, transmit},
                   {connection_failed, idle}
                  ]},
@@ -494,7 +494,7 @@ handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
          fsm:set_event(__, eps)
         ](LSM);
       (LSM, false) ->
-        fsm:set_event(LSM, no_routing)
+        fsm:set_event(LSM, empty)
   end,
   Exist = burst_nl_hf:check_routing_existance(SM),
 
@@ -508,6 +508,7 @@ handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
 handle_sensing(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_sensing ~120p~n", [Term]),
   [nl_hf:update_states(__),
+   set_timeout(__, {s, 1}, check_state),
    fsm:set_event(__, eps)
   ](SM).
 
@@ -586,7 +587,8 @@ handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
 handle_transmit(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_transmit ~120p~n", [Term]),
   [nl_hf:update_states(__),
-   fsm:set_event(__, eps)
+   fsm:set_event(__, eps),
+   set_timeout(__, {s, 1}, check_state)
   ](SM).
 
 handle_busy(_MM, SM, Term) ->
@@ -595,7 +597,8 @@ handle_busy(_MM, SM, Term) ->
   Status = lists:flatten([io_lib:format("Busy state ~s ~p", [P1, P2])]),
   [env:put(__, status,Status ),
    nl_hf:update_states(__),
-   fsm:set_event(__, eps)
+   fsm:set_event(__, eps),
+   set_timeout(__, {s, 1}, check_state)
   ](SM).
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
