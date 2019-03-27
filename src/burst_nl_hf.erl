@@ -194,10 +194,13 @@ extract_nl_burst_header(SM, Payload) ->
 %--------------------------------- Routing -------------------------------------
 check_routing_existance(SM) ->
   Q_data = share:get(SM, nothing, burst_data_buffer, queue:new()),
-  if Q_data == {[],[]} -> false;
+  if Q_data == {[],[]} ->
+    ?TRACE(?ID, "check_routing_existance : buffer empty ~n", []),
+    false;
   true ->
     {{value, Q_Tuple}, _} = queue:out(Q_data),
     Dst = getv(dst, Q_Tuple),
+    ?TRACE(?ID, "check_routing_existance to dst ~p~n", [Dst]),
     Exist = nl_hf:routing_exist(SM, Dst),
     {Exist, Dst}
   end.
