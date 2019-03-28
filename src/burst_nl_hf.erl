@@ -401,6 +401,11 @@ update_statistics_tolerant(SM, Value, T, QS, Q, PC) ->
     {Role, PC, QHash, Len, _, unknown, Src, Dst} when Value == time, QHash == Hash->
       NT = {Role, PC, QHash, Len, from_start(SM, Time), sent, Src, Dst},
       queue:in(NT, Q);
+    {Role, PC, QHash, Len, QTime, unknown, Src, Dst} when Value == state, T == failed ->
+      Ack_time = from_start(SM, Time),
+      Duration = (Ack_time - QTime) / 1000,
+      NT = {Role, PC, QHash, Len, Duration, T, Src, Dst},
+      queue:in(NT, Q);
     {Role, PC, QHash, Len, QTime, sent, Src, Dst} when Value == state ->
       Ack_time = from_start(SM, Time),
       Duration = (Ack_time - QTime) / 1000,

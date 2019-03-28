@@ -459,7 +459,7 @@ fill_transmission(SM, Type, Tuple) ->
         share:put(LSM, Qname, NQ)
   end,
 
-  ?INFO(?ID, "fill_transmission ~p to ~p~n", [Tuple, Q]),
+  ?INFO(?ID, "fill_transmission ~p~n", [Tuple]),
   case queue:len(Q) of
     _ when Is_path ->
       Fill_handler(SM, path);
@@ -649,7 +649,7 @@ zero_rq_retries(SM, Tuple, Q, NQ) ->
 
 decrease_retries(SM, Tuple) ->
   Q = share:get(SM, retriesq),
-  ?TRACE(?ID, "Change local tries of packet ~p in retires Q ~p~n",[Tuple, Q]),
+  ?TRACE(?ID, "Change local tries of packet ~p~n",[Tuple]),
   decrease_rq_helper(SM, Tuple, not_inside, Q, queue:new()).
 
 decrease_rq_helper(SM, Tuple, not_inside, {[],[]}, {[],[]}) ->
@@ -765,7 +765,7 @@ update_rq_helper(SM, Tuple, Inside, Q) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
 
   Same = is_same(SM, Q_Tuple, Tuple),
-  ?TRACE(?ID, "update_received Same ~p ~p ~p~n", [Same, Q_Tuple, Tuple]),
+  %?TRACE(?ID, "update_received Same ~p ~p ~p~n", [Same, Q_Tuple, Tuple]),
   if Same ->
     update_rq_helper(SM, Tuple, inside, Q_Tail);
   true ->

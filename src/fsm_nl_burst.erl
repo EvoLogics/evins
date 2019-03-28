@@ -180,7 +180,9 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, debug, ok}});
     {nl, path, failed, Dst} ->
       ?INFO(?ID, "Path to ~p failed to find~n", [Dst]),
-      process_failed_update(SM, Dst);
+      [process_failed_update(__, Dst),
+       fsm:run_event(MM, __, {})
+      ](SM);
     {nl, set, address, Address} ->
       nl_hf:process_set_command(SM, {address, Address});
     {nl, set, neighbours, Neighbours} ->
@@ -203,7 +205,7 @@ handle_event(MM, SM, Term) ->
        fsm:clear_timeouts(__),
        fsm:cast(__, nl_impl, {send, {nl, buffer, ok}})
       ] (SM);
-    {nl,get,statistics,tolerant} ->
+    {nl, get, statistics, tolerant} ->
       QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
       Statistics = burst_nl_hf:get_statistics_data(QS),
       fsm:cast(SM, nl_impl, {send, {nl, statistics, tolerant, Statistics}});
@@ -873,7 +875,7 @@ send_acks_helper(SM, _, []) -> SM;
 send_acks_helper(SM, Src, Acks) ->
   ?INFO(?ID, "Send acks ~p to src ~p~n", [Acks, Src]),
   Name = atom_name(acks, Src),
-  Max = 2 * share:get(SM, max_queue),
+  Max = get_acks_len(SM),
   NA =
   lists:reverse(
    lists:foldl(
@@ -890,6 +892,14 @@ send_acks_helper(SM, Src, Acks) ->
    env:put(__, Name, NA),
    fsm:cast(__, nl_impl, {send, {nl, send, ack, byte_size(Payload), Src, Payload}})
   ](SM).
+
+get_acks_len(SM) ->
+  Maxim = 60,
+  Max = share:get(SM, max_queue),
+  if Max < Maxim ->
+    round( (Maxim / Max) - 0.5) * Max;
+  true -> Maxim
+  end.
 
 recv_ack(SM, Dst, L) ->
   ?INFO(?ID, "Received acks from ~p: ~w~n", [Dst, L]),

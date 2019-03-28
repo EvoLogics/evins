@@ -67,12 +67,12 @@
 
 start_link(SM) -> fsm:start_link(SM).
 init(SM)       ->
-  [env:put(__, wait_routing_async, false),
-   env:put(__, wait_routing_sync, false),
+  [env:put(__, sync_routing_impl, false),
+   env:put(__, update_routing, false),
+   env:put(__, cast_routing_async, true),
+   env:put(__, async_routing_nl, false),
    env:put(__, clear_routing, false),
-   env:put(__, send_routing, false),
-   env:put(__, send_ack, false),
-   env:put(__, wait_data_sync, false)
+   env:put(__, wait_send_sync, false)
   ](SM).
 trans()        -> ?TRANS.
 final()        -> [alarm].
@@ -84,14 +84,12 @@ stop(_SM)      -> ok.
 handle_event(MM, SM, Term) ->
   ?INFO(?ID, "HANDLE EVENT~n", []),
   ?TRACE(?ID, "state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.event, Term]),
-  Wait_routing_sync = env:get(SM, wait_routing_sync),
-  Wait_routing_async = env:get(SM, wait_routing_async),
-  Wait_data_sync = env:get(SM, wait_data_sync),
+  Sync_routing_impl = env:get(SM, sync_routing_impl),
+  Wait_send_sync = env:get(SM, wait_send_sync),
   Clear_routing = env:get(SM, clear_routing),
-  Send_routing = env:get(SM, send_routing),
   Current_protocol = share:get(SM, current_protocol),
-  Send_ack = env:get(SM, send_ack),
   State = SM#sm.state,
+  ?INFO(?ID, "State ~p Role ~p~n", [State, MM#mm.role]),
   case Term of
     {timeout, reset_state} ->
       Burst_protocol = share:get(SM, burst_protocol),
@@ -111,64 +109,85 @@ handle_event(MM, SM, Term) ->
       SM;
     {disconnected, _} ->
       SM;
-    {nl, update, routing} ->
+    {nl, update, routing} when MM#mm.role == nl_impl ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, error}});
     {nl, update, routing, Dst} when State == ready_nl ->
       Cast_handler =
       fun (LSM, nl_impl) ->
             fsm:cast(LSM, nl_impl, {send, {nl, routing, ok}});
-          (LSM, nl) -> LSM
+          (LSM, nl) ->
+            env:put(LSM, cast_routing_async, false)
       end,
       [Cast_handler(__, MM#mm.role),
        update_routing(__, Dst),
        fsm:set_event(__, update_routing),
        fsm:run_event(MM, __, {})
       ](SM);
-    {nl, update, routing, _} ->
+    {nl, update, routing, _} when MM#mm.role == nl_impl ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, busy}});
-    {nl, send, _} when Send_routing ->
-      env:put(SM, send_routing, false);
-    {nl, send, _} when Send_ack ->
-      env:put(SM, send_ack, false);
-    {nl, send, Pkg} when Wait_data_sync, is_integer(Pkg) ->
+    {nl, update, routing, _} ->
+      SM;
+    {nl, send, Pkg} when Wait_send_sync, is_integer(Pkg) ->
       [fsm:cast(__, nl_impl, {send, Term}),
-       env:put(__, wait_data_sync, false)
+       env:put(__, wait_send_sync, false)
       ](SM);
+    {nl, send, _} -> SM;
     {nl, send, tolerant, Src, Data} ->
       Payload = encode_mux(SM, mux, Data),
-      send_data(SM, ?TO_MM, burst_protocol, {nl, send, tolerant, Src, Payload});
+      send_data(SM, ?TO_MM, MM#mm.role, burst_protocol, {nl, send, tolerant, Src, Payload});
     {nl, send, Src, Data} ->
       Payload = encode_mux(SM, mux, Data),
       P =
       if Current_protocol == burst -> im_protocol;
         true -> current_protocol
       end,
-      send_data(SM, ?TO_MM, P, {nl, send, Src, Payload});
+      send_data(SM, ?TO_MM, MM#mm.role, P, {nl, send, Src, Payload});
     {nl, delete, neighbour, _N} ->
       send_command(SM, ?TO_MM, discovery_protocol,Term);
     {nl, routing, Routing} when Clear_routing ->
       [env:put(__, clear_routing, false),
        share:put(__, routing_table, Routing)
       ](SM);
-    {nl, routing, Routing} when Wait_routing_sync == false ->
+    %% SYNC nl,routing
+    {nl, routing, Routing} when Sync_routing_impl ->
       [share:put(__, routing_table, Routing),
-       process_routing(__, Routing),
-       fsm:set_event(__, set_routing),
-       fsm:run_event(MM, __, {})
-      ](SM);
-    {nl, routing, Routing} ->
-      Cast_handler =
-      fun (LSM, false) ->
-            fsm:cast(LSM, nl_impl, {send, Term});
-          (LSM, true) ->
-            env:put(LSM, wait_routing_async, false)
-      end,
-      [share:put(__, routing_table, Routing),
-       env:put(__, wait_routing_sync, false),
-       Cast_handler(__, Wait_routing_async),
+       fsm:cast(__, nl_impl, {send, Term}),
+       env:put(__, sync_routing_impl, false),
        fsm:set_event(__, eps),
        fsm:run_event(MM, __, {})
       ](SM);
+    %% ASYNC nl,routing
+    {nl, routing, Routing} when MM#mm.role == nl ->
+      Update_routing = env:get(SM, update_routing),
+      Sync_routing_nl = env:get(SM, async_routing_nl),
+      Cast_routing_async = env:get(SM, cast_routing_async),
+      Cast_handler =
+      fun (LSM) when Cast_routing_async == true ->
+            fsm:cast(LSM, nl_impl, {send, Term});
+          (LSM) ->
+            env:put(LSM, cast_routing_async, true)
+      end,
+      ?INFO(?ID, "Update_routing ~p Sync_routing_nl ~p~n", [Update_routing, Sync_routing_nl]),
+      Update_handler =
+      fun (LSM) when Update_routing->
+            [Cast_handler(__),
+             env:put(__, update_routing, false),
+             process_routing(__, Routing),
+             fsm:set_event(__, set_routing)
+            ](LSM);
+          (LSM) when Sync_routing_nl->
+            [process_routing(__, Routing),
+             env:put(__, async_routing_nl, false),
+             fsm:set_event(__, set_routing)
+            ](LSM);
+          (LSM) ->
+            fsm:set_event(LSM, eps)
+      end,
+      [share:put(__, routing_table, Routing),
+       Update_handler(__),
+       fsm:run_event(MM, __, {})
+      ](SM);
+    {nl, routing, _} -> SM;
     {nl, reset, state} ->
       [send_command(__, ?TO_MM, current_protocol, Term),
        fsm:run_event(MM, __, {}),
@@ -184,14 +203,16 @@ handle_event(MM, SM, Term) ->
     {nl, get, protocolinfo, _Some_protocol} ->
       ProtocolMM = share:get(SM, share:get(SM, discovery_protocol)),
       fsm:cast(SM, ProtocolMM, [], {send, Term}, ?TO_MM);
-    {nl, get, routing} ->
-      Cast_handler =
-      fun (LSM, nl) -> env:put(LSM, wait_routing_async, true);
-          (LSM, nl_impl) -> LSM
-      end,
-      [Cast_handler(__, MM#mm.role),
+    {nl, get, routing} when MM#mm.role == nl_impl ->
+      [env:put(__, sync_routing_impl, true),
        get_routing(__, ?TO_MM, Term)
       ](SM);
+    {nl, get, routing} ->
+      [env:put(__, async_routing_nl, true),
+       get_routing(__, ?TO_MM, Term)
+      ](SM);
+    {nl, get, time, monotonic} ->
+      send_command(SM, ?TO_MM, current_protocol, Term);
     {nl, get, protocol} ->
       send_command(SM, ?TO_MM, current_protocol, Term);
     {nl, get, buffer} ->
@@ -220,7 +241,11 @@ handle_event(MM, SM, Term) ->
       %% clear everything and set current protocol
       set_protocol(SM, MM#mm.role, Protocol);
     {nl, set, routing, _Routing} ->
-      set_routing(SM, ?TO_MM, discovery_protocol, Term);
+      [env:put(__, sync_routing_impl, true),
+       set_routing(__, ?TO_MM, discovery_protocol, Term)
+      ](SM);
+    {nl, set, debug, _} ->
+      fsm:cast(SM, nl_impl, {send, {nl, debug, error}});
     {nl, delivered, _, _, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, failed, _, _, _} ->
@@ -228,18 +253,27 @@ handle_event(MM, SM, Term) ->
     {nl, path, failed, _} ->
       Burst_protocol = share:get(SM, burst_protocol),
       ProtocolMM = share:get(SM, Burst_protocol),
+      Cast_routing_async = env:get(SM, cast_routing_async),
+      Cast_handler =
+        fun (LSM) when Cast_routing_async == true ->
+              fsm:cast(LSM, nl_impl, {send, Term});
+            (LSM) -> LSM
+        end,
       [fsm:cast(__, ProtocolMM, [], {send, Term}, ?TO_MM),
-       get_routing(__, ?TO_MM, {nl, get, routing})
+       Cast_handler(__),
+       env:put(__, update_routing, false),
+       env:put(__, async_routing_nl, false),
+       fsm:set_event(__, set_routing),
+       fsm:run_event(MM, __, {})
       ](SM);
+    {nl, path, _, _} ->
+      SM;
     {nl, ack, Src, Data} ->
       Ack_protocol = share:get(SM, ack_protocol),
       ProtocolMM = share:get(SM, Ack_protocol),
       Payload = encode_mux(SM, nl, Data),
-      [env:put(__, send_ack, true),
-       fsm:cast(__, ProtocolMM, [], {send, {nl, send, Src, Payload}}, ?TO_MM)
+      [fsm:cast(__, ProtocolMM, [], {send, {nl, send, Src, Payload}}, ?TO_MM)
       ](SM);
-    {nl, path, _, _} ->
-      SM;
     {nl, neighbours, _} ->
       fsm:cast(SM, nl_impl, {send, Term});
     {nl, time, monotonic, Time} ->
@@ -344,7 +378,7 @@ update_routing(SM, Dst) ->
         Cleared = {nl, set, routing, clear_routing(SM, Dst)},
         % Delete routing
         [env:put(__, clear_routing, true),
-         env:put(__, send_routing, true),
+         env:put(__, update_routing, true),
          fsm:cast(__, ProtocolMM, [], {send, Cleared}, ?TO_MM),
          fsm:cast(__, ProtocolMM, [], {send, Tuple}, ?TO_MM)
         ](LSM)
@@ -402,12 +436,15 @@ set_routing(SM, MM, Protocol_Name, Command) when is_atom(Protocol_Name) ->
   ProtocolMM = share:get(SM, Burst_protocol),
   set_routing(SM, MM, ProtocolMM, Command);
 set_routing(SM, MM, ProtocolMM, Command) ->
-  [fsm:cast(__, ProtocolMM, [], {send, Command}, MM),
-   env:put(__, wait_routing_sync, true)
+  [fsm:cast(__, ProtocolMM, [], {send, Command}, MM)
   ](SM).
 
-send_data(SM, MM, Protocol_Name, Command) ->
-  [env:put(__, wait_data_sync, true),
+send_data(SM, MM, Role, Protocol_Name, Command) ->
+  Sync_handler =
+  fun (LSM, nl_impl) -> env:put(LSM, wait_send_sync, true);
+      (LSM, _) -> LSM
+  end,
+  [Sync_handler(__, Role),
    send_command(__, MM, Protocol_Name, Command)
   ](SM).
 send_command(SM, MM, Protocol_Name, Command) ->
