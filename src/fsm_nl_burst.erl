@@ -676,18 +676,19 @@ push_tolerant_queue(SM, {nl, send, tolerant, Dst, Payload}) ->
               burst_nl_hf:create_default()),
 
   Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
-  QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
+  %QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
 
   Role = get_role(SM, Src, Dst),
   <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
   STuple = {Role, LocalPC, Hash, Len, 0, unknown, Src, Dst},
   [burst_nl_hf:increase_local_pc(__, local_pc),
-   share:put(__, statistics_tolerant, queue:in(STuple, QS)),
+   nl_hf:queue_push(__, statistics_tolerant, STuple, 1000),
+   %share:put(__, statistics_tolerant, queue:in(STuple, QS)),
    share:put(__, burst_data_buffer, queue:in(Tuple, Q)),
    fsm:cast(__, nl_impl, {send, {nl, send, LocalPC}})
   ](SM).
 
-extract_status(SM, Status) ->
+extract_status(SM, Status) when is_list(Status)->
   Parsed = [string:rstr(X, "INITIATION LISTEN") || X <- string:tokens (Status, "\r\n")],
   ?TRACE(?ID, "~p~n", [Status]),
   Listen =
@@ -704,7 +705,12 @@ extract_status(SM, Status) ->
          fsm:set_timeout(__, {s, 1}, check_state)
         ](LSM)
   end,
-  Status_handler(SM, Listen).
+  Status_handler(SM, Listen);
+extract_status(SM, Status) ->
+  ?ERROR(?ID, "Status ~p~n", [Status]),
+  [fsm:clear_timeout(__, check_state),
+   fsm:set_timeout(__, {s, 1}, check_state)
+  ](SM).
 
 init_pc(SM, PC) ->
   ?INFO(?ID, "init_pc ~p~n", [PC]),
