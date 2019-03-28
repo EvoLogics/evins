@@ -57,7 +57,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Wait_ack  = set_params(Wait_ack_set, 120), %s
   Send_ack  = set_params(Send_ack_set, 3),
   Max_burst_len  = set_params(Max_burst_len_set, Max_queue * 1000),
-  Update_retries  = set_params(Update_retries_set, 3),
+  Update_retries  = set_params(Update_retries_set, 1),
 
   {Tmo_start, Tmo_end}    = set_timeouts(Tmo_transmit, {1, 4}),
 
