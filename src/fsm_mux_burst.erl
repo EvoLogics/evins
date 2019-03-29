@@ -312,6 +312,8 @@ handle_event(MM, SM, Term) ->
     {nl, error, _} when MM#mm.role == nl_impl ->
       ?INFO(?ID, "MM ~p~n", [MM#mm.role]),
       fsm:cast(SM, nl_impl, {send, {nl, error}});
+    {send_error, _} ->
+      fsm:cast(SM, nl_impl, {send, {nl, error}});
     _ when MM#mm.role == nl ->%, State =/= discovery ->
       fsm:cast(SM, nl_impl, {send, Term});
     UUg ->
