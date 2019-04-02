@@ -194,10 +194,13 @@ extract_nl_burst_header(SM, Payload) ->
 %--------------------------------- Routing -------------------------------------
 check_routing_existance(SM) ->
   Q_data = share:get(SM, nothing, burst_data_buffer, queue:new()),
-  if Q_data == {[],[]} -> false;
+  if Q_data == {[],[]} ->
+    ?TRACE(?ID, "check_routing_existance : buffer empty ~n", []),
+    false;
   true ->
     {{value, Q_Tuple}, _} = queue:out(Q_data),
     Dst = getv(dst, Q_Tuple),
+    ?TRACE(?ID, "check_routing_existance to dst ~p~n", [Dst]),
     Exist = nl_hf:routing_exist(SM, Dst),
     {Exist, Dst}
   end.
@@ -346,12 +349,13 @@ get_packets(_, {[],[]}, _, Packets) -> Packets;
 get_packets(SM, Q, Addr, Packets) ->
   Max_queue = share:get(SM, max_queue),
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-  Dst = getv(dst, Q_Tuple),
-
+  [PC, Dst] = getv([id_at, dst], Q_Tuple),
+  PCS = share:get(SM, nothing, wait_async_pcs, []),
+  Member = lists:member(PC, PCS),
   Packet_handler =
-  fun (LSM, A, L) when A == Dst, L =< Max_queue ->
+  fun (LSM, A, L) when A == Dst, L =< Max_queue, not Member ->
         get_packets(LSM, Q_Tail, A, [Q_Tuple | Packets]);
-      (LSM, A, _L) when A == Dst ->
+      (LSM, A, _L) when A == Dst, not Member ->
         get_packets(LSM, [Q_Tuple | Packets]);
       (LSM, A, _L) ->
         get_packets(LSM, Q_Tail, A, Packets)
@@ -396,6 +400,11 @@ update_statistics_tolerant(SM, Value, T, QS, Q, PC) ->
   case Q_Tuple of
     {Role, PC, QHash, Len, _, unknown, Src, Dst} when Value == time, QHash == Hash->
       NT = {Role, PC, QHash, Len, from_start(SM, Time), sent, Src, Dst},
+      queue:in(NT, Q);
+    {Role, PC, QHash, Len, QTime, unknown, Src, Dst} when Value == state, T == failed ->
+      Ack_time = from_start(SM, Time),
+      Duration = (Ack_time - QTime) / 1000,
+      NT = {Role, PC, QHash, Len, Duration, T, Src, Dst},
       queue:in(NT, Q);
     {Role, PC, QHash, Len, QTime, sent, Src, Dst} when Value == state ->
       Ack_time = from_start(SM, Time),

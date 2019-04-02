@@ -83,9 +83,9 @@
                   {pick, sensing},
                   {next_packet, transmit},
                   {recv_data, recv},
-                  {busy_online, busy},
                   {no_routing, idle},
                   {reset, idle},
+                  {busy_online, transmit},
                   {initiation_listen, transmit},
                   {connection_failed, idle}
                  ]},
@@ -180,7 +180,9 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, debug, ok}});
     {nl, path, failed, Dst} ->
       ?INFO(?ID, "Path to ~p failed to find~n", [Dst]),
-      process_failed_update(SM, Dst);
+      [process_failed_update(__, Dst),
+       fsm:run_event(MM, __, {})
+      ](SM);
     {nl, set, address, Address} ->
       nl_hf:process_set_command(SM, {address, Address});
     {nl, set, neighbours, Neighbours} ->
@@ -203,7 +205,7 @@ handle_event(MM, SM, Term) ->
        fsm:clear_timeouts(__),
        fsm:cast(__, nl_impl, {send, {nl, buffer, ok}})
       ] (SM);
-    {nl,get,statistics,tolerant} ->
+    {nl, get, statistics, tolerant} ->
       QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
       Statistics = burst_nl_hf:get_statistics_data(QS),
       fsm:cast(SM, nl_impl, {send, {nl, statistics, tolerant, Statistics}});
@@ -478,6 +480,8 @@ handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
   Cast_handler =
   fun (LSM, try_transmit) ->
         fsm:cast(LSM, nl_impl, {send, {nl, get, routing}});
+      (LSM, initiation_listen) ->
+        fsm:cast(LSM, nl_impl, {send, {nl, get, routing}});
       (LSM, _) -> LSM
   end,
 
@@ -492,7 +496,7 @@ handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
          fsm:set_event(__, eps)
         ](LSM);
       (LSM, false) ->
-        fsm:set_event(LSM, no_routing)
+        fsm:set_event(LSM, empty)
   end,
   Exist = burst_nl_hf:check_routing_existance(SM),
 
@@ -506,6 +510,7 @@ handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
 handle_sensing(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_sensing ~120p~n", [Term]),
   [nl_hf:update_states(__),
+   set_timeout(__, {s, 1}, check_state),
    fsm:set_event(__, eps)
   ](SM).
 
@@ -584,7 +589,8 @@ handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
 handle_transmit(_MM, SM, Term) ->
   ?TRACE(?ID, "handle_transmit ~120p~n", [Term]),
   [nl_hf:update_states(__),
-   fsm:set_event(__, eps)
+   fsm:set_event(__, eps),
+   set_timeout(__, {s, 1}, check_state)
   ](SM).
 
 handle_busy(_MM, SM, Term) ->
@@ -593,7 +599,8 @@ handle_busy(_MM, SM, Term) ->
   Status = lists:flatten([io_lib:format("Busy state ~s ~p", [P1, P2])]),
   [env:put(__, status,Status ),
    nl_hf:update_states(__),
-   fsm:set_event(__, eps)
+   fsm:set_event(__, eps),
+   set_timeout(__, {s, 1}, check_state)
   ](SM).
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
@@ -669,18 +676,19 @@ push_tolerant_queue(SM, {nl, send, tolerant, Dst, Payload}) ->
               burst_nl_hf:create_default()),
 
   Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
-  QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
+  %QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
 
   Role = get_role(SM, Src, Dst),
   <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
   STuple = {Role, LocalPC, Hash, Len, 0, unknown, Src, Dst},
   [burst_nl_hf:increase_local_pc(__, local_pc),
-   share:put(__, statistics_tolerant, queue:in(STuple, QS)),
+   nl_hf:queue_push(__, statistics_tolerant, STuple, 1000),
+   %share:put(__, statistics_tolerant, queue:in(STuple, QS)),
    share:put(__, burst_data_buffer, queue:in(Tuple, Q)),
    fsm:cast(__, nl_impl, {send, {nl, send, LocalPC}})
   ](SM).
 
-extract_status(SM, Status) ->
+extract_status(SM, Status) when is_list(Status)->
   Parsed = [string:rstr(X, "INITIATION LISTEN") || X <- string:tokens (Status, "\r\n")],
   ?TRACE(?ID, "~p~n", [Status]),
   Listen =
@@ -697,7 +705,12 @@ extract_status(SM, Status) ->
          fsm:set_timeout(__, {s, 1}, check_state)
         ](LSM)
   end,
-  Status_handler(SM, Listen).
+  Status_handler(SM, Listen);
+extract_status(SM, Status) ->
+  ?ERROR(?ID, "Status ~p~n", [Status]),
+  [fsm:clear_timeout(__, check_state),
+   fsm:set_timeout(__, {s, 1}, check_state)
+  ](SM).
 
 init_pc(SM, PC) ->
   ?INFO(?ID, "init_pc ~p~n", [PC]),
@@ -868,7 +881,7 @@ send_acks_helper(SM, _, []) -> SM;
 send_acks_helper(SM, Src, Acks) ->
   ?INFO(?ID, "Send acks ~p to src ~p~n", [Acks, Src]),
   Name = atom_name(acks, Src),
-  Max = 2 * share:get(SM, max_queue),
+  Max = get_acks_len(SM),
   NA =
   lists:reverse(
    lists:foldl(
@@ -883,8 +896,16 @@ send_acks_helper(SM, Src, Acks) ->
   Status = lists:flatten([io_lib:format("Sending ack of packets ~p to ~p",[L, Src])]),
   [env:put(__, status, Status),
    env:put(__, Name, NA),
-   fsm:cast(__, nl_impl, {send, {nl, ack, Src, Payload}})
+   fsm:cast(__, nl_impl, {send, {nl, send, ack, byte_size(Payload), Src, Payload}})
   ](SM).
+
+get_acks_len(SM) ->
+  Maxim = 60,
+  Max = share:get(SM, max_queue),
+  if Max < Maxim ->
+    round( (Maxim / Max) - 0.5) * Max;
+  true -> Maxim
+  end.
 
 recv_ack(SM, Dst, L) ->
   ?INFO(?ID, "Received acks from ~p: ~w~n", [Dst, L]),
