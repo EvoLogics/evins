@@ -127,6 +127,9 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, routing, busy}});
     {nl, update, routing, _} ->
       SM;
+    {nl, send, error} when MM#mm.role == nl_impl ->
+      ?INFO(?ID, "MM ~p~n", [MM#mm.role]),
+      fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, send, Pkg} when Wait_send_sync, is_integer(Pkg) ->
       [fsm:cast(__, nl_impl, {send, Term}),
        env:put(__, wait_send_sync, false)
@@ -142,6 +145,8 @@ handle_event(MM, SM, Term) ->
         true -> current_protocol
       end,
       send_data(SM, ?TO_MM, MM#mm.role, P, {nl, send, Src, Payload});
+    {nl, send, _, _, _} ->
+      fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, delete, neighbour, _N} ->
       send_command(SM, ?TO_MM, discovery_protocol,Term);
     {nl, routing, Routing} when Clear_routing ->

@@ -812,7 +812,7 @@ process_data(SM, Data) ->
           ?INFO(?ID, "Updated ack list ~p~n", [Updated]),
           [env:put(__, status, "Receive data on destination"),
            env:put(__, Name, Updated),
-           fsm:cast(__, nl_impl, {send, {nl, recv, Src, Dst, Payload}})
+           fsm:cast(__, nl_impl, {send, {nl, recv, tolerant, Src, Dst, Payload}})
           ](LSM);
         (LSM) ->
           burst_nl_hf:check_dublicated(LSM, Tuple)

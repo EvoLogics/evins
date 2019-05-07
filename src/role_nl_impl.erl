@@ -163,6 +163,11 @@ from_term({nl, help, Bin}, Cfg) ->
 from_term({nl, send, ack, Len, Dst, Data}, Cfg) ->
   [list_to_binary(["NL,send,ack,",integer_to_binary(Len),$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
 %% NL,recv,Datalen,Src,Dst,Data
+from_term({nl, recv, Type, Src, Dst, Data}, Cfg) ->
+  BLen = integer_to_binary(byte_size(Data)),
+  BType = atom_to_binary(Type, utf8),
+  [list_to_binary(["NL,recv,",BType,$,,BLen,$,,integer_to_binary(Src),$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
+%% NL,recv,Datalen,Src,Dst,Data
 from_term({nl, recv, Src, Dst, Data}, Cfg) ->
   BLen = integer_to_binary(byte_size(Data)),
   [list_to_binary(["NL,recv,",BLen,$,,integer_to_binary(Src),$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
