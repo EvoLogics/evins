@@ -97,7 +97,7 @@ nl_recv_extract(L, Cfg) ->
   end.
 
 nl_recv_extract_helper(L) ->
-  Templates = [{"NL,recv,([^,]*),([^,]*),([^,]*),([^,]*),(.*)", [1,2,3,4,5]},
+  Templates = [{"NL,recv,(tolerant|sensitive|broadcast|alarm),([^,]*),([^,]*),([^,]*),(.*)", [1,2,3,4,5]},
                {"NL,recv,([^,]*),([^,]*),([^,]*),(.*)", [1,2,3,4]}],
 
   nl_recv_extract_helper(L, Templates).
