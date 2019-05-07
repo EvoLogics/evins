@@ -80,19 +80,39 @@ split(L, Cfg) ->
 %% NL,recv,<Len>,<Src>,<Dst>,<Data>
 nl_recv_extract(L, Cfg) ->
   try
-    {match, [BLen, BSrc, BDst, Rest]} = re:run(L,"NL,recv,([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    [Type, BLen, BSrc, BDst, Rest] = nl_recv_extract_helper(L),
     [Len, Src, Dst] = [binary_to_integer(I) || I <- [BLen, BSrc, BDst]],
-
     PLLen = byte_size(Rest),
     case re:run(Rest, "^(.{" ++ integer_to_list(Len) ++ "})\r?\n(.*)",[dotall,{capture,[1,2],binary}]) of
-      {match, [Data, Tail]} ->
+      {match, [Data, Tail]} when Type == notype ->
         [{nl, recv, Src, Dst, Data} | split(Tail, Cfg)];
+      {match, [Data, Tail]} ->
+        [{nl, recv, Type, Src, Dst, Data} | split(Tail, Cfg)];
       _ when Len + 1 =< PLLen ->
         [{nl, error, {parseError, L}}];
       _ ->
         [{more, L}]
     end
   catch error: _Reason -> [{nl, error, {parseError, L}}]
+  end.
+
+nl_recv_extract_helper(L) ->
+  Templates = [{"NL,recv,([^,]*),([^,]*),([^,]*),([^,]*),(.*)", [1,2,3,4,5]},
+               {"NL,recv,([^,]*),([^,]*),([^,]*),(.*)", [1,2,3,4]}],
+
+  nl_recv_extract_helper(L, Templates).
+
+nl_recv_extract_helper(match, L) -> L;
+nl_recv_extract_helper(_, []) -> nomatch;
+nl_recv_extract_helper(L, [H | T]) ->
+  {Template, LB} = H,
+  case re:run(L, Template, [dotall, {capture, LB, binary}]) of
+    {match, [BType, BLen, BSrc, BDst, Rest]} ->
+      Type = binary_to_existing_atom(BType, utf8),
+      nl_recv_extract_helper(match, [Type, BLen, BSrc, BDst, Rest]);
+    {match, [BLen, BSrc, BDst, Rest]} ->
+      nl_recv_extract_helper(match, [notype, BLen, BSrc, BDst, Rest]);
+    nomatch -> nl_recv_extract_helper(L, T)
   end.
 
 nl_ack_extract(L, Cfg) ->
