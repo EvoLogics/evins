@@ -311,9 +311,12 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, Event),
        fsm:run_event(MM, __, {})
       ] (SM);
-    {nl, recv, _Src, _Dst, _Data} ->
+    {nl, recv, tolerant, Src, Dst, Data} ->
+      ?INFO(?ID, "Received tolerant tuple ~p~n", [Term]),
+      process_recv(SM, Term, Src, Dst, Data);
+    {nl, recv, Src, Dst, Data} ->
       ?INFO(?ID, "Received tuple ~p~n", [Term]),
-      process_recv(SM, Term);
+      process_recv(SM, Term,  Src, Dst, Data);
     {nl, error, _} when MM#mm.role == nl_impl ->
       ?INFO(?ID, "MM ~p~n", [MM#mm.role]),
       fsm:cast(SM, nl_impl, {send, {nl, error}});
@@ -477,17 +480,17 @@ decode_mux(SM, Data) ->
   Flag = num_flag(Flag_Num),
   [Flag, Rest].
 
-process_recv(SM, Term = {nl, recv, _Src, _Dst, Data}) ->
+process_recv(SM, Term, Src, Dst, Data) ->
   [Flag, Payload] = decode_mux(SM, Data),
   ?INFO(?ID, "Decode mux header ~p ~p~n", [Flag, Payload]),
-  process_recv_helper(SM, Term, Flag, Payload).
+  process_recv_helper(SM, Term, Flag, Src, Dst,Payload).
 
-process_recv_helper(SM, _Term, nl, <<"D">>) -> SM;
-process_recv_helper(SM, Term, mux, Payload) ->
-  {nl, recv, Src, Dst, _} = Term,
+process_recv_helper(SM, _, nl, _, _, <<"D">>) -> SM;
+process_recv_helper(SM, {nl,recv,tolerant,_,_,_}, mux, Src, Dst, Payload) ->
+  fsm:cast(SM, nl_impl, {send, {nl, recv, tolerant, Src, Dst, Payload}});
+process_recv_helper(SM, _, mux, Src, Dst, Payload) ->
   fsm:cast(SM, nl_impl, {send, {nl, recv, Src, Dst, Payload}});
-process_recv_helper(SM, Term, nl, Payload) ->
-  {nl, recv, Src, Dst, _} = Term,
+process_recv_helper(SM, Term, nl, Src, Dst, Payload) ->
   Burst_protocol = share:get(SM, burst_protocol),
   ProtocolMM = share:get(SM, Burst_protocol),
   case burst_nl_hf:try_extract_ack(SM, Payload) of
