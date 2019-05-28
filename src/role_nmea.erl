@@ -1060,6 +1060,11 @@ extract_nmea(Cmd, _) ->
 
 safe_fmt(Fmts,Values) ->
   lists:map(fun({_,nothing}) -> "";
+               ({[$~, $+ | Fmt],V}) ->
+                T = hd(lists:reverse(Fmt)),
+                Value = case T of $f -> float(V); _ -> V end,
+                SFmt = if V >= 0 -> [$+,$~|Fmt]; true -> [$~|Fmt] end,
+                (io_lib:format(SFmt,[Value]));
                ({Fmt,V}) ->
                 T = hd(lists:reverse(Fmt)),
                 Value = case T of $f -> float(V); _ -> V end,
@@ -1069,6 +1074,11 @@ safe_fmt(Fmts,Values) ->
 safe_fmt(Fmts, Values, Join) ->
   Z = lists:reverse(lists:zip(Fmts,Values)),
   lists:foldl(fun({_,nothing},Acc) -> [Join, "" | Acc];
+                 ({[$~, $+ | Fmt],V}, Acc) ->
+                  T = hd(lists:reverse(Fmt)),
+                  Value = case T of $f -> float(V); _ -> V end,
+                  SFmt = if V >= 0 -> [$+,$~|Fmt]; true -> [$~|Fmt] end,
+                  [Join, (io_lib:format(SFmt,[Value])) | Acc];
                  ({Fmt,V},Acc)     ->
                   T = hd(lists:reverse(Fmt)),
                   Value = case T of $f -> float(V); _ -> V end,
