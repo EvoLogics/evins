@@ -1,6 +1,6 @@
 PROJECT = inv_usbl_example
 DEPS = evins
-dep_evins = git https://github.com/okebkal/evins
+dep_evins = git https://github.com/hamer/evins
 
 CODE_LOADING_MODE = interactive
 
