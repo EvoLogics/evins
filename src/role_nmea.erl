@@ -974,6 +974,16 @@ extract_nmea(<<"SMCS">>, Params) ->
     error:_ -> {error, {parseError, smcs, Params}}
   end;
 
+extract_nmea(<<"SMCM">>, Params) ->
+  try
+    [BRoll,BPitch,BHeading,BSurge,BSway,BHeave,BRRoll,BRPitch,BRHeading,BAccX,BAccY,BAccZ] = binary:split(Params,<<",">>,[global]),
+    [Roll,Pitch,Heading,Surge,Sway,Heave,RRoll,RPitch,RHeading,AccX,AccY,AccZ] =
+        [ safe_binary_to_float(X) || X <- [BRoll,BPitch,BHeading,BSurge,BSway,BHeave,BRRoll,BRPitch,BRHeading,BAccX,BAccY,BAccZ]],
+    {nmea, {smcm, Roll, Pitch, Heading, Surge, Sway, Heave, RRoll, RPitch, RHeading, AccX, AccY, AccZ}}
+  catch
+    error:_ -> {error, {parseError, smcm, Params}}
+  end;
+
 %% $PSIMSSB,UTC,B01,A,,C,H,M,X,Y,Z,Acc,N,,
 extract_nmea(<<"SIMSSB">>, Params) ->
   try
@@ -1479,6 +1489,11 @@ build_smcs(Roll,Pitch,Heave) ->
            safe_fmt(["~.1.3f","~.1.3f","~.1.2f"],
                     [Roll,Pitch,Heave], ",")]).
 
+build_smcm(Roll, Pitch, Heading, Surge, Sway, Heave, RRoll, RPitch, RHeading, AccX, AccY, AccZ) ->
+  (["PSMCM",
+           safe_fmt(["~+.2.5f","~+.2.5f","~+.2.5f","~+.2.5f","~+.2.5f","~+.2.5f","~+.2.5f","~+.2.5f","~+.2.5f","~+.6.3f","~+.6.3f","~+.6.3f"],
+                    [Roll, Pitch, Heading, Surge, Sway, Heave, RRoll, RPitch, RHeading, AccX, AccY, AccZ], ",")]).
+
 build_htro(Pitch, Roll) ->
   PitchSign = case Pitch of P when P >= 0.0 -> "M"; _ -> "P" end,
   RollSign = case Roll of R when R >= 0.0 -> "T"; _ -> "B" end,
@@ -1583,6 +1598,8 @@ from_term_helper(Sentense) ->
       build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus);
     {smcs, Roll, Pitch, Heave} ->
       build_smcs(Roll, Pitch, Heave);
+    {smcm, Roll, Pitch, Heading, Surge, Sway, Heave, RRoll, RPitch, RHeading, AccX, AccY, AccZ} ->
+      build_smcm(Roll, Pitch, Heading, Surge, Sway, Heave, RRoll, RPitch, RHeading, AccX, AccY, AccZ);
     {htro,Pitch,Roll} ->
        build_htro(Pitch,Roll);
     {sxn,10,Tok,Roll,Pitch,Heave,UTC,nothing} ->
