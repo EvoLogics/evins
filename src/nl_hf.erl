@@ -51,6 +51,7 @@
 -export([getv/2, geta/1, replace/3, drop_postponed/2]).
 -export([add_to_paths/7, get_stable_path/4, get_stable_path/3, remove_old_paths/3, if_path_packet/1,has_path_packets/3, check_tranmission_path/2]).
 -export([check_binary/1, add_bits/1, cut_add_bits/2, cut_add_bits/1, process_async_status/1]).
+-export([set_neighbour_life/3]).
 
 set_event_params(SM, Event_Parameter) ->
   SM#sm{event_params = Event_Parameter}.
@@ -1594,6 +1595,17 @@ increase_pkgid(SM, Src, Dst) ->
   share:put(SM, {packet_id, Src, Dst}, PkgID),
   PkgID.
 
+set_neighbour_life(SM, State, A) ->
+  Time = share:get(SM, neighbour_life),
+  Neighbour_handler =
+  fun(LSM, _) when Time == inf -> LSM;
+     (LSM, init) ->
+      fsm:set_timeout(LSM, {s, Time}, {neighbour_life, A});
+     (LSM, pause)->
+      {Addr, Pause_Time} = A,
+      fsm:set_timeout(LSM, {s, Pause_Time}, {neighbour_life, Addr})
+  end,
+  Neighbour_handler(SM, State).
 
 % TODO: check backoff state
 pause_neighbours(SM, busy_online) ->
@@ -1624,8 +1636,7 @@ run_neighbours_timeouts(SM, nothing) -> SM;
 run_neighbours_timeouts(SM, []) -> SM;
 run_neighbours_timeouts(SM, [H | T]) ->
   ?INFO(?ID, "Run neighbour_life ~p ~n", [H]),
-  {A, Time} = H,
-  [fsm:set_timeout(__, {s, Time}, {neighbour_life, A}),
+  [set_neighbour_life(__, pause, H),
    run_neighbours_timeouts(__, T)
   ](SM).
 

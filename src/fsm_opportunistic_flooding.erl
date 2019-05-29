@@ -533,10 +533,9 @@ process_overheared_packet(SM, Tuple) ->
       {RSrc, RRssi, RIntegrity}
   end,
 
-  Time = share:get(SM, neighbour_life),
   NL_Src  = nl_hf:mac2nl_address(Src),
   [nl_hf:fill_statistics(__, overheared, NL_Src),
-   fsm:set_timeout(__, {s, Time}, {neighbour_life, NL_Src}),
+   nl_hf:set_neighbour_life(__, init, NL_Src),
    nl_hf:add_neighbours(__, NL_Src, {Rssi, Integrity})
   ](SM).
 
@@ -631,12 +630,11 @@ packet_handler_helper(SM, false, Channel, Tuple, _) ->
   end;
 packet_handler_helper(SM, true, Channel, Tuple, Only_combination) ->
   {NL_AT_Src, _, _, _} = Channel,
-  Time = share:get(SM, neighbour_life),
   Flag = nl_hf:getv(flag, Tuple),
   [process_package(__, Flag, Tuple),
    check_if_processed(__, Tuple, Channel, Only_combination),
    nl_hf:set_processing_time(__, received, Tuple),
-   fsm:set_timeout(__, {s, Time}, {neighbour_life, NL_AT_Src}),
+   nl_hf:set_neighbour_life(__, init, NL_AT_Src),
    nl_hf:clear_event_params(__, if_processed)
   ](SM).
 
