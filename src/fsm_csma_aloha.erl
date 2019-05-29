@@ -233,8 +233,7 @@ handle_specific_command(_, SM, _, _) -> SM.
 
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
-  ?INFO(?ID, "HANDLE EVENT  ~150p~n~150p~n", [MM, SM]),
-  ?TRACE(?ID, "~p~n", [Term]),
+  ?INFO(?ID, "HANDLE EVENT  ~150p ~p~n", [MM, Term]),
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Term of
     {timeout, answer_timeout} ->
