@@ -112,7 +112,6 @@ stop(_SM)      -> ok.
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
     ?INFO(?ID, "handle_event ~120p state ~p event ~p~n", [Term, SM#sm.state, SM#sm.event]),
-    ?INFO(?ID, "current_local_address ~p~n", [share:get(SM, local_address)]),
 
     Local_Address = share:get(SM, local_address),
     Protocol_Name = share:get(SM, protocol_name),
@@ -410,8 +409,6 @@ establish_path(SM, true, Dst, _NL) ->
   if Protocol_config#pr_conf.evo -> path_addit;
   true -> path_neighbours end,
 
-  ?INFO(?ID, "establish_path retries ~p ~p~n", [Protocol_config#pr_conf.evo, MType]),
-
   Tuple = nl_hf:prepare_path(SM, path, MType, Local_address, Dst),
   [share:put(__, waiting_path, true),
    fsm:cast(__, nl_impl, {send, {nl, path, Retries, Dst}}),
@@ -609,7 +606,6 @@ parse_packet_handler(SM, _, _, []) ->
       fsm:set_event(SM, eps)
   end;
 parse_packet_handler(SM, Adressed, Channel, [Tuple | Tail]) ->
-  ?TRACE(?ID, "Extracted message  ~p ~n", [Tuple]),
   [packet_handler_helper(__, Adressed, Channel, Tuple, false),
    parse_packet_handler(__, Adressed, Channel, Tail)
   ](SM).

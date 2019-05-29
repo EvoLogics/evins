@@ -148,9 +148,7 @@ get_timeout(SM, T) ->
   case L of
     [] -> nothing;
     Time -> [H | _] = Time,
-    C = (H - erlang:monotonic_time(micro_seconds)) / 1000000,
-    ?INFO(?ID, "TIMES ~p ~p  ~p ~n" , [T, H, C]),
-    C
+    (H - erlang:monotonic_time(micro_seconds)) / 1000000
   end.
 
 get_params_timeout(SM, Spec) ->
@@ -481,7 +479,7 @@ drop_postponed(SM, _, {[],[]}) ->
 drop_postponed(SM, Dst, Q) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
   [QID, QFlag, QDst] = getv([id, flag, dst], Q_Tuple),
-  ?INFO(?ID, "drop_postponed ~p dst ~p  ~p from Q ~p~n", [Q_Tuple, Dst, QDst, Q]),
+  ?INFO(?ID, "drop_postponed ~p dst ~p  ~p~n", [Q_Tuple, Dst, QDst]),
   if QDst == Dst ->
     Cast_handler =
     fun (LSM, data) ->
@@ -527,7 +525,6 @@ check_tranmission_path(SM, Tuple, Qname) ->
       true -> false
       end
   end, queue:to_list(Q)),
-  ?INFO(?ID, "Check in queue ~p ~p~n",  [Qname, length(Ack_paths)]),
   length(Ack_paths) > 0.
 
 head_transmission(SM) ->
@@ -553,7 +550,6 @@ pop_transmission(SM, head, Tuple) ->
   Pop_handler =
   fun(LSM) ->
     {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
-    ?TRACE(?ID, "deleted Tuple ~p from  ~p~n",[Tuple, Q]),
     [set_zero_retries(__, Q_Tuple),
      clear_sensing_timeout(__, Q_Tuple),
      share:put(__, transmission, Q_Tail)
@@ -561,7 +557,6 @@ pop_transmission(SM, head, Tuple) ->
   end,
 
   Response = is_response(SM, Head, Tuple),
-  ?TRACE(?ID, "pop_transmission head Response ~p ~p ~p~n", [Response, Head, Tuple]),
   if Response -> Pop_handler(SM);
   true ->
     clear_sensing_timeout(SM, Tuple)
@@ -569,23 +564,19 @@ pop_transmission(SM, head, Tuple) ->
 
 pop_transmission(SM, Tuple) ->
   Q = share:get(SM, transmission),
-  ?INFO(?ID, ">>>>>>>>>>> pop_transmission ~p ~p~n", [Tuple, Q]),
   pop_tq_helper(SM, Tuple, Q, queue:new()).
 
 pop_tq_helper(SM, Tuple, {[],[]}, NQ = {[],[]}) ->
-  ?TRACE(?ID, "Current transmission queue ~p~n", [NQ]),
   [share:put(__, transmission, NQ),
    set_zero_retries(__, Tuple),
    clear_sensing_timeout(__, Tuple)
   ](SM);
 pop_tq_helper(SM, _Tuple, {[],[]}, NQ) ->
-  ?TRACE(?ID, "Current transmission queue ~p~n", [NQ]),
   share:put(SM, transmission, NQ);
 pop_tq_helper(SM, Tuple, Q, NQ) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
   Pop_handler =
   fun (LSM) ->
-    ?TRACE(?ID, "deleted Tuple ~p from  ~p~n",[Q_Tuple, Q]),
     [set_zero_retries(__, Tuple),
      set_zero_retries(__, Q_Tuple),
      clear_sensing_timeout(__, Q_Tuple),
@@ -595,8 +586,6 @@ pop_tq_helper(SM, Tuple, Q, NQ) ->
   end,
 
   Response = is_response(SM, Q_Tuple, Tuple),
-  ?TRACE(?ID, "pop_transmission Response ~p ~p ~p~n", [Response, Q_Tuple, Tuple]),
-
   if Response ->
     Pop_handler(SM);
   true ->
@@ -604,7 +593,6 @@ pop_tq_helper(SM, Tuple, Q, NQ) ->
   end.
 
 clear_sensing_timeout(SM, Tuple) ->
-  ?TRACE(?ID, "Clear sensing timeout ~p in ~p~n",[Tuple, SM#sm.timeouts]),
   TRefList =
   filter(
    fun({E, TRef}) ->
@@ -618,7 +606,6 @@ clear_sensing_timeout(SM, Tuple) ->
 
       end
   end, SM#sm.timeouts),
-  ?TRACE(?ID, "Cleared ~p~n",[TRefList]),
   SM#sm{timeouts = TRefList}.
 
 set_zero_retries(SM, Tuple) ->
@@ -626,14 +613,12 @@ set_zero_retries(SM, Tuple) ->
   zero_rq_retries(SM, Tuple, Q, queue:new()).
 
 zero_rq_retries(SM, _Tuple, {[],[]}, NQ) ->
-  ?TRACE(?ID, "current retry queue ~p~n",[NQ]),
   share:put(SM, retriesq, NQ);
 zero_rq_retries(SM, Tuple, Q, NQ) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
   {_Retries, QT} = Q_Tuple,
   Same = is_same(SM, QT, Tuple),
   Response = is_response(SM, QT, Tuple),
-  ?TRACE(?ID, "zero_rq_retries Response ~p Same ~p ~p ~p~n", [Response, Same, QT, Tuple]),
 
   case Same of
     true ->
@@ -649,7 +634,6 @@ zero_rq_retries(SM, Tuple, Q, NQ) ->
 
 decrease_retries(SM, Tuple) ->
   Q = share:get(SM, retriesq),
-  ?TRACE(?ID, "Change local tries of packet ~p~n",[Tuple]),
   decrease_rq_helper(SM, Tuple, not_inside, Q, queue:new()).
 
 decrease_rq_helper(SM, Tuple, not_inside, {[],[]}, {[],[]}) ->
@@ -678,7 +662,6 @@ decrease_rq_helper(SM, Tuple, Inside, Q, NQ) ->
   end,
 
   Same = is_same(SM, QT, Tuple),
-  ?TRACE(?ID, "decrease_rq_helper ~p ~p ~p~n", [Same, QT, Tuple]),
   if Same -> Pop_queue(SM, Retries);
   true ->
     decrease_rq_helper(SM, Tuple, Inside, Q_Tail, queue_push(NQ, Q_Tuple, ?RQ_SIZE))
@@ -686,7 +669,7 @@ decrease_rq_helper(SM, Tuple, Inside, Q, NQ) ->
 
 decrease_TTL(SM) ->
   Q = share:get(SM, transmission),
-  ?INFO(?ID, "decrease TTL for every packet in the queue ~p ~n",[Q]),
+  ?INFO(?ID, "decrease TTL for every packet in the queue~n",[]),
   decrease_TTL_tq(SM, Q, queue:new()).
 
 decrease_TTL_tq(SM, {[],[]}, NQ) ->
@@ -741,9 +724,6 @@ exists_received(SM, Tuple) ->
         if R -> {true, Q_Tuple}; true -> false end
       end, LQ)) > 0,
 
-  ?TRACE(?ID, "exists_received Dst : ~p Same: ~p Response: ~p : ~p ~p~n",
-    [Reached, Same, Response, Tuple, Q]),
-
   case Reached of
     true -> exists_received({true, 0});
     _ when Same ->
@@ -765,7 +745,6 @@ update_rq_helper(SM, Tuple, Inside, Q) ->
   {{value, Q_Tuple}, Q_Tail} = queue:out(Q),
 
   Same = is_same(SM, Q_Tuple, Tuple),
-  %?TRACE(?ID, "update_received Same ~p ~p ~p~n", [Same, Q_Tuple, Tuple]),
   if Same ->
     update_rq_helper(SM, Tuple, inside, Q_Tail);
   true ->
@@ -785,7 +764,6 @@ update_TTL_rq_helper(SM, Tuple, Q, NQ) ->
   QTTL = getv(ttl, Q_Tuple),
 
   Same = is_same(SM, Q_Tuple, Tuple),
-  ?TRACE(?ID, "update_received_TTL head Same ~p ~p ~p ~p ~p~n", [Same, Q_Tuple, Tuple, TTL, QTTL]),
   if Same and (TTL < QTTL) ->
     NT = replace(ttl, TTL, Q_Tuple),
     update_TTL_rq_helper(SM, Tuple, Q_Tail, queue:in(NT, NQ));
@@ -849,7 +827,6 @@ update_path(SM, Tuple) when is_tuple(Tuple) ->
   replace(path, New_path, Tuple);
 update_path(SM, Path) ->
   Local_address = share:get(SM, local_address),
-  ?TRACE(?ID, "add ~p to path ~p~n", [Local_address, Path]),
   Path_handler =
   fun (true) -> strip_path(Local_address, Path, Path);
       (false) -> lists:reverse([Local_address | lists:reverse(Path)])
@@ -949,7 +926,6 @@ fill_protocol_info_header(_, _, _, MType, {_, _, _, _, _, Transmit_Len, Data}) -
 nl2at(SM, IDst, Tuple) when is_tuple(Tuple) ->
   PID = share:get(SM, pid),
   NLPPid = ?PROTOCOL_NL_PID(share:get(SM, protocol_name)),
-  ?WARNING(?ID, ">>>>>>>> NLPPid: ~p~n", [NLPPid]),
   Payload = getv(payload, Tuple),
   [AT_Payload, L] = create_payload_nl_header(SM, NLPPid, true, Tuple),
   ?INFO(?ID, "Sent tuples : ~p~n", [L]),
@@ -973,8 +949,7 @@ get_at_dst(Tuple) ->
 create_nl_at_command(SM, NL) ->
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
-  Local_address = share:get(SM, local_address),
-
+  
   [PkgID, Src, Dst] = getv([id, src, dst], NL),
   Route_Addr = get_routing_address(SM, Dst),
   MAC_Route_Addr = nl2mac_address(Route_Addr),
@@ -989,8 +964,7 @@ create_nl_at_command(SM, NL) ->
         ?ERROR(?ID, "Message could not be sent, legnth > ~p~n", [?MAX_IM_LEN]),
         error;
       true ->
-        Current_RTT = {rtt, Local_address, Dst},
-        ?TRACE(?ID, "Current RTT ~p sending AT command ~p~n", [Current_RTT, AT]),
+        %Current_RTT = {rtt, Local_address, Dst},
         fill_dets(SM, PkgID, Src, Dst),
         [AT, L]
       end
@@ -1195,8 +1169,6 @@ create_payload_nl_header(SM, Pid, Allowed, Tuple) ->
   Data_to_Send =
   if not Is_binary ->
     Add = add_bits(Tmp_Data),
-    ?INFO(?ID, "Add ~p~n", [Add]),
-
     <<B_Pid/bitstring, B_Flag/bitstring, B_PkgID/bitstring, B_TTL/bitstring, B_Src/bitstring,
       B_Dst/bitstring, 0:Add, Coded_Payload/binary>>;
   true ->
@@ -1244,7 +1216,6 @@ cut_add_bits(Payload) ->
 
 try_combine_ack(SM, Pid, Tuple, Data) ->
   Q = share:get(SM, transmission),
-  ?INFO(?ID, "try_combine_ack ~p~n", [Q]),
   Flag = getv(flag, Tuple),
   Add_data = ((Flag == ack) or (Flag == dst_reached)),
   find_acks(SM, Pid, Tuple, Q, Data, [Tuple], Add_data).
@@ -1435,8 +1406,7 @@ extract_path_neighbours_header(SM, Payload) ->
   ?TRACE(?ID, "extract path neighbours BType ~p  Path ~p Neighbours ~p Len ~p Rest ~p Additional ~p~n",
         [BType, Path, Neighbours, Len, Rest, Additional]),
   Rest_payload = cut_add_bits(Rest),
-  ?TRACE(?ID, "extract path neighbours Rest_payload ~p~n", [Rest_payload]),
-
+  
   if Len > 0 ->
     <<Path_payload:Len/binary, Other_msg/binary>> = Rest_payload,
     [Path, 0, Integrity, Min_integrity, Neighbours, Path_payload, Other_msg];
@@ -1481,7 +1451,6 @@ extract_payload(SM, Payload) ->
   <<Type:CBitsTypeMsg, Len:CBitsMaxLenData, Rest/bitstring>> = Payload,
 
   MType = ?NUM2TYPEMSG(Type),
-  ?TRACE(?ID, "extract_payload message type ~p ~n", [MType]),
   [Path, Rssi, Integrity, Min_integrity, Neighbours, Parsed_data, Other_msg] =
   case MType of
     path_neighbours ->
@@ -1490,7 +1459,6 @@ extract_payload(SM, Payload) ->
       extract_path_evo_header(SM, Payload);
     path_data ->
       {P, Path_payload} = extract_header(path, CBitsLenPath, CBitsLenPath, Rest),
-      ?TRACE(?ID, "extract_payload message type ~p ~p ~n", [P, Path_payload]),
       [Data, Rest_payload] = decode_payload(SM, MType, Len, 0, Path_payload),
       [P, 0, 0, 0, [], Data, Rest_payload];
     data ->
@@ -1628,14 +1596,12 @@ increase_pkgid(SM, Src, Dst) ->
 
 
 % TODO: check backoff state
-pause_neighbours(SM, State = busy_online) ->
-  ?INFO(?ID, "Pause neighbours in state ~p ~n", [State]),
+pause_neighbours(SM, busy_online) ->
   Neighbours = share:get(SM, nothing, current_neighbours, []),
   Times = env:get(SM, neighbours_timeout),
   NT = if Times == nothing -> []; true -> Times end,
   pause_neighbours_helper(SM, Neighbours, NT, []);
-pause_neighbours(SM, State) ->
-  ?INFO(?ID, "Pause neighbours in state ~p ~n", [State]),
+pause_neighbours(SM, _State) ->
   L = env:get(SM, neighbours_timeout),
   [env:put(__, neighbours_timeout, nothing),
    run_neighbours_timeouts(__, L)
@@ -1852,8 +1818,7 @@ update_routing(SM, destination, [H | T]) ->
 
 update_routing_helper(SM, _, [], _) ->
   SM;
-update_routing_helper(SM, Neighbour, L = [H | T], Hops) ->
-  ?TRACE(?ID, "update_routing_helper ~p in ~p~n", [Neighbour, L]),
+update_routing_helper(SM, Neighbour, [H | T], Hops) ->
   [add_to_routing(__, {H, Neighbour, Hops + 1}),
    update_routing_helper(__, Neighbour, T, Hops + 1)
   ](SM).
@@ -1868,7 +1833,6 @@ replace_rotuing(Tuple = {From, _, Hops}, Routing_table) ->
 
 add_to_routing(SM, Tuple = {From, _, _}) ->
   Routing_table = share:get(SM, routing_table),
-  ?TRACE(?ID, "add_to_routing ~p to ~p ~n", [Tuple, Routing_table]),
   Updated =
   case Routing_table of
     ?ADDRESS_MAX ->
@@ -1880,7 +1844,7 @@ add_to_routing(SM, Tuple = {From, _, _}) ->
       end
   end,
 
-  ?INFO(?ID, "Updated routing ~p~n", [Updated]),
+  ?INFO(?ID, "Routing_table ~p Updated routing ~p~n", [Routing_table, Updated]),
   share:put(SM, routing_table, Updated).
 
 routing_to_list(SM) ->
