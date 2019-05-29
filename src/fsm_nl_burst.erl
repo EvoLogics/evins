@@ -129,9 +129,6 @@ handle_event(MM, SM, Term) ->
   State = SM#sm.state,
   Protocol_Name = share:get(SM, nl_protocol),
 
-  BD = share:get(SM, nothing, burst_data_buffer, queue:new()),
-  if BD == {[],[]} -> ?INFO(?ID, "EMPTY BUFFER!~n", []); true -> nothing end,
-
   case Term of
     {timeout, answer_timeout} ->
       fsm:cast(SM, nl_impl, {send, {nl, error, <<"ANSWER TIMEOUT">>}});
@@ -333,13 +330,11 @@ handle_event(MM, SM, Term) ->
       share:put(SM, bitrate, Bitrate);
     {async, {pid, Pid}, Recv_Tuple =
                           {recv, _, _, Local_address , _,  _,  _,  _,  _, P}} ->
-      ?INFO(?ID, "Received: ~p~n", [Recv_Tuple]),
       [process_received(__, Recv_Tuple),
        fsm:set_event(__, recv_data),
        fsm:run_event(MM, __, P)
       ](SM);
     {async, {pid, _Pid}, Recv_Tuple} ->
-      ?INFO(?ID, "Received: ~p~n", [Recv_Tuple]),
       [process_received(__, Recv_Tuple),
        fsm:run_event(MM, __, {})
       ](SM);
@@ -582,7 +577,7 @@ handle_transmit(_MM, #sm{event = initiation_listen} = SM, _Term) ->
          fsm:set_event(__, eps)
         ](LSM)
   end,
-  ?TRACE(?ID, "Try to send packet Packet ~120p Tail ~p ~n", [Packet, Tail]),
+  ?TRACE(?ID, "Try to send packet Packet ~120p~n", [Packet]),
   [nl_hf:update_states(__),
    Packet_handler(__)
   ](SM);
