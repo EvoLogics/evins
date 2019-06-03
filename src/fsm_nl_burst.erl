@@ -316,8 +316,8 @@ handle_event(MM, SM, Term) ->
     {async, Notification = {status, _, _}} ->
       Channel_state = nl_hf:process_async_status(Notification),
       Busy_handler =
-      fun (LSM, initiation_listen) when SM#sm.state == busy;
-                                        SM#sm.state == idle->
+      fun (LSM, initiation_listen) when LSM#sm.state == busy;
+                                        LSM#sm.state == idle->
            fsm:set_event(LSM, initiation_listen);
           (LSM, _) -> LSM
       end,
@@ -463,7 +463,7 @@ handle_sensing(_MM, #sm{event = pick} = SM, Term) ->
         ](LSM)
   end,
   [nl_hf:update_states(__),
-   Queue_handler(SM, queue:is_empty(Q))
+   Queue_handler(__, queue:is_empty(Q))
   ](SM);
 handle_sensing(_MM, #sm{event = Ev} = SM, _) when (Ev == try_transmit) or
                                                   (Ev == routing_updated) or
@@ -521,7 +521,7 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
 
   Wait_async_handler =
   fun(LSM, Src, Dst, PC) when Src == Local_address ->
-      Wait_ack = share:get(SM, wait_ack),
+      Wait_ack = share:get(LSM, wait_ack),
       fsm:set_timeout(LSM, {s, Wait_ack}, {wait_nl_async, Dst, PC});
      (LSM, _, _, _) -> LSM
   end,
@@ -536,7 +536,7 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
       AT = {at, {pid, Pid}, "*SEND", Route_Addr, Data},
       [P, NTail] = Packet_handler(Rest),
       NT = {send_params, {Whole_len, P, NTail}},
-      PCS = share:get(SM, nothing, wait_async_pcs, []),
+      PCS = share:get(LSM, nothing, wait_async_pcs, []),
       [burst_nl_hf:update_statistics_tolerant(__, time, T),
        env:put(__, status, Status),
        share:put(__, wait_async_pcs, [PC | PCS]),
@@ -881,7 +881,7 @@ send_acks_helper(SM, Src, Acks) ->
   lists:reverse(
    lists:foldl(
     fun(X, A) when length(A) =< Max -> [X | A];
-		   (_X, A) -> A end,
+       (_X, A) -> A end,
   [], Acks)),
 
   ?INFO(?ID, "Next acks ~w~n", [NA]),
