@@ -197,7 +197,9 @@ handle_event(MM, SM, Term) ->
       {async, Notification} when Debug == on ->
         process_async(SM, Notification);
       {sync, _, _} ->
-        fsm:clear_timeout(SM, answer_timeout);
+        [fsm:clear_timeout(__, answer_timeout),
+         fsm:run_event(MM, __, Term)
+        ](SM);
       {nl, send, Local_Address, _Payload} ->
         fsm:cast(SM, nl_impl, {send, {nl, send, error}});
       {nl, send, error} ->
@@ -216,12 +218,14 @@ handle_event(MM, SM, Term) ->
          fsm:run_event(MM, __, {})
         ](SM);
       {nl, clear, statistics, data} ->
-        share:put(SM, statistics_queue, queue:new()),
-        share:put(SM, statistics_neighbours, queue:new()),
-        fsm:cast(SM, nl_impl, {send, {nl, statistics, data, empty}});
+        [share:put(__, statistics_queue, queue:new()),
+         share:put(__, statistics_neighbours, queue:new()),
+         fsm:cast(__, nl_impl, {send, {nl, statistics, data, empty}})
+        ](SM);
       {nl, set, debug, ON} ->
-        share:put(SM, debug, ON),
-        fsm:cast(SM, nl_impl, {send, {nl, debug, ok}});
+        [share:put(__, debug, ON),
+         fsm:cast(__, nl_impl, {send, {nl, debug, ok}})
+        ](SM);
       {nl, set, address, Address} ->
         nl_hf:process_set_command(SM, {address, Address});
       {nl, set, neighbours, Neighbours} ->
@@ -281,8 +285,9 @@ init_flood(SM) ->
 %%------------------------------------------ Handle functions -----------------------------------------------------
 handle_idle(_MM, SM, Term) ->
   ?INFO(?ID, "idle state ~120p~n", [Term]),
-  nl_hf:update_states(SM),
-  fsm:set_event(SM, eps).
+  [nl_hf:update_states(__),
+   fsm:set_event(__, eps)
+  ](SM).
 
 % check if pf and path is available
 % if not available -> try_transmit path message, and than data
@@ -293,7 +298,6 @@ handle_transmit(_MM, SM, Term) ->
   Waiting_path = share:get(SM, nothing, waiting_path, false),
   Protocol_Name = share:get(SM, protocol_name),
   Protocol_Config = share:get(SM, protocol_config, Protocol_Name),
-  nl_hf:update_states(SM),
   Head = nl_hf:head_transmission(SM),
 
   Path_exist =
@@ -312,46 +316,57 @@ handle_transmit(_MM, SM, Term) ->
 
   Is_path = nl_hf:if_path_packet(Head),
   ?INFO(?ID, "transmit state Waiting_path ~120p ~p~n", [Waiting_path, Path_needed]),
-  case Path_needed of
-    true ->
-      establish_path(SM, Head);
-    false when Waiting_path, not Is_path ->
-      fsm:set_event(SM, path);
-    false ->
-      [fsm:clear_timeout(__, {path_establish, nl_hf:getv(dst, Head), nl_hf:getv(src, Head)}),
-       try_transmit(__, Head)
-      ] (SM)
-  end.
+  Path_handler =
+  fun (true, LSM) ->
+        establish_path(LSM, Head);
+      (false, LSM) when Waiting_path, not Is_path ->
+        fsm:set_event(LSM, path);
+      (false, LSM) ->
+        [fsm:clear_timeout(__, {path_establish, nl_hf:getv(dst, Head), nl_hf:getv(src, Head)}),
+         try_transmit(__, Head)
+        ](LSM)
+    end,
+    [nl_hf:update_states(__),
+     Path_handler(Path_needed, __)
+    ](SM).
 
 handle_sensing(_MM, SM, _Term) ->
   ?INFO(?ID, "sensing state ~120p~n", [SM#sm.event]),
-  nl_hf:update_states(SM),
-  case SM#sm.event of
-    transmitted ->
-      maybe_transmit_next(SM);
-    relay ->
-      maybe_pick(SM);
-    _ ->
-      fsm:set_event(SM, eps)
-  end.
+  State_handler =
+  fun (transmitted, LSM) ->
+        maybe_transmit_next(LSM);
+      (relay, LSM) ->
+        maybe_pick(LSM);
+      (_, LSM) ->
+        fsm:set_event(LSM, eps)
+  end,
+
+  Ev = SM#sm.event,
+  [nl_hf:update_states(__),
+   State_handler(Ev, __)
+  ](SM).
+  
 
 handle_collision(_MM, SM, _Term) ->
   ?INFO(?ID, "collision state ~p~n", [SM#sm.event]),
-  nl_hf:update_states(SM),
-  case SM#sm.event of
-    initiation_listen ->
-      maybe_pick(SM);
-    sensing_timeout ->
+  State_handler =
+  fun(initiation_listen, LSM) ->
+      maybe_pick(LSM);
+     (sensing_timeout, LSM) ->
       % 1. decreace TTL for every packet in the queue
       % 2. delete packets withh TTL 0 or < 0
       % 3. check, if queue is empty -> idle
       % 4. check, if queue is not empty -> pick -> transmit the head of queue
       [nl_hf:decrease_TTL(__),
        maybe_pick(__)
-      ](SM);
-    _ ->
-      fsm:set_event(SM, eps)
-  end.
+      ](LSM);
+     (_, LSM) ->
+      fsm:set_event(LSM, eps)
+  end,
+  Ev = SM#sm.event,
+  [nl_hf:update_states(__),
+   State_handler(Ev, __)
+  ](SM).
 
 -spec handle_alarm(any(), any(), any()) -> no_return().
 handle_alarm(_MM, SM, _Term) ->

@@ -2042,7 +2042,7 @@ process_get_command(SM, Command) ->
   Statistics = share:get(SM, statistics_queue),
   Statistics_Empty = queue:is_empty(Statistics),
 
-  Cast =
+  C =
   case Command of
     protocols ->
       {nl, Command, ?LIST_ALL_PROTOCOLS};
@@ -2115,12 +2115,13 @@ process_get_command(SM, Command) ->
     {statistics, data} ->
       {nl, statistics, data, empty};
     {delete, neighbour, Address} ->
-      delete_neighbour(SM, Address),
-      {nl, neighbour, ok};
+      SM1 = delete_neighbour(SM, Address),
+      [SM1, {nl, neighbour, ok}];
     _ ->
       {nl, error}
   end,
-  fsm:cast(SM, nl_impl, {send, Cast}).
+  [PSM, Cast] = if is_list(C) -> C; true -> [SM, C] end,
+  fsm:cast(PSM, nl_impl, {send, Cast}).
 %-------------------------------------------------------------
 process_async_status({status, Status, Reason}) ->
   case Status of
