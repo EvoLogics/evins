@@ -440,7 +440,7 @@ establish_path(SM, false, _Dst, NL) ->
 try_transmit(SM, empty) ->
   fsm:set_event(SM, transmitted);
 try_transmit(SM, Head) ->
-  ?INFO(?ID, "Try send message: head item ~p~n", [Head]),
+  ?INFO(?ID, "Try send message: head item ~p State ~p~n", [Head, env:get(SM, channel_state)]),
   [AT, L] = nl_hf:create_nl_at_command(SM, Head),
   try_transmit(SM, AT, L, Head).
 
@@ -450,9 +450,13 @@ try_transmit(#sm{env = #{channel_state := busy_backoff}} = SM, _AT, _L, _Head) -
   ?INFO(?ID, "NL in backoff state ~n", []),
   fsm:set_event(SM, wait);
 try_transmit(SM, AT, L, Head) ->
+  Sensing = nl_hf:rand_float(SM, tmo_sensing),
   Transmission_handler =
   fun(LSM, blocked) ->
-      fsm:set_event(LSM, wait);
+      ?INFO(?ID, "Transmission_handler blocked~n", []),
+      [fsm:set_timeout(__, {ms, Sensing}, {sensing_timeout, Head}),
+       fsm:set_event(__, wait)
+      ](LSM);
      (LSM, ok) ->
       ?INFO(?ID, "Transmit tuples ~p~n", [L]),
       [fsm:set_event(__, eps),
