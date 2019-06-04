@@ -191,6 +191,33 @@ extract_nmea(<<"GGA">>, Params) ->
     error:_ -> {error, {parseError, gga, Params}}
   end;
 
+%% llll.ll,a,yyyyy.yy,a,hhmmss.ss,A,a
+%% 1    = Latitude
+%% 2    = N or S
+%% 3    = Longitude
+%% 4    = E or W
+%% 5    = UTC of Position
+%% 6    = GPS quality indicator (0=invalid; 1=GPS fix; 2=Diff. GPS fix)
+%% 7    = Status
+%% 8    = Mode
+extract_nmea(<<"GLL">>, Params) ->
+  try
+    [BLat,BN,BLon,BE,BUTC,BStatus,BMode] = binary:split(Params,<<",">>,[global]),
+    [UTC, Lat, Lon] = extract_geodata(BUTC, BLat, BN, BLon, BE),
+    Status = case BStatus of <<"A">> -> active; _ -> void end,
+    Mode = case BMode of
+                <<"A">> -> auto;
+                <<"D">> -> differential;
+                <<"E">> -> estimated;
+                <<"M">> -> manual;
+                <<"S">> -> simulated;
+                _ -> none
+            end,
+    {nmea, {gll,Lat,Lon,UTC,Status,Mode}}
+  catch
+    error:_ -> {error, {parseError, gga, Params}}
+  end;
+
 %% $--ZDA,hhmmss.ss,xx,xx,xxxx,xx,xx
 %% hhmmss.ss = UTC
 %% xx = Day, 01 to 31
@@ -1151,6 +1178,22 @@ build_gga(UTC,Lat,Lon,Q,Sat,HDil,Alt,Geoid,Age,ID) ->
                    [Q,Sat,HDil,Alt,"M",Geoid,"M",Age,ID],","),
   (["GPGGA",SUTC,SLat,SLon,SRest]).
 
+%% llll.ll,a,yyyyy.yy,a,hhmmss.ss,A,a
+build_gll(Lat,Lon,UTC,Status,Mode) ->
+  SUTC = utc_format(UTC),
+  SLat = lat_format(Lat),
+  SLon = lon_format(Lon),
+  SStatus = case Status of active -> "A"; _ -> "V" end,
+  SMode = case Mode of
+              auto -> "A";
+              differential -> "D";
+              estimated -> "E";
+              manual -> "M";
+              simulated -> "S";
+              _ -> "N"
+          end,
+  (["GPGLL",SLat,SLon,SUTC,SStatus,SMode]).
+
 build_evolbl(Type,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure) ->
   S = safe_fmt(["~s","~s","~B","~B","~.7.0f","~.7.0f","~.2.0f","~.2.0f"],
                [Type,"r",Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure],","),
@@ -1548,6 +1591,8 @@ from_term_helper(Sentense) ->
       build_gga(UTC,Lat,Lon,Q,Sat,HDil,Alt,Geoid,Age,ID);
     {zda,UTC,DD,MM,YY,Z1,Z2} ->
       build_zda(UTC,DD,MM,YY,Z1,Z2);
+    {gll,Lat,Lon,UTC,Status,Mode} ->
+      build_gll(Lat,Lon,UTC,Status,Mode);
     {evolbl,Type,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure} ->
       build_evolbl(Type,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure);
     {evolbp,UTC,Basenodes,Address,Status,Lat_rad,Lon_rad,Alt,Pressure,SMean,Std} ->
