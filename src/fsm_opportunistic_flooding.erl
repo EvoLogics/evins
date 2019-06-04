@@ -446,22 +446,22 @@ try_transmit(SM, Head) ->
 
 try_transmit(SM, error, _, _) ->
   fsm:set_event(SM, transmitted);
-try_transmit(SM, AT, L, Head) ->
+try_transmit(SM, _AT, _L, _Head) ->
+  ?INFO(?ID, "NL in backoff state ~n", []),
+  fsm:set_event(SM, wait);
+try_transmit(#sm{env = #{channel_state := busy_backoff}} = SM, AT, L, Head) ->
   Transmission_handler =
-  fun(#sm{env = #{channel_state := busy_backoff}} = LSM, _) ->
-      ?INFO(?ID, "NL in backoff state ~n", []),
-      fsm:set_event(LSM, wait);
-     (LSM, blocked) ->
+  fun(LSM, blocked) ->
       fsm:set_event(LSM, wait);
      (LSM, ok) ->
       ?INFO(?ID, "Transmit tuples ~p~n", [L]),
-      transmit_combined(LSM, AT, Head, lists:reverse(L), 0)
+      [fsm:set_event(__, eps),
+       transmit_combined(__, AT, Head, lists:reverse(L), 0)
+      ] (LSM)
   end,
 
   ?INFO(?ID, "Channel_state ~p~n", [env:get(SM, channel_state)]),
-  [fsm:set_event(__, eps),
-   fsm:maybe_send_at_command(__, AT, Transmission_handler)
-  ](SM).
+  fsm:maybe_send_at_command(SM, AT, Transmission_handler).
 
 transmit_combined(SM, _, Head, [], _) ->
   Sensing = nl_hf:rand_float(SM, tmo_sensing),
