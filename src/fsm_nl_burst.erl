@@ -288,23 +288,7 @@ handle_event(MM, SM, Term) ->
        process_pc(__, PC),
        fsm:run_event(MM, __, {})
       ](SM);
-    {sync, "*SEND", {error, "ERROR CONNECTION CLOSED"}} ->
-      PCS = share:get(SM, nothing, wait_async_pcs, []),
-      PC_handler =
-      fun (LSM, []) -> LSM;
-          (LSM, [PC | _]) -> burst_nl_hf:failed_pc(LSM, PC)
-      end,
-      [PC_handler(__, PCS),
-       fsm:run_event(MM, __, {})
-      ](SM);
-    {sync,"*SEND",{error, _}} ->
-      [share:put(__, wait_sync, false),
-       set_timeout(__, {s, 1}, check_state),
-       fsm:clear_timeout(__, answer_timeout),
-       fsm:set_event(__, busy_online),
-       fsm:run_event(MM, __, {})
-      ](SM);
-    {sync,"*SEND", {busy, _}} ->
+    {sync,"*SEND",{R, _}} when R == error; R == busy ->
       PCS = share:get(SM, nothing, wait_async_pcs, []),
       PC_handler =
       fun (LSM, []) -> LSM;
@@ -312,8 +296,8 @@ handle_event(MM, SM, Term) ->
       end,
       ?INFO(?ID, "PCS ~w~n", [share:get(SM, wait_async_pcs)]),
       [PC_handler(__, PCS),
-       fsm:clear_timeout(__, answer_timeout),
        set_timeout(__, {s, 1}, check_state),
+       fsm:clear_timeout(__, answer_timeout),
        fsm:set_event(__, busy_online),
        fsm:run_event(MM, __, {})
       ](SM);
