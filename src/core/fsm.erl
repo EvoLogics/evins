@@ -76,15 +76,15 @@ init(#sm{module = Module} = SM) ->
   {ok, run_event(nothing, SMi#sm{event = Init_event, final = Finals}, nothing)}.
 
 handle_call(Request, From, SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {Request, From}}}),
+  %% gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {Request, From}}}),
   {noreply, SM}.
 
 handle_cast({chan, nothing, Term}, #sm{module = Module} = SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, nothing, Term}}}),
+  %% gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, nothing, Term}}}),
   handle_event(Module, nothing, SM, Term);
 
 handle_cast({chan, MM, Term}, #sm{module = Module} = SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, MM#mm.role_id, Term}}}),
+  %% gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, MM#mm.role_id, Term}}}),
   handle_event(Module, MM, SM, Term);
 
 handle_cast({send_error, MM, Reason}, #sm{module = Module} = SM) ->
@@ -119,7 +119,7 @@ handle_cast({role, {_,Role_ID,_,_,_} = Item}, #sm{roles = Roles} = SM) ->
   {noreply, SM#sm{roles = [Item | Roles]}};
 
 handle_cast(Request, SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {unhandled_cast, Request}}}),
+  %% gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {unhandled_cast, Request}}}),
   {stop, Request, SM}.
 
 handle_info({timeout,E}, #sm{module = Module} = SM) ->
@@ -304,6 +304,6 @@ role_available(#sm{roles = Roles}, Target_role) ->
   end.
 
 cast_helper(Target, Message) ->
-  gen_event:notify(error_logger, {fsm_cast, self(), {Target, Message}}),
+  %% gen_event:notify(error_logger, {fsm_cast, self(), {Target, Message}}),
   gen_server:cast(Target, {self(), Message}).
 

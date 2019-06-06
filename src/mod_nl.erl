@@ -108,7 +108,10 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
     DetsName = lists:flatten([Share_file_path,"/","share_file_",integer_to_list(La)]),
     Roles = fsm_worker:role_info(Role_IDs, [at, at_impl, nl, nl_impl]),
     {ok, Ref} = dets:open_file(DetsName,[]),
-    [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, dets_share = Ref, module = SMN}]
+    Logger = case lists:keyfind(logger, 1, ArgS) of
+               {logger,L} -> L; _ -> nothing
+             end,
+    [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, dets_share = Ref, module = SMN, logger = Logger}]
   end.
 %%-------------------------------------- Parse config file ---------------------------------
 parse_conf(Mod_ID, ArgS, Share) ->

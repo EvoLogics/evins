@@ -39,7 +39,10 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   parse_conf(Mod_ID, ArgS, Share),
   Roles = fsm_worker:role_info(Role_IDs, [at, nl_impl]),
-  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, module = fsm_nl_burst}].
+  Logger = case lists:keyfind(logger, 1, ArgS) of
+             {logger,L} -> L; _ -> nothing
+           end,
+  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, logger = Logger, module = fsm_nl_burst}].
 
 
 parse_conf(Mod_ID, ArgS, Share) ->
@@ -67,7 +70,7 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {wait_ack, Wait_ack},
                       {send_ack_tmo, Send_ack},
                       {max_burst_len, Max_burst_len},
-		                  {tmo_transmit,   {Tmo_start, Tmo_end} },
+                      {tmo_transmit,   {Tmo_start, Tmo_end} },
                       {update_retries, Update_retries}]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]).
