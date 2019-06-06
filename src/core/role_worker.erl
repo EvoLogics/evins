@@ -302,7 +302,7 @@ conditional_cast(FSMs, _, Term) ->
   broadcast(FSMs, Term).
 
 handle_call(Request, From, #ifstate{id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
+  %% gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
   {noreply, State}.
 
 handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, cfg = Cfg, mm = #mm{iface = {cowboy,_,_}}} = State) ->
@@ -403,7 +403,7 @@ handle_cast(tcp_close, #ifstate{id = ID, socket = Socket} = State) ->
   {noreply, State};
 
 handle_cast(Request, #ifstate{id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, Request}}),
+  %% gen_event:notify(error_logger, {fsm_core, self(), {ID, Request}}),
   {stop, Request, State}.
 
 handle_info({inet_async, LSock, Ref, {ok, NewCliSocket}},
@@ -488,7 +488,7 @@ handle_info({tcp_closed, _}, #ifstate{id = ID, fsm_pids = FSMs, type = server, m
   {noreply, State#ifstate{socket = nothing}};
 
 handle_info({http, _Socket, Request}, #ifstate{id = ID, fsm_pids = FSMs, cfg = Cfg, type = server, mm = MM} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {http_request, Request}}}),
+  %% gen_event:notify(error_logger, {fsm_core, self(), {ID, {http_request, Request}}}),
   conditional_cast(FSMs, Cfg, {chan, MM, Request}),
   {noreply, State};
 

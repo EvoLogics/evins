@@ -259,11 +259,11 @@ handle_event(MM, SM, Term) ->
         [nl | _] ->
           fsm:cast(SM, nl_impl, {send, {nl, error}});
         _ ->
-          ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
+          ?TRACE(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
           SM
       end;
       UUg ->
-        ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
+        ?TRACE(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
         SM
     end.
 
