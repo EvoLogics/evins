@@ -288,14 +288,25 @@ handle_event(MM, SM, Term) ->
        process_pc(__, PC),
        fsm:run_event(MM, __, {})
       ](SM);
-    {sync,"*SEND",{R, _}} when R == error; R == busy ->
+    {sync,"*SEND",{R, Reason}} when R == error; R == busy ->
       PCS = share:get(SM, nothing, wait_async_pcs, []),
       PC_handler =
       fun (LSM, []) -> LSM;
           (LSM, [PC | _]) -> burst_nl_hf:failed_pc(LSM, PC)
       end,
+      Buffers_handler =
+        fun(LSM) ->
+            case Reason of
+              "BUFFERS ARE NOT EMPTY" ->
+                ?INFO(?ID, "Trapped buffers are not empty~n", []),
+                fsm:maybe_send_at_command(LSM, {at, "Z", "4"});
+              _ ->
+                LSM
+            end
+        end,
       ?INFO(?ID, "PCS ~w~n", [share:get(SM, wait_async_pcs)]),
       [PC_handler(__, PCS),
+       Buffers_handler(__),
        set_timeout(__, {s, 1}, check_state),
        fsm:clear_timeout(__, answer_timeout),
        fsm:set_event(__, busy_online),

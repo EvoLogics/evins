@@ -39,7 +39,10 @@ start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   parse_conf(Mod_ID, ArgS, Share),
   Roles = fsm_worker:role_info(Role_IDs, [nl_impl, nl]),
-  [#sm{roles = Roles, module = fsm_mux_burst}].
+  Logger = case lists:keyfind(logger, 1, ArgS) of
+             {logger,L} -> L; _ -> nothing
+           end,
+  [#sm{roles = Roles, logger = Logger, module = fsm_mux_burst}].
 
 parse_conf(_Mod_ID, ArgS, Share) ->
   Protocols_set = [P  || {protocols, P} <- ArgS],
