@@ -111,14 +111,14 @@ stop(_SM)      -> ok.
 
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
-    ?INFO(?ID, "handle_event ~120p state ~p event ~p~n", [Term, SM#sm.state, SM#sm.event]),
-
     Local_Address = share:get(SM, local_address),
     Protocol_Name = share:get(SM, protocol_name),
     Pid = share:get(SM, pid),
     Debug = share:get(SM, debug),
     Path_max_retries = share:get(SM, path_retries),
     Establish_retries = share:get(SM, nothing, path_establish, 0),
+    ?INFO(?ID, "pid: ~p, handle_event ~120p state ~p event ~p~n", [Pid, Term, SM#sm.state, SM#sm.event]),
+    ?INFO(?ID, "pid: ~p, timeouts: ~p~n", [Pid, SM#sm.timeouts]),
 
     case Term of
       {allowed} when MM#mm.role == at ->
@@ -137,6 +137,9 @@ handle_event(MM, SM, Term) ->
       {timeout, {neighbour_life, Address}} ->
         nl_hf:delete_neighbour(SM, Address);
       {timeout, {sensing_timeout, _Send_Tuple}} ->
+        ?INFO(?ID, "St ~p Ev ~p ~n", [SM#sm.event, SM#sm.state]),
+        fsm:run_event(MM, SM#sm{event = sensing_timeout}, {});
+      {timeout, collision_timeout} ->
         ?INFO(?ID, "St ~p Ev ~p ~n", [SM#sm.event, SM#sm.state]),
         fsm:run_event(MM, SM#sm{event = sensing_timeout}, {});
       {timeout, {path_establish, Src, Dst}} when Establish_retries >= Path_max_retries ->
@@ -350,7 +353,7 @@ handle_sensing(_MM, SM, _Term) ->
 handle_collision(_MM, SM, _Term) ->
   ?INFO(?ID, "collision state ~p~n", [SM#sm.event]),
   State_handler =
-  fun(initiation_listen, LSM) ->
+    fun(initiation_listen, LSM) ->
       maybe_pick(LSM);
      (sensing_timeout, LSM) ->
       % 1. decreace TTL for every packet in the queue
@@ -361,7 +364,14 @@ handle_collision(_MM, SM, _Term) ->
        maybe_pick(__)
       ](LSM);
      (_, LSM) ->
-      fsm:set_event(LSM, eps)
+      case {nl_hf:get_params_timeout(LSM, sensing_timeout),fsm:check_timeout(LSM, collision_timeout)} of
+        {Is_empty, Is_false} when Is_empty == [], Is_false == false ->
+          Sensing = nl_hf:rand_float(LSM, tmo_sensing),
+          ?INFO(?ID, "Transmission_handler setting collision_timeout ~p~n", [Sensing]),
+          fsm:set_timeout(fsm:set_event(LSM, eps), {ms, Sensing + 1}, collision_timeout);
+        _ ->
+          fsm:set_event(LSM, eps)
+      end
   end,
   Ev = SM#sm.event,
   [nl_hf:update_states(__),
@@ -448,20 +458,19 @@ try_transmit(SM, error, _, _) ->
   fsm:set_event(SM, transmitted);
 try_transmit(#sm{env = #{channel_state := busy_backoff}} = SM, _AT, _L, _Head) ->
   ?INFO(?ID, "NL in backoff state ~n", []),
-  fsm:set_event(SM, wait);
+  Sensing = nl_hf:rand_float(SM, tmo_sensing),
+  ?INFO(?ID, "Transmission_handler blocked in busy_backoff ~p~n", [Sensing]),
+  fsm:set_timeout(fsm:set_event(SM, wait), {ms, Sensing + 1}, collision_timeout);
+  %% fsm:set_event(SM, wait);
 try_transmit(SM, AT, L, Head) ->
   Sensing = nl_hf:rand_float(SM, tmo_sensing),
   Transmission_handler =
   fun(LSM, blocked) ->
-      ?INFO(?ID, "Transmission_handler blocked~n", []),
-      [fsm:set_timeout(__, {ms, Sensing}, {sensing_timeout, Head}),
-       fsm:set_event(__, wait)
-      ](LSM);
+      ?INFO(?ID, "Transmission_handler blocked ~p~n", [Sensing]),
+      fsm:set_timeout(fsm:set_event(LSM, wait), {ms, Sensing + 1}, collision_timeout);
      (LSM, ok) ->
       ?INFO(?ID, "Transmit tuples ~p~n", [L]),
-      [fsm:set_event(__, eps),
-       transmit_combined(__, AT, Head, lists:reverse(L), 0)
-      ] (LSM)
+      transmit_combined(fsm:set_event(LSM, eps), AT, Head, lists:reverse(L), 0)
   end,
 
   ?INFO(?ID, "Channel_state ~p~n", [env:get(SM, channel_state)]),
@@ -1048,10 +1057,11 @@ multi_array(Snbr, Pmax, P) -> multi_array(Snbr - 1, Pmax, P * Pmax).
 
 maybe_pick(SM) ->
   Q = share:get(SM, transmission),
-  Sensing = nl_hf:get_params_timeout(SM, sensing_timeout),
+  No_timeouts = (nl_hf:get_params_timeout(SM, sensing_timeout) == [])
+    and (fsm:check_timeout(SM, collision_timeout) == false),
 
   case queue:is_empty(Q) of
-    true when Sensing =:= [] -> fsm:set_event(SM, idle);
+    true when No_timeouts -> fsm:set_event(SM, idle);
     true -> fsm:set_event(SM, eps);
     false -> fsm:set_event(SM, pick)
     %false when Sensing =:= [] -> fsm:set_event(SM, pick);
