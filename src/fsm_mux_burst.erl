@@ -82,13 +82,13 @@ stop(_SM)      -> ok.
 -define(TO_MM, fun(#mm{role_id = ID}, {_,Role_ID,_,_,_}, _) -> ID == Role_ID end).
 %%--------------------------------Handler Event----------------------------------
 handle_event(MM, SM, Term) ->
-  ?TRACE(?ID, "state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.event, Term]),
+  %% ?TRACE(?ID, "state ~p ev ~p term ~p~n", [SM#sm.state, SM#sm.event, Term]),
   Sync_routing_impl = env:get(SM, sync_routing_impl),
   Wait_send_sync = env:get(SM, wait_send_sync),
   Clear_routing = env:get(SM, clear_routing),
   Current_protocol = share:get(SM, current_protocol),
   State = SM#sm.state,
-  ?INFO(?ID, "State ~p Role ~p~n", [State, MM#mm.role]),
+  ?INFO(?ID, "State ~p Term ~p~n", [State, Term]),
   case Term of
     {timeout, reset_state} ->
       Burst_protocol = share:get(SM, burst_protocol),

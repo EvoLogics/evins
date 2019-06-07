@@ -594,6 +594,7 @@ pop_tq_helper(SM, Tuple, Q, NQ) ->
   end.
 
 clear_sensing_timeout(SM, Tuple) ->
+  ?INFO(?ID, "clear_sensing_timeout~n", []),
   TRefList =
   filter(
    fun({E, TRef}) ->
