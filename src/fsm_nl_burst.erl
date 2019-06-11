@@ -515,6 +515,7 @@ handle_sensing(_MM, SM, Term) ->
 
 handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
   Local_address = share:get(SM, local_address),
+  Wait_ack = share:get(SM, wait_ack),
   {send_params, {Whole_len, Tuple, Tail}} =
     nl_hf:find_event_params(SM, send_params),
 
@@ -525,9 +526,8 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
 
   Wait_async_handler =
   fun(LSM, Src, Dst, PC) when Src == Local_address ->
-      Wait_ack = share:get(LSM, wait_ack),
-      fsm:set_timeout(LSM, {s, Wait_ack}, {wait_nl_async, Dst, PC});
-     (LSM, _, _, _) -> LSM
+      fsm:maybe_set_timeout(LSM, {s, Wait_ack}, {wait_nl_async, Dst, PC});
+     (LSM, _, _, __) -> LSM
   end,
 
   Transmit_handler =
@@ -542,6 +542,7 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
       NT = {send_params, {Whole_len, P, NTail}},
       PCS = share:get(LSM, nothing, wait_async_pcs, []),
       [burst_nl_hf:update_statistics_tolerant(__, time, T),
+       burst_nl_hf:update_tolerant(__, time, T),
        env:put(__, status, Status),
        share:put(__, wait_async_pcs, [PC | PCS]),
        nl_hf:add_event_params(__, NT),

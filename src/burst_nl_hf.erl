@@ -39,24 +39,24 @@
 -export([geta/1, getv/2, create_default/0, replace/3]).
 -export([check_routing_existance/1]).
 -export([update_statistics_tolerant/3, get_statistics_data/1]).
--export([burst_len/1, increase_local_pc/2]).
+-export([burst_len/1, increase_local_pc/2, update_tolerant/3]).
 -export([get_packets/1, pop_delivered/2, failed_pc/2, remove_packet/2]).
 -export([bind_pc/3, check_dublicated/2, encode_ack/2, try_extract_ack/2]).
 
 %----------------------------- Get from tuple ----------------------------------
 geta(Tuple) ->
-  getv([flag, id_at, id_local, id_remote, src, dst, len, whole_len, payload], Tuple).
+  getv([flag, stime, id_at, id_local, id_remote, src, dst, len, whole_len, payload], Tuple).
 getv(_, empty) -> nothing;
 getv(Types, Tuple) when is_list(Types) ->
   lists:foldr(fun(Type, L) -> [getv(Type, Tuple) | L] end, [], Types);
 getv(Type, Tuple) when is_atom(Type) ->
   PT =
   case Tuple of {_Retries, T} -> T; _-> Tuple end,
-  {Flag, PkgID, PkgIDLocal, PkgIDRemote, Src, Dst, Len, Whole_len, Payload} = PT,
+  {Flag, Time, PkgID, PkgIDLocal, PkgIDRemote, Src, Dst, Len, Whole_len, Payload} = PT,
 
   Structure =
-  [{flag, Flag}, {id_at, PkgID}, {id_local, PkgIDLocal}, {id_remote, PkgIDRemote},
-   {src, Src}, {dst, Dst},
+  [{flag, Flag}, {stime, Time}, {id_at, PkgID}, {id_local, PkgIDLocal},
+   {id_remote, PkgIDRemote}, {src, Src}, {dst, Dst},
    {len, Len}, {whole_len, Whole_len}, {payload, Payload}
   ],
   Map = maps:from_list(Structure),
@@ -64,15 +64,15 @@ getv(Type, Tuple) when is_atom(Type) ->
   Val.
 
 create_default() ->
-  {data, unknown, 0, 0, 0, 0, 0, 0, <<"">>}.
+  {data, unknown, unknown, 0, 0, 0, 0, 0, 0, <<"">>}.
 
 replace(Types, Values, Tuple) when is_list(Types) ->
   replace_helper(Types, Values, Tuple);
 replace(Type, Value, Tuple) when is_atom(Type) ->
-  {Flag, PkgID, PkgIDLocal, PkgIDRemote, Src, Dst, Len, Whole_len, Payload} = Tuple,
+  {Flag, Time, PkgID, PkgIDLocal, PkgIDRemote, Src, Dst, Len, Whole_len, Payload} = Tuple,
   Structure =
-  [{flag, Flag}, {id_at, PkgID}, {id_local, PkgIDLocal}, {id_remote, PkgIDRemote},
-   {src, Src}, {dst, Dst},
+  [{flag, Flag}, {stime, Time}, {id_at, PkgID}, {id_local, PkgIDLocal},
+   {id_remote, PkgIDRemote}, {src, Src}, {dst, Dst},
    {len, Len}, {whole_len, Whole_len}, {payload, Payload}
   ],
   list_to_tuple(lists:foldr(
@@ -245,17 +245,20 @@ failed_pc(SM, PC) ->
   NQ =
   lists:foldl(
   fun(X, Q) ->
-    [XPC, XLocalPC, XRemotePC, XSrc, XDst, XLen, XPayload] =
-      getv([id_at, id_local, id_remote, src, dst, len, payload], X),
+    [Stime, XPC, XLocalPC, XRemotePC, XSrc, XDst, XLen, XPayload] =
+      getv([stime, id_at, id_local, id_remote, src, dst, len, payload], X),
 
     RemotePC =
     if XSrc == Local_address -> XLocalPC; true -> XRemotePC end,
     Tuple =
-    replace([id_local, id_remote, src, dst, len, payload],
-            [XLocalPC, RemotePC, XSrc, XDst, XLen, XPayload],
+    replace([stime, id_local, id_remote, src, dst, len, payload],
+            [Stime, XLocalPC, RemotePC, XSrc, XDst, XLen, XPayload],
     create_default()),
 
-    if XPC == PC -> queue:in(Tuple, Q);
+    if XPC == PC ->
+      If_pop_q = check_time(SM, Stime),
+      ?TRACE(?ID, "Failed PC ~p ~p and pop ~p~n", [Stime, X, If_pop_q]),
+      if If_pop_q -> Q; true -> queue:in(Tuple, Q) end;
     true -> queue:in(X, Q)
     end
   end, queue:new(), QL),
@@ -263,6 +266,37 @@ failed_pc(SM, PC) ->
   [process_asyncs(__, PC),
    share:put(__, burst_data_buffer, NQ)
   ](SM).
+
+check_time(_SM, unknown) -> false;
+check_time(SM, Time) ->
+  Wait_ack = share:get(SM, wait_ack),
+  CTime = erlang:monotonic_time(milli_seconds),
+  Current_time = from_start(SM, CTime),
+  (Current_time - Time) / 1000 >= Wait_ack.
+
+update_tolerant(SM, time, Tuple) ->
+  QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
+  [STime, PC, Src, Dst, Payload] =
+    getv([stime, id_local, src, dst, payload], Tuple),
+
+  if STime =/= unknown -> SM;
+  true ->
+    NQ =
+    lists:foldl(
+    fun(X, Q) ->
+      [XPC, XSrc, XDst, XPayload] =
+        getv([id_local, src, dst, payload], X),
+
+      if XPC == PC, XSrc == Src,
+         XDst == Dst, XPayload == Payload->
+          Time = erlang:monotonic_time(milli_seconds),
+          UTuple = replace(stime, from_start(SM, Time), Tuple),
+          queue:in(UTuple, Q);
+      true -> queue:in(X, Q)
+      end
+    end, queue:new(), QL),
+    share:put(SM, burst_data_buffer, NQ)
+  end.
 
 remove_packet(SM, Dst) ->
   QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
