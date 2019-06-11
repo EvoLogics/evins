@@ -130,9 +130,6 @@ handle_event(MM, SM, Term) ->
   Protocol_Name = share:get(SM, nl_protocol),
 
   case Term of
-    {timeout, {failed_remove, Src, Dst, PC}} ->
-      ?INFO(?ID, "FAILED ~p, remove from buffer ~n", [PC]),
-      burst_nl_hf:remove_packet(SM, Src, Dst, PC);
     {timeout, answer_timeout} ->
       fsm:cast(SM, nl_impl, {send, {nl, error, <<"ANSWER TIMEOUT">>}});
     {timeout, check_state} ->
@@ -545,11 +542,11 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
       NT = {send_params, {Whole_len, P, NTail}},
       PCS = share:get(LSM, nothing, wait_async_pcs, []),
       [burst_nl_hf:update_statistics_tolerant(__, time, T),
+       burst_nl_hf:update_tolerant(__, time, T),
        env:put(__, status, Status),
        share:put(__, wait_async_pcs, [PC | PCS]),
        nl_hf:add_event_params(__, NT),
        Wait_async_handler(__, Src, Dst, PC_local),
-       fsm:maybe_set_timeout(__, {s, Wait_ack}, {failed_remove, Src, Dst, PC_local}),
        fsm:set_event(__, eps),
        fsm:maybe_send_at_command(__, AT)
       ](LSM)
