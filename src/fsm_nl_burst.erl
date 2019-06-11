@@ -130,6 +130,9 @@ handle_event(MM, SM, Term) ->
   Protocol_Name = share:get(SM, nl_protocol),
 
   case Term of
+    {timeout, {failed_remove, Src, Dst, PC}} ->
+      ?INFO(?ID, "FAILED ~p, remove from buffer ~n", [PC]),
+      burst_nl_hf:remove_packet(SM, Src, Dst, PC);
     {timeout, answer_timeout} ->
       fsm:cast(SM, nl_impl, {send, {nl, error, <<"ANSWER TIMEOUT">>}});
     {timeout, check_state} ->
@@ -515,6 +518,7 @@ handle_sensing(_MM, SM, Term) ->
 
 handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
   Local_address = share:get(SM, local_address),
+  Wait_ack = share:get(SM, wait_ack),
   {send_params, {Whole_len, Tuple, Tail}} =
     nl_hf:find_event_params(SM, send_params),
 
@@ -525,9 +529,8 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
 
   Wait_async_handler =
   fun(LSM, Src, Dst, PC) when Src == Local_address ->
-      Wait_ack = share:get(LSM, wait_ack),
-      fsm:set_timeout(LSM, {s, Wait_ack}, {wait_nl_async, Dst, PC});
-     (LSM, _, _, _) -> LSM
+      fsm:maybe_set_timeout(LSM, {s, Wait_ack}, {wait_nl_async, Dst, PC});
+     (LSM, _, _, __) -> LSM
   end,
 
   Transmit_handler =
@@ -546,6 +549,7 @@ handle_transmit(_MM, #sm{event = next_packet} = SM, _Term) ->
        share:put(__, wait_async_pcs, [PC | PCS]),
        nl_hf:add_event_params(__, NT),
        Wait_async_handler(__, Src, Dst, PC_local),
+       fsm:maybe_set_timeout(__, {s, Wait_ack}, {failed_remove, Src, Dst, PC_local}),
        fsm:set_event(__, eps),
        fsm:maybe_send_at_command(__, AT)
       ](LSM)

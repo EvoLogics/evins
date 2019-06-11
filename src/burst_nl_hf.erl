@@ -40,7 +40,7 @@
 -export([check_routing_existance/1]).
 -export([update_statistics_tolerant/3, get_statistics_data/1]).
 -export([burst_len/1, increase_local_pc/2]).
--export([get_packets/1, pop_delivered/2, failed_pc/2, remove_packet/2]).
+-export([get_packets/1, pop_delivered/2, failed_pc/2, remove_packet/2, remove_packet/4]).
 -export([bind_pc/3, check_dublicated/2, encode_ack/2, try_extract_ack/2]).
 
 %----------------------------- Get from tuple ----------------------------------
@@ -281,6 +281,20 @@ remove_packet(SM, Dst) ->
   [cast_failed(__, Dst, Failed),
    share:put(__, burst_data_buffer, NQ)
   ](SM).
+
+remove_packet(SM, Src, Dst, PC) ->
+  QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
+  NQ =
+  lists:foldl(
+  fun(X, Q) ->
+    [XPC, XSrc, XD] = getv([id_local, src, dst], X),
+    if XPC == PC, XD == Dst, XSrc == Src ->
+      ?INFO(?ID, "Removed packet PC ~p : ~p, ~p~n", [PC, XSrc, XD]),
+      Q;
+    true -> queue:in(X, Q)
+    end
+  end, queue:new(), QL),
+  share:put(SM, burst_data_buffer, NQ).
 
 cast_failed(SM, _, []) -> SM;
 cast_failed(SM, Dst, [PC | T]) ->
