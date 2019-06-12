@@ -75,7 +75,7 @@ init(#sm{module = Module} = SM) ->
                              end, SMi#sm.roles)),
   {ok, run_event(nothing, SMi#sm{event = Init_event, final = Finals}, nothing)}.
 
-handle_call(Request, From, SM) ->
+handle_call(_Request, _From, SM) ->
   %% gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {Request, From}}}),
   {noreply, SM}.
 
