@@ -268,11 +268,11 @@ handle_event(MM, SM, Term) ->
        fsm:set_event(__, reset),
        fsm:run_event(MM, __, {})
       ](SM);
-    {nl, ack, Dst, Local_address, Data} ->
+    {nl, ack, Dst, Src, Data} ->
       case burst_nl_hf:try_extract_ack(SM, Data) of
         [] -> SM;
         [_Count, L] ->
-          recv_ack(SM, Dst, L)
+          recv_ack(SM, Src, Dst, L)
       end;
     {async, Recv_Tuple = {recvsrv,Src,_,_,_,_,_,_}} when Src =/=0 ->
       env:put(SM, service_msg, Recv_Tuple);
@@ -907,20 +907,24 @@ get_acks_len(SM) ->
   true -> Maxim
   end.
 
-recv_ack(SM, Dst, L) ->
+recv_ack(SM, Src, Dst, L) ->
   ?INFO(?ID, "Received acks from ~p: ~w~n", [Dst, L]),
-  recv_ack_helper(SM, Dst, L).
-recv_ack_helper(SM, _Dst, []) -> SM;
-recv_ack_helper(SM, Dst, [PC | T]) ->
+  recv_ack_helper(SM, Src, Dst, L).
+recv_ack_helper(SM, _Src, _Dst, []) -> SM;
+recv_ack_helper(SM, Src, Dst, [PC | T]) ->
+  Local_address = share:get(SM, local_address),
   Wait_ack = fsm:check_timeout(SM, {wait_nl_async, Dst, PC}),
   ?INFO(?ID, "Wait_ack ~p: ~p ~n", [Dst, PC]),
-  if Wait_ack ->
-    Local_address = share:get(SM, local_address),
-    [burst_nl_hf:update_statistics_tolerant(__, state, {PC, src, delivered}),
-     fsm:cast(__, nl_impl, {send, {nl, delivered, PC, Local_address, Dst}}),
-     fsm:clear_timeout(__, {wait_nl_async, Dst, PC}),
-     recv_ack_helper(__, Dst, T)
-    ](SM);
-  true ->
-    recv_ack_helper(SM, Dst, T)
-  end.
+  Ack_handler =
+  fun (LSM) when Wait_ack == true, Src == Local_address ->
+        [burst_nl_hf:update_statistics_tolerant(__, state, {PC, src, delivered}),
+         fsm:cast(__, nl_impl, {send, {nl, delivered, PC, Src, Dst}}),
+         fsm:clear_timeout(__, {wait_nl_async, Dst, PC}),
+         recv_ack_helper(__, Src, Dst, T)
+        ](LSM);
+      (LSM) ->
+        recv_ack_helper(LSM, Src, Dst, T)
+  end,
+  [burst_nl_hf:remove_packet(__, Src, Dst, PC),
+   Ack_handler(__)
+  ](SM).
