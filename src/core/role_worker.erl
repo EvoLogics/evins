@@ -300,7 +300,7 @@ conditional_cast(FSMs, #{allow := Allow} = _Cfg, Term) when is_pid(Allow) ->
 conditional_cast(FSMs, _, Term) ->
   broadcast(FSMs, Term).
 
-handle_call(Request, From, #ifstate{id = ID} = State) ->
+handle_call(_Request, _From, #ifstate{id = ID} = State) ->
   %% gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
   {noreply, State}.
 
@@ -408,7 +408,7 @@ handle_cast(tcp_close, #ifstate{id = ID, socket = Socket} = State) ->
   gen_tcp:close(Socket),
   {noreply, State};
 
-handle_cast(Request, #ifstate{id = ID} = State) ->
+handle_cast(Request, #ifstate{id = _ID} = State) ->
   %% gen_event:notify(error_logger, {fsm_core, self(), {ID, Request}}),
   {stop, Request, State}.
 
@@ -493,7 +493,7 @@ handle_info({tcp_closed, _}, #ifstate{id = ID, fsm_pids = FSMs, type = server, m
   broadcast(FSMs, {chan_closed_client, MM}),
   {noreply, State#ifstate{socket = nothing}};
 
-handle_info({http, _Socket, Request}, #ifstate{id = ID, fsm_pids = FSMs, cfg = Cfg, type = server, mm = MM} = State) ->
+handle_info({http, _Socket, Request}, #ifstate{id = _ID, fsm_pids = FSMs, cfg = Cfg, type = server, mm = MM} = State) ->
   %% gen_event:notify(error_logger, {fsm_core, self(), {ID, {http_request, Request}}}),
   conditional_cast(FSMs, Cfg, {chan, MM, Request}),
   {noreply, State};
