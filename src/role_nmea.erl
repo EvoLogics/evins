@@ -800,7 +800,7 @@ extract_nmea(<<"EVOGPS">>, Params) ->
          end,
     {nmea, {evogps, UTC, TID, DID, Mode, Lat, Lon, Alt}}
   catch
-    error:_ -> {error, {parseError, evossb, Params}}
+    error:_ -> {error, {parseError, evogps, Params}}
   end;
 
 %% $PEVORPY,UTC,TID,DID,M,Roll,Pitch,Yaw
@@ -823,7 +823,7 @@ extract_nmea(<<"EVORPY">>, Params) ->
          end,
     {nmea, {evorpy, UTC, TID, DID, Mode, Roll, Pitch, Yaw}}
   catch
-    error:_ -> {error, {parseError, evossb, Params}}
+    error:_ -> {error, {parseError, evorpy, Params}}
   end;
 
 %% $PEVOCTL,BUSBL,...
