@@ -695,7 +695,7 @@ extract_nmea(<<"EVORCP">>, Params) ->
 %% UTC hhmmss.ss
 %% TID transponder ID
 %% DID transceiver ID
-%% CF coordinate frame: B (body frame, xyz), H (horizontal, head-up), N (north-up), G (geodetic, wgs84)
+%% CF coordinate frame: T (transceiver frame), B (body frame, xyz), H (horizontal, head-up), N (north-up), G (geodetic, wgs84)
 %% OP origin point: T (transceiver), V (vessel CRP)
 %% Tr transformations: R (raw), T (raytraced), P (pressure aided)
 %% X,Y,Z coordinates
@@ -714,6 +714,7 @@ extract_nmea(<<"EVOSSB">>, Params) ->
     [TID,DID,RSSI,Int] = [safe_binary_to_integer(V) || V <- [BTID,BDID,BRSSI,BInt]],
     [X,Y,Z,Acc,ParmA,ParmB] = [safe_binary_to_float(V) || V <- [BX,BY,BZ,BAcc,BParmA,BParmB]],
     CF = case BCF of
+             <<"T">> -> transceiver;
              <<"B">> -> xyz;
              <<"H">> -> xyd;
              <<"N">> -> ned;
@@ -1439,6 +1440,7 @@ build_evorcp(Type, Status, Substatus, Interval, Mode, Cycles, Broadcast) ->
 build_evossb(UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB) ->
   SUTC = utc_format(UTC),
   {SCF,Fmt} = case CF of
+                  transceiver -> {<<"T">>,"~.2.0f"};
                   xyz -> {<<"B">>,"~.2.0f"};
                   xyd -> {<<"H">>,"~.2.0f"};
                   ned -> {<<"N">>,"~.2.0f"};
