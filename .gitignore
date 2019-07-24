@@ -10,6 +10,7 @@
 /relx.config
 /priv/evo_serial
 /_rel
+/erl_crash.dump
 *~
 tmp
 bugs
