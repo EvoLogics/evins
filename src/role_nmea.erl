@@ -891,6 +891,18 @@ extract_nmea(<<"EVOCTL">>, <<"SUSBL,",Params/binary>>) ->
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
   end;
+%% $PEVOCTL,SINAPS,DID,Cmd,Arg
+%% DID             x   device id
+%% Cmd             a   command (start,stop,georef,selfpos,pos)
+%% Arg             a   argument for a command (addr for pos)
+extract_nmea(<<"EVOCTL">>, <<"SINAPS,",Params/binary>>) ->
+  try
+    [BDID,BCmd, BArg] = lists:sublist(binary:split(Params,<<",">>,[global]), 3),
+    DID = binary_to_integer(BDID),
+    {nmea, {evoctl, sinaps, {DID, BCmd, BArg}}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}
+  end;
 extract_nmea(<<"EVOCTL">>, Params) ->
   {error, {parseError, evoctl, Params}};
 
@@ -1365,13 +1377,26 @@ build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD}) ->
            safe_fmt(["~.3.0f","~.3.0f","~.3.0f","~s","~B","~B","~B"],
                     [X,Y,Z,SMode,IT,MP,AD],",")]);
 %% $PEVOCTL,SUSBL,Seq,MRange,SVel
-build_evoctl(sbl, {Seq, MRange, SVel}) ->
+build_evoctl(susbl, {Seq, MRange, SVel}) ->
     SSeq = foldl(fun(Id,Acc) ->
                          Acc ++ ":" ++ integer_to_list(Id)
                  end, integer_to_list(hd(Seq)), tl(Seq)),
   (["PEVOCTL,SUSBL",
            safe_fmt(["~s","~.1.0f","~.1.0f"],
-                    [SSeq,MRange,SVel],",")]).
+                    [SSeq,MRange,SVel],",")]);
+
+%% $PEVOCTL,SUSBL,Seq,MRange,SVel
+build_evoctl(sinaps, {DID, Cmd, Arg}) ->
+    SCmd = binary_to_list(Cmd),
+    SArg = case Arg of
+               I when is_integer(I) -> integer_to_list(I);
+               F when is_float(F) -> float_to_list(F);
+               B when is_binary(B) -> binary_to_list(B);
+               _ -> Arg
+           end,
+  (["PEVOCTL,SINAPS",
+           safe_fmt(["~B","~s","~s"],
+                    [DID,SCmd,SArg],",")]).
 
 %% $-EVORCT,TX,TX_phy,Lat,LatS,Lon,LonS,Alt,S_gps,Pressure,S_pressure,Yaw,Pitch,Roll,S_ahrs,LAx,LAy,LAz,HL
 build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,Ly,Lz},HL) ->
@@ -1637,6 +1662,8 @@ from_term_helper(Sentense) ->
       build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD});
     {evoctl, susbl, Args} ->
       build_evoctl(susbl, Args);
+    {evoctl, sinaps, Args} ->
+      build_evoctl(sinaps, Args);
     {hdg,Heading,Dev,Var} ->
       build_hdg(Heading,Dev,Var);
     {hdt,Heading} ->
