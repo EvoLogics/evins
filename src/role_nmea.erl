@@ -691,6 +691,25 @@ extract_nmea(<<"EVORCP">>, Params) ->
     error:_ -> {error, {parseError, evorcp, Params}}
   end;
 
+%% $-EVOACA,UTC,DID,action
+%% UTC hhmmss.ss
+%% DID transceiver ID
+%% action - action
+extract_nmea(<<"EVOACA">>, Params) ->
+  try
+    [BUTC,BDID,BAction] =
+      lists:sublist(binary:split(Params,<<",">>,[global]),3),
+    UTC = extract_utc(BUTC),
+    DID = safe_binary_to_integer(BDID),
+    Action = case BAction of
+                 <<"S">> -> send;
+                 <<"R">> -> recv
+             end,
+    {nmea, {evoaca, UTC, DID, Action}}
+  catch
+    error:_ -> {error, {parseError, evoaca, Params}}
+  end;
+
 %% $PEVOSSB,UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Integrity,ParamA,ParamB
 %% UTC hhmmss.ss
 %% TID transponder ID
@@ -1461,6 +1480,16 @@ build_evorcp(Type, Status, Substatus, Interval, Mode, Cycles, Broadcast) ->
            safe_fmt(["~s","~s","~s","~.2.0f","~s","~B","~s"], [SType, SStatus, Substatus, Interval, SMode, NCycles, SCast], ","),
            ",,"]).
 
+%% $-EVOACA,UTC,DID,action
+build_evoaca(UTC, DID, Action) ->
+  SUTC = utc_format(UTC),
+  SAction = case Action of
+                send -> "S";
+                recv -> "R"
+            end,
+  (["PEVOACA",SUTC,safe_fmt(["~3.10.0B","~s"], [DID,SAction], ",")]).
+
+
 %% $PEVOSSB,UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Integrity,ParamA,ParamB
 build_evossb(UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB) ->
   SUTC = utc_format(UTC),
@@ -1646,6 +1675,8 @@ from_term_helper(Sentense) ->
       build_evorct(TX_utc,TX_phy,GPS,Pressure,AHRS,Lever_arm,HL);
     {evorcm,RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS} ->
       build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS);
+    {evoaca,UTC,DID,Action} ->
+      build_evoaca(UTC,DID,Action);
     {evossb,UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB} ->
       build_evossb(UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB);
     {evossa,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
