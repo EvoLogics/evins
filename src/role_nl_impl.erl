@@ -44,7 +44,7 @@ start(Role_ID, Mod_ID, MM) ->
   _ = {source, relay},
   _ = {sensitive, alarm, tolerant, broadcast},
   _ = {set, get, address, start, stop, protocolinfo, protocol, protocols, routing, neighbours, neighbour, state, states, service, bitrate,
-       status, paths, data, statistics, flush, polling, discovery, buffer, time},
+       status, paths, data, statistics, flush, polling, discovery, buffer, time, ps},
   Cfg = #config{eol = "\r\n"},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
@@ -101,7 +101,6 @@ nl_send_extract(L, Cfg) ->
     end
   catch error: _Reason -> [{nl, error, {parseError, L}}]
   end.
-
 %% NL,set,routing,[A1->A2],[A3->A4],..,default->Addr
 nl_extract_subject(<<"set">>, <<"routing,", Params/binary>>) ->
   Map =
@@ -121,6 +120,12 @@ nl_extract_subject(<<"set">>, <<"neighbours,", Params/binary>>) ->
       [4] -> [list_to_tuple([binary_to_integer(I) || I <- Item]) || Item <- Lst]
     end,
   {nl, set, neighbours, Neighbours};
+nl_extract_subject(<<"set">>, <<"ps,", Params/binary>>) ->
+  Flag = case Params of
+         <<"on">> -> on;
+         <<"off">> -> off
+       end,
+  {nl,set,ps,Flag};
 nl_extract_subject(<<"set">>, <<"debug,", Params/binary>>) ->
   Flag = case Params of
          <<"on">> -> on;
@@ -177,6 +182,8 @@ from_term({nl,protocolinfo,Protocol,PropList}, Cfg) ->
   %% H = ["name : ",atom_to_list(Protocol),EOL],
   T = [[Key," : ",Value,EOL] || {Key,Value} <- PropList],
   [list_to_binary(["NL,protocolinfo,",atom_to_list(Protocol),$,,EOL,T,EOL]), Cfg];
+from_term({nl, ps, Params}, Cfg)  when is_list(Params) ->
+  [list_to_binary(["NL,ps,",Params,Cfg#config.eol]), Cfg];
 %% NL,routing,[<A1>-><A2>],..,[default->Default]
 from_term({nl, routing, []}, Cfg)  ->
   [list_to_binary(["NL,routing,","default->63",Cfg#config.eol]), Cfg];
