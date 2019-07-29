@@ -187,6 +187,12 @@ nl_extract_subject(<<"routing">>, Params) ->
               end, [binary:split(V,<<"->">>) || V <- binary:split(Params,<<$,>>,[global])]),
   {nl, routing, Map};
 %% NL,neighbours,ok
+nl_extract_subject(<<"ps">>, <<"ok">>) ->
+  {nl, ps, ok};
+nl_extract_subject(<<"ps">>, Params) ->
+  Ls = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>,[global])],
+  {nl, ps, Ls};
+%% NL,neighbours,ok
 nl_extract_subject(<<"neighbours">>, <<"ok">>) ->
   {nl, neighbours, ok};
 %% NL,neighbours,empty

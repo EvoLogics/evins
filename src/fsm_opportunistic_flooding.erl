@@ -199,6 +199,8 @@ handle_event(MM, SM, Term) ->
         ](SM);
       {async, Notification} when Debug == on ->
         process_async(SM, Notification);
+      {sync, "?PS", Params} ->
+        fsm:cast(SM, nl_impl, {send, {nl, ps, Params}});
       {sync, _, _} ->
         [fsm:clear_timeout(__, answer_timeout),
          fsm:run_event(MM, __, Term)
@@ -224,6 +226,11 @@ handle_event(MM, SM, Term) ->
         [share:put(__, statistics_queue, queue:new()),
          share:put(__, statistics_neighbours, queue:new()),
          fsm:cast(__, nl_impl, {send, {nl, statistics, data, empty}})
+        ](SM);
+      {nl, set, ps, ON} ->
+        State = if ON -> 1; true -> 0 end,
+        [fsm:maybe_send_at_command(__, {at, "@PS", integer_to_list(State)}),
+         fsm:cast(__, nl_impl, {send, {nl, ps, ok}})
         ](SM);
       {nl, set, debug, ON} ->
         [share:put(__, debug, ON),
@@ -253,6 +260,8 @@ handle_event(MM, SM, Term) ->
         nl_hf:process_get_command(SM, {statistics, Some_statistics});
       {nl, get, protocolinfo, Some_protocol} ->
         nl_hf:process_get_command(SM, {protocolinfo, Some_protocol});
+      {nl, get, ps} ->
+        fsm:maybe_send_at_command(SM, {at, "?PS", ""});
       {nl, get, Command} ->
         nl_hf:process_get_command(SM, Command);
       {nl, delete, neighbour, Address} ->
