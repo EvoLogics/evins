@@ -300,7 +300,7 @@ conditional_cast(FSMs, #{allow := Allow} = _Cfg, Term) when is_pid(Allow) ->
 conditional_cast(FSMs, _, Term) ->
   broadcast(FSMs, Term).
 
-handle_call(_Request, _From, #ifstate{id = ID} = State) ->
+handle_call(_Request, _From, #ifstate{id = _ID} = State) ->
   %% gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
   {noreply, State}.
 
