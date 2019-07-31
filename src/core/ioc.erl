@@ -27,6 +27,8 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 -module(ioc).
 
+-include("fsm.hrl").
+
 -export([format/5, format/6, format/7, id/0, timestamp_string/0]).
 -import(mix, [microseconds/0]).
 
@@ -65,8 +67,31 @@ format(Module, Line, ID, Format, Data, Color) ->
 format(Module, Line, ID, IoDevice, Format, Data, Color) ->
   format_helper(Module, Line, ID, IoDevice, Format, Data, Color).
 
-format_helper(Module, Line, ID, _IoDevice, Format, Data, Color) ->
+format_helper(Module, Line, ID, IoDevice, Format, Data, Type) when is_atom(ID) ->
+  format_helper(Module, Line, #sm{logger = trace, id = ID}, IoDevice, Format, Data, Type);
+format_helper(_, _, #sm{logger = nothing}, _, _, _, _) ->
+  nothing;
+format_helper(_, _, #sm{logger = error}, _, _, _, T) when T /= error ->
+  nothing;
+format_helper(_, _, #sm{logger = warning}, _, _, _, T) when T == trace; T == info ->
+  nothing;
+format_helper(_, _, #sm{logger = info}, _, _, _, T) when T == trace ->
+  nothing;
+format_helper(Module, Line, SM, _IoDevice, Format, Data, Type) ->
+  ID = SM#sm.id,
   Timestamp = os:timestamp(),
   Message = lists:flatten(io_lib:format(Format,Data)),
-  gen_event:notify(error_logger, {fsm_progress, self(), {Color, ID, Module, Line, Timestamp, Message}}).
+  TS = fun({M,S,U}) -> lists:flatten(io_lib:format("~p.~s.~s", [M, intfmt(6,S), intfmt(6,U)])) end,
+  HS = fun(I,M,L) -> lists:flatten(io_lib:format("~p:~p:~p:", [M, L, I])) end,
+  Fmt = "~34s ~s" ++ "~s" ++ "~s",
+  Color = case Type of
+            trace -> ?NONE;
+            info -> ?LBLUE;
+            warning -> ?LRED;
+            error -> ?RED;
+            _ -> ?NONE
+          end,
+  Params = [HS(ID, Module, Line), Color] ++ [Message] ++ [?NONE],
+  io:format("~18s " ++ Fmt, [TS(Timestamp) | Params]).
+  %% gen_event:notify(error_logger, {fsm_progress, self(), {Color, ID, Module, Line, Timestamp, Message}}).
 

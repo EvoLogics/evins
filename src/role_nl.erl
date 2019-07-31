@@ -38,7 +38,7 @@
 stop(_) -> ok.
 
 start(Role_ID, Mod_ID, MM) ->
-  _ = {ok, busy, error, failed, delivered, send, recv, empty}, %% atom vocabular
+  _ = {ok, busy, error, failed, delivered, send, recv, empty, ack}, %% atom vocabular
   _ = {staticr, staticrack, sncfloodr, sncfloodrack, dpfloodr, dpfloodrack, icrpr, sncfloodpfr, sncfloodpfrack, evoicrppfr, evoicrppfrack, dblfloodpfr, dblfloodpfrack, laorp},
   _ = {time, period},
   _ = {source, relay},
@@ -54,9 +54,11 @@ split(L, Cfg) ->
   case re:split(L,"\r?\n",[{parts,2}]) of
     [<<"NL,recv,", _/binary>>, _] -> %% binary
       nl_recv_extract(L, Cfg);
+    [<<"NL,send,ack,", _/binary>>, _] -> %% binary
+      nl_ack_extract(L, Cfg);
     [<<"NL,protocolinfo,", _/binary>>, _] -> %% multiline
       nl_multiline_extract(L, Cfg);
-    [<<"NL,states,", _/binary>>, _] -> %% multiline
+    [<<"NL,states,", States/binary>>, _] when States =/= <<"empty">> -> %% multiline
       nl_multiline_extract(L, Cfg);
     [<<"NL,statistics,", _/binary>>, _] -> %% multiline
       nl_multiline_extract(L, Cfg);
@@ -78,13 +80,50 @@ split(L, Cfg) ->
 %% NL,recv,<Len>,<Src>,<Dst>,<Data>
 nl_recv_extract(L, Cfg) ->
   try
-    {match, [BLen, BSrc, BDst, Rest]} = re:run(L,"NL,recv,([^,]*),([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3, 4], binary}]),
+    [Type, BLen, BSrc, BDst, Rest] = nl_recv_extract_helper(L),
     [Len, Src, Dst] = [binary_to_integer(I) || I <- [BLen, BSrc, BDst]],
+    PLLen = byte_size(Rest),
+    case re:run(Rest, "^(.{" ++ integer_to_list(Len) ++ "})\r?\n(.*)",[dotall,{capture,[1,2],binary}]) of
+      {match, [Data, Tail]} when Type == notype ->
+        [{nl, recv, Src, Dst, Data} | split(Tail, Cfg)];
+      {match, [Data, Tail]} ->
+        [{nl, recv, Type, Src, Dst, Data} | split(Tail, Cfg)];
+      _ when Len + 1 =< PLLen ->
+        [{nl, error, {parseError, L}}];
+      _ ->
+        [{more, L}]
+    end
+  catch error: _Reason -> [{nl, error, {parseError, L}}]
+  end.
+
+nl_recv_extract_helper(L) ->
+  Templates = [{"NL,recv,(tolerant|sensitive|broadcast|alarm),([^,]*),([^,]*),([^,]*),(.*)", [1,2,3,4,5]},
+               {"NL,recv,([^,]*),([^,]*),([^,]*),(.*)", [1,2,3,4]}],
+
+  nl_recv_extract_helper(L, Templates).
+
+nl_recv_extract_helper(match, L) -> L;
+nl_recv_extract_helper(_, []) -> nomatch;
+nl_recv_extract_helper(L, [H | T]) ->
+  {Template, LB} = H,
+  case re:run(L, Template, [dotall, {capture, LB, binary}]) of
+    {match, [BType, BLen, BSrc, BDst, Rest]} ->
+      Type = binary_to_existing_atom(BType, utf8),
+      nl_recv_extract_helper(match, [Type, BLen, BSrc, BDst, Rest]);
+    {match, [BLen, BSrc, BDst, Rest]} ->
+      nl_recv_extract_helper(match, [notype, BLen, BSrc, BDst, Rest]);
+    nomatch -> nl_recv_extract_helper(L, T)
+  end.
+
+nl_ack_extract(L, Cfg) ->
+  try
+    {match, [BLen, BDst, Rest]} = re:run(L,"NL,send,ack,([^,]*),([^,]*),(.*)", [dotall, {capture, [1, 2, 3], binary}]),
+    [Len, Dst] = [binary_to_integer(I) || I <- [BLen, BDst]],
 
     PLLen = byte_size(Rest),
     case re:run(Rest, "^(.{" ++ integer_to_list(Len) ++ "})\r?\n(.*)",[dotall,{capture,[1,2],binary}]) of
       {match, [Data, Tail]} ->
-        [{nl, recv, Src, Dst, Data} | split(Tail, Cfg)];
+        [{nl, ack, Dst, Data} | split(Tail, Cfg)];
       _ when Len + 1 =< PLLen ->
         [{nl, error, {parseError, L}}];
       _ ->
@@ -148,6 +187,12 @@ nl_extract_subject(<<"routing">>, Params) ->
               end, [binary:split(V,<<"->">>) || V <- binary:split(Params,<<$,>>,[global])]),
   {nl, routing, Map};
 %% NL,neighbours,ok
+nl_extract_subject(<<"ps">>, <<"ok">>) ->
+  {nl, ps, ok};
+nl_extract_subject(<<"ps">>, Params) ->
+  Ls = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>,[global])],
+  {nl, ps, Ls};
+%% NL,neighbours,ok
 nl_extract_subject(<<"neighbours">>, <<"ok">>) ->
   {nl, neighbours, ok};
 %% NL,neighbours,empty
@@ -196,6 +241,14 @@ nl_extract_subject(<<"polling">>, Params) ->
     _ ->
       {nl, polling, binary_to_existing_atom(Params, utf8)}
   end;
+%NL,path,Retries,Dst
+% Retries decreasinf, if < 0 -> Retries = failed
+nl_extract_subject(<<"path">>, <<"failed,", Params/binary>>) ->
+  [Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
+  {nl, path, failed, Dst};
+nl_extract_subject(<<"path">>, Params) ->
+  [Retries, Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
+  {nl, path, Retries, Dst};
 %% NL,delivered,PC,Src,Dst
 nl_extract_subject(<<"delivered">>, Params) ->
   [PC, Src, Dst] = [binary_to_integer(V) || V <- binary:split(Params,<<$,>>, [global])],
@@ -213,6 +266,8 @@ nl_extract_subject(<<"protocolinfo">>, Params) ->
   %% {value, ["name",Protocol], PropList} = lists:keytake("name", 1, KVLst),
   {nl,protocolinfo,binary_to_existing_atom(Protocol,utf8),PropList};
 %% NL,states,<EOL><State1>(<Event1>)<EOL>...<StateN>(<EventN>)<EOL><EOL>
+nl_extract_subject(<<"states">>, <<"empty">>) ->
+  {nl, states, empty};
 nl_extract_subject(<<"states">>, Params) ->
   {nl,states,
    lists:map(fun(Param) ->
@@ -225,18 +280,31 @@ nl_extract_subject(<<"time">>, <<"monotonic,",Time/binary>>) ->
 %% NL,statistics,ok
 nl_extract_subject(<<"statistics">>, <<"ok">>) ->
   {nl, statistics, ok};
+nl_extract_subject(<<"get">>, <<"routing">>) ->
+  {nl, get, routing};
+nl_extract_subject(<<"get">>, <<"service">>) ->
+  {nl, get, service};
+nl_extract_subject(<<"get">>, <<"bitrate">>) ->
+  {nl, get, bitrate};
+nl_extract_subject(<<"get">>, <<"status">>) ->
+  {nl, get, status};
+nl_extract_subject(<<"update">>, <<"routing,", Params/binary>>) ->
+  Dst = binary_to_integer(Params),
+  {nl, update, routing, Dst};
 %% NL,statistics,neighbours,<EOL> <relay or source> neighbours:<neighbours> count:<count> total:<total><EOL>...<EOL><EOL>
 %% NL,statistics,neighbours,
-%%  source neighbour:3 count:8 total:10
-%%  source neighbour:2 count:4 total:10
+%%  neighbour:3 duration:Time count:8 total:10
+%%  neighbour:2 duration:Time count:4 total:10
 %% -> [{Role,Neighbours,Count,Total}]
+nl_extract_subject(<<"statistics">>, <<"neighbours,empty",_/binary>>) ->
+  {nl,statistics,neighbours,empty};
 nl_extract_subject(<<"statistics">>, <<"neighbours,",Params/binary>>) ->
   Lines = tl(re:split(Params,"\r?\n")),
   {nl,statistics,neighbours,
    lists:map(fun(Line) ->
-                 {match, [Role,Values]} =
-                   re:run(Line, " ([^ ]*) neighbour:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4], binary}]),
-                 list_to_tuple([binary_to_existing_atom(Role, utf8) | [binary_to_integer(V) || V <- Values]])
+                 {match, [A,U,C,T]} =
+                   re:run(Line, " neighbour:(\\d+) last update:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4], binary}]),
+                 list_to_tuple([binary_to_integer(V) || V <- [A,U,C,T]])
              end, Lines)};
 %% NL,statistics,paths,<EOL> <relay or source> path:<path> duration:<duration> count:<count> total:<total><EOL>...<EOL><EOL>
 %% NL,statistics,paths,
@@ -249,13 +317,50 @@ nl_extract_subject(<<"statistics">>, <<"paths,error",_/binary>>) ->
   {nl,statistics,paths,error};
 nl_extract_subject(<<"statistics">>, <<"paths,",Params/binary>>) ->
   Lines = tl(re:split(Params,"\r?\n")),
+  Regexp1 = " path:([^ ]*) duration:(\\d+) count:(\\d+) total:(\\d+)",
+  Regexp2 = " path:([^ ]*) count:(\\d+) total:(\\d+)",
   {nl,statistics,paths,
    lists:map(fun(Line) ->
-                 {match, [Role,Path,Values]} =
-                   re:run(Line, " ([^ ]*) path:([^ ]*) duration:(\\d+) count:(\\d+) total:(\\d+)", [{capture, [1,2,3,4,5], binary}]),
-                 PathList = [binary_to_integer(I) || I <- binary:split(Path,<<$,>>)],
-                 list_to_tuple([binary_to_existing_atom(Role, utf8), PathList | [binary_to_integer(V) || V <- Values]])
+                 case re:run(Line, Regexp1, [{capture, [1,2,3,4], binary}]) of
+                  {match, [Path,Duration,Count,Total]} ->
+                     PathList = [binary_to_integer(I) || I <- binary:split(Path,<<$,>>,[global])],
+                     Values = [Duration,Count,Total],
+                     list_to_tuple([PathList | [binary_to_integer(V) || V <- Values]]);
+                  _ ->
+                    {match, [Path,Count,Total]} = re:run(Line, Regexp2, [{capture, [1,2,3], binary}]),
+                    PathList = [binary_to_integer(I) || I <- binary:split(Path,<<$,>>,[global])],
+                    Values = [Count,Total],
+                    list_to_tuple([PathList | [binary_to_integer(V) || V <- Values]])
+                  end
              end, Lines)};
+%% NL,service,status:P1,P2 service:empty
+%% NL,service,status:P1,P2 service:src,dst,type,decoded,transmitted,rssi,integrity
+nl_extract_subject(<<"service">>, <<"status:", Params/binary>>) ->
+  %Lines = tl(re:split(Params,"\r?\n")),
+  Regexp1 = "(.*?) (.*?) service:([^ ]*)",
+  {match, [S1, S2, Service]} = re:run(Params, Regexp1, [{capture, [1,2,3], binary}]),
+  if Service == <<"empty">> ->
+    {nl, service, {status, binary_to_list(S1), binary_to_list(S2)}, []};
+  true ->
+    Regexp2 = "(.*?) (.*?) service:([^ ]*),([^ ]*),([^ ]*),([^ ]*),([^ ]*),([^ ]*),([^ ]*)",
+    {match, [S1, S2, Src, Dst, Type, Decoded, Transmitted, RRssi, RIntegrity]} =
+      re:run(Params, Regexp2, [{capture, [1,2,3,4,5,6,7,8,9], binary}]),
+
+      {nl, service, {status, binary_to_list(S1), binary_to_list(S2)},
+                    {recvsrv, binary_to_integer(Src), binary_to_integer(Dst),
+                              binary_to_list(Type), binary_to_integer(Decoded),
+                              binary_to_integer(Transmitted), binary_to_integer(RRssi),
+                              binary_to_integer(RIntegrity)}}
+  end;
+%% NL,status,Status
+nl_extract_subject(<<"status">>, <<Params/binary>>) ->
+  {nl,status,binary_to_list(Params)};
+%% NL,bitrate,empty
+%% NL,bitrate,bitrate
+nl_extract_subject(<<"bitrate">>, <<"empty">>) ->
+  {nl,bitrate,empty};
+nl_extract_subject(<<"bitrate">>, <<Params/binary>>) ->
+  {nl,bitrate,binary_to_integer(Params)};
 %% NL,statistics,data,<EOL> <relay or source> data:<hash> len:<length> duration:<duration> state:<state> total:<total> dst:<dst> hops:<hops><EOL>...<EOL><EOL>
 %% NL,statistics,data,
 %%  source data:0xabde len:4 duration:5.6 state:delivered total:1 dst:4 hops:1
@@ -268,20 +373,60 @@ nl_extract_subject(<<"statistics">>, <<"data,error",_/binary>>) ->
   {nl,statistics,data,error};
 nl_extract_subject(<<"statistics">>, <<"data,",Params/binary>>) ->
   Lines = tl(re:split(Params,"\r?\n")),
-  Regexp = " ([^ ]*) data:0x([^ ]*) len:(\\d+) duration:([0-9.]*) state:([^ ]*) total:(\\d+) dst:(\\d+) hops:(\\d+)",
+  Regexp1 = " ([^ ]*) data:0x([^ ]*) len:(\\d+) duration:([0-9.]*) state:([^ ]*) src:(\\d+) dst:(\\d+) hops:(\\d+)",
+  Regexp2 = " ([^ ]*) data:0x([^ ]*) len:(\\d+) send_time:([0-9.]*) recv_time:([^ ]*) src:(\\d+) dst:(\\d+) last_ttl:(\\d+)",
   {nl,statistics,data,
    lists:map(fun(Line) ->
-                 {match, [Role,Hash,Len,Duration,State,Values]} =
+      case re:run(Line, Regexp1, [{capture, [1,2,3,4,5,6,7,8], binary}]) of
+       {match, [Role,Hash,Len,Duration,State,Total,Dst,Hops]} ->
+         list_to_tuple(
+           [binary_to_existing_atom(Role, utf8),
+            binary_to_integer(Hash, 16),
+            binary_to_integer(Len),
+            binary_to_float(Duration),
+            binary_to_existing_atom(State,utf8),
+            binary_to_integer(Total),
+            binary_to_integer(Dst),
+            binary_to_integer(Hops)]);
+        _ ->
+         {match, [Role,Hash,Len,STime,RTime,Src,Dst,TTL]} =
+          re:run(Line, Regexp2, [{capture, [1,2,3,4,5,6,7,8], binary}]),
+         list_to_tuple(
+           [binary_to_existing_atom(Role, utf8),
+            binary_to_integer(Hash, 16),
+            binary_to_integer(Len),
+            binary_to_integer(STime),
+            binary_to_integer(RTime),
+            binary_to_integer(Src),
+            binary_to_integer(Dst),
+            binary_to_integer(TTL)])
+      end
+   end, Lines)};
+%% NL,statistics,tolerant,<EOL> <relay or source> data:<data hash> len:<length> duration:<duration> state:<state> src:<total> dst:<dst><EOL>...<EOL><EOL>
+nl_extract_subject(<<"statistics">>, <<"tolerant,empty",_/binary>>) ->
+  {nl,statistics,tolerant,empty};
+nl_extract_subject(<<"statistics">>, <<"tolerant,",Params/binary>>) ->
+  Lines = tl(re:split(Params,"\r?\n")),
+  Regexp = " ([^ ]*) id:(\\d+) data:0x([^ ]*) len:(\\d+) duration:([0-9.]*) state:([^ ]*) src:(\\d+) dst:(\\d+)",
+  {nl,statistics,tolerant,
+   lists:map(fun(Line) ->
+                 {match, [Role,PC,Hash,Len,Duration,State,Src,Dst]} =
                    re:run(Line, Regexp, [{capture, [1,2,3,4,5,6,7,8], binary}]),
+                 Time =
+                 try binary_to_float(Duration)
+                 catch error: _ ->
+                    binary_to_integer(Duration)
+                 end,
                  list_to_tuple(
-                   [binary_to_existing_atom(Role, utf8),
-                    binary_to_integer(Hash, 16),
-                    binary_to_integer(Len),
-                    binary_to_float(Duration),
-                    binary_to_existing_atom(State,utf8) |
-                    [binary_to_integer(V) || V <- Values]])
+                 [binary_to_existing_atom(Role, utf8),
+                  binary_to_integer(PC),
+                  binary_to_integer(Hash, 16),
+                  binary_to_integer(Len),
+                  Time,
+                  binary_to_existing_atom(State,utf8),
+                  binary_to_integer(Src),
+                  binary_to_integer(Dst)])
              end, Lines)};
-
 %% NL,polling,Addr1,..,AddrN
 nl_extract_subject(<<"buffer">>, <<"ok">>) ->
   {nl, buffer, ok};
@@ -291,15 +436,24 @@ nl_extract_subject(<<"buffer">>, <<"empty">>) ->
 % NL,statistics,data,<EOL> data:<hash> dst:<dst> type:<type><EOL>...<EOL><EOL>
 nl_extract_subject(<<"buffer">>, Params) ->
   Lines = tl(re:split(Params,"\r?\n")),
-  Regexp = "data:(.*?) dst:(\\d+) type:([^ ]*)",
+  Regexp1 = "data:(.*?) dst:(\\d+) type:([^ ]*)",
+  Regexp2 = "data:(.*?) src:(\\d+) dst:(\\d+) len:(\\d+) id:(\\d+)",
+
   {nl, buffer,
    lists:map(fun(Line) ->
-                 {match, [Data, Dst, Type]} =
-                   re:run(Line, Regexp, [{capture, [1,2,3], binary}]),
-                 list_to_tuple(
-                   [Data,
-                    binary_to_integer(Dst),
-                    Type])
+                case re:run(Line, Regexp1, [{capture, [1,2,3], binary}]) of
+                  {match, [Hash, Dst, Type]} ->
+                    list_to_tuple( [Hash,
+                                    binary_to_integer(Dst), Type]);
+                  _ ->
+                    {match, [Hash, Src, Dst, Len, PC]} =
+                      re:run(Line, Regexp2, [{capture, [1,2,3,4,5], binary}]),
+                    list_to_tuple( [Hash,
+                                    binary_to_integer(Src),
+                                    binary_to_integer(Dst),
+                                    binary_to_integer(Len),
+                                    binary_to_integer(PC)])
+                end
              end, Lines)}.
 
 %% NL,send[,<Type>],[<Datalen>],<Dst>,<Data>
@@ -309,6 +463,9 @@ from_term({nl,send,Dst,Data}, Cfg) ->
 from_term({nl,send,Type,Dst,Data}, Cfg) ->
   BLen = integer_to_binary(byte_size(Data)),
   [list_to_binary(["NL,send,",atom_to_binary(Type,utf8),$,,BLen,$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
+%% NL,ack,Src,Dst,Data
+from_term({nl, ack, Src,Dst, Data}, Cfg) ->
+  [list_to_binary(["NL,ack,", integer_to_binary(Src),$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
 %% NL,set,routing,[<A1>-><A2>],[<A3>-><A4>],..,<Default Addr>
 from_term({nl,set,routing,Routing}, Cfg) ->
   RoutingLst =

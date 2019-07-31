@@ -25,7 +25,7 @@
 %% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 %% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
--module(mod_mux_nl).
+-module(mod_mux_burst).
 -behaviour(fsm_worker).
 
 -include("fsm.hrl").
@@ -42,27 +42,23 @@ register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   Logger = case lists:keyfind(logger, 1, ArgS) of
              {logger,L} -> L; _ -> nothing
            end,
-  [#sm{roles = Roles, logger = Logger, module = fsm_mux_nl}].
+  [#sm{roles = Roles, logger = Logger, module = fsm_mux_burst}].
 
 parse_conf(_Mod_ID, ArgS, Share) ->
-  Time_discovery_set  = [Time  || {time_discovery, Time} <- ArgS],
-  Discovery_period_set = [Time  || {discovery_period, Time} <- ArgS],
   Protocols_set = [P  || {protocols, P} <- ArgS],
-
-  Time_discovery  = set_params(Time_discovery_set, 30), %s
-  Discovery_period = set_params(Discovery_period_set, 10), %s
+  Im_protocol_set = [P  || {im_protocol, P} <- ArgS],
 
   ShareID = #sm{share = Share},
+  Protocol_list = parse_protocols(Protocols_set),
+  set_protocols(ShareID, Protocol_list, [{discovery, evoicrppfr}, {burst, burst}, {ack, sncfloodr}]),
 
-  set_protocols(ShareID, Protocols_set, [{discovery, sncfloodr}, {burst, polling}]),
-  share:put(ShareID, [{time_discovery, Time_discovery},
-                      {discovery_period, Discovery_period}]).
+  Im_protocol  = set_params(Im_protocol_set, sncfloodr),
+  share:put(ShareID, [{im_protocol, Im_protocol}]).
 
-set_params(Param, Default) ->
-  case Param of
-    []     -> Default;
-    [Value]-> Value
-  end.
+parse_protocols([]) -> [];
+parse_protocols(Protocols_set) ->
+  [P] = Protocols_set,
+  if is_tuple(P) -> tuple_to_list(P); true -> [] end.
 
 set_protocols(ShareID, Protocols_set, Default) ->
  Protocols =
@@ -83,6 +79,14 @@ set_protocols(ShareID, Protocols_set, Default) ->
           share:put(ShareID, [{discovery_protocol, P}]);
         {burst, P} ->
           share:put(ShareID, [{burst_protocol, P}]);
+        {ack, P} ->
+          share:put(ShareID, [{ack_protocol, P}]);
         _ -> nothing
       end
     end, Protocols).
+
+set_params(Param, Default) ->
+  case Param of
+    []     -> Default;
+    [Value]-> Value
+  end.

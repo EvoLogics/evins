@@ -124,7 +124,7 @@
                   {sendstart, backoff},
                   {recvstart, backoff}
                  ]},
-                  
+
                 {transmit,
                  [{data_sent, idle},
                   {transmit, sensing}
@@ -180,6 +180,16 @@ change_backoff(SM, Type) ->
   ?TRACE(?ID, "Backoff after ~p : ~p~n", [Type, Val]),
   Val.
 
+process_async({status, Status, Reason}) ->
+  case Status of
+    'INITIATION' when Reason == 'LISTEN'-> initiation_listen;
+    'INITIATION' -> busy_online;
+    'ONLINE'-> busy_online;
+    'OFFLINE' -> busy_online;
+    'BACKOFF' -> busy_online;
+    'BUSY' when Reason == 'BACKOFF' -> busy_backoff;
+    'BUSY' -> busy
+  end;
 process_async({sendstart, _, _, _, _}) -> sendstart;
 process_async({sendend, _, _, _, _}) -> sendend;
 process_async({recvstart}) -> recvstart;
@@ -223,8 +233,7 @@ handle_specific_command(_, SM, _, _) -> SM.
 
 %%--------------------------------Handler functions-------------------------------
 handle_event(MM, SM, Term) ->
-  ?INFO(?ID, "HANDLE EVENT  ~150p~n~150p~n", [MM, SM]),
-  ?TRACE(?ID, "~p~n", [Term]),
+  ?INFO(?ID, "HANDLE EVENT  ~150p ~p~n", [MM, Term]),
   Answer_timeout = fsm:check_timeout(SM, answer_timeout),
   case Term of
     {timeout, answer_timeout} ->
@@ -233,17 +242,20 @@ handle_event(MM, SM, Term) ->
       run_hook_handler(MM, SM, Term, Event);
     {allowed} ->
       Conf_pid = share:get(SM, {pid, MM}),
-      fsm:broadcast(SM, at_impl, {ctrl, {pid, Conf_pid}}),
-      share:put(SM, pid, Conf_pid),
-      env:put(SM, connection, allowed);
+      [fsm:broadcast(__, at_impl, {ctrl, {pid, Conf_pid}}),
+       share:put(__, pid, Conf_pid),
+       env:put(__, connection, allowed)
+      ](SM);
     {denied} ->
-      share:put(SM, pid, nothing),
-      if Answer_timeout ->
-          fsm:cast(SM, at_impl,  {send, {async, {error, "DISCONNECTED"}}});
-         true ->
-          SM
+      Cast_handler = 
+      fun(true, LSM) ->
+          fsm:cast(LSM, at_impl,  {send, {async, {error, "DISCONNECTED"}}});
+         (false, LSM) -> LSM
       end,
-      env:put(SM, connection, denied);
+      [share:put(__, pid, nothing),
+       Cast_handler(Answer_timeout, __),
+       env:put(__, connection, denied)
+      ](SM);
     {connected} when MM#mm.role == at_impl ->
       case share:get(SM, pid) of
         nothing -> SM;
@@ -259,18 +271,18 @@ handle_event(MM, SM, Term) ->
             end;
            (LSM, ok) -> LSM
         end,
-      [
-       handle_specific_command(MM, __, Cmd, Param),
+      [handle_specific_command(MM, __, Cmd, Param),
        fsm:maybe_send_at_command(__, Term, Handle_cache)
-      ] (SM);
+      ](SM);
     {at,{pid,P},"*SENDIM",Dst,noack,Bin} ->
       case env:get(SM, connection) of
         allowed ->
           Hdr = <<0:5,(?FLAG2NUM(data)):3>>, %% TODO: move to mac_hf?
           Tx = {at,{pid,P},"*SENDIM",Dst,noack,<<Hdr/binary,Bin/binary>>},
-          share:put(SM, tx, Tx), 
-          fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", "OK"}}),
-          run_hook_handler(MM, SM, Term, transmit);
+          [share:put(__, tx, Tx),
+           fsm:cast(__, at_impl,  {send, {sync, "*SENDIM", "OK"}}),
+           run_hook_handler(MM, __, Term, transmit)
+          ](SM);
         _ ->
           fsm:cast(SM, at_impl,  {send, {sync, "*SENDIM", {error, "DISCONNECTED"}}})
       end;
@@ -293,12 +305,10 @@ handle_event(MM, SM, Term) ->
     {async, _, _} ->
       fsm:cast(SM, at_impl, {send, Term});
     {async, Tuple} ->
-      fsm:cast(SM, at_impl, {send, Term}),
       NSM =
         case process_async(Tuple) of
-          E when E == sendstart; E == recvstart ->
-            [
-             fsm:set_event(__, E),
+          E when E == sendstart; E == recvstart; E == busy_backoff ->
+            [fsm:set_event(__, E),
              env:put(__, channel_state, busy)
             ] (SM);
           E when E == sendend; E == recvend ->
@@ -306,7 +316,9 @@ handle_event(MM, SM, Term) ->
           _ ->
             SM
         end,
-      run_hook_handler(MM, NSM, Term, SM#sm.event);
+      [fsm:cast(__, at_impl, {send, Term}),
+       run_hook_handler(MM, __, Term, SM#sm.event)
+      ](NSM);
     UUg ->
       ?ERROR(?ID, "~s: unhandled event:~p~n", [?MODULE, UUg]),
       SM
@@ -316,11 +328,11 @@ handle_idle(_MM, SM, _) ->
   fsm:set_event(SM, eps).
 
 handle_sensing(_MM, #sm{env = #{channel_state := busy}} = SM, _) ->
-  init_backoff(SM),
-  fsm:set_event(SM, backoff);
+  [init_backoff(__),
+   fsm:set_event(__, backoff)
+  ](SM);
 handle_sensing(_MM, #sm{env = #{channel_state := idle}} = SM, _) ->
-  init_backoff(SM),
-  [
+  [init_backoff(__),
    fsm:set_event(__, eps),
    fsm:maybe_set_timeout(__, {ms, rand:uniform(50)}, backoff_timeout)
   ] (SM).

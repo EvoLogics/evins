@@ -69,7 +69,7 @@
 -define(ADD_INFO_MAX, 255).
 -define(MAX_DATA_LEN, 64).
 
--define(MAX_IM_LEN, 50).
+-define(MAX_IM_LEN, 60).
 -define(Q_STATISTICS_SIZE, 300).
 -define(RQ_SIZE, 100).
 -define(LIST_ALL_PROTOCOLS, [staticr,
@@ -82,7 +82,8 @@
            sncfloodpfr,
            sncfloodpfrack,
            evoicrppfr,
-           evoicrppfrack
+           evoicrppfrack,
+           burst
           ]).
 
 -record(pr_conf,{stat=false, brp=false, br_na=false, ack=false, ry_only=false, pf=false, prob=false, evo=false}).
@@ -113,7 +114,8 @@
     sncfloodpfr     -> 7;
     sncfloodpfrack  -> 8;
     evoicrppfr      -> 9;
-    evoicrppfrack   -> 10
+    evoicrppfrack   -> 10;
+    burst           -> 11
   end).
 
 -define(PROTOCOL_MAC_PID(P),
@@ -136,7 +138,8 @@
       {sncfloodpfr, [{pf, brp, br_na}, fsm_opportunistic_flooding]},  % Pathfind and relay, based on sequence number controlled flooding
       {sncfloodpfrack,[{pf, brp, br_na, ack}, fsm_opportunistic_flooding]}, % Pathfind and relay, based on sequence number controlled flooding with acknowledgement
       {evoicrppfr, [{pf, br_na, evo}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol
-      {evoicrppfrack, [{pf, br_na, evo, ack}, fsm_opportunistic_flooding]} % Evologics Information Carrying routing protocol with acknowledgement
+      {evoicrppfrack, [{pf, br_na, evo, ack}, fsm_opportunistic_flooding]}, % Evologics Information Carrying routing protocol with acknowledgement,
+      {burst, [{ry_only, br_na, ack}, fsm_nl_burst]}
     ]).
 
 -define(PROTOCOL_DESCR, ["\n",
@@ -146,13 +149,14 @@
        "sncfloodrack   - sequence number controlled flooding with acknowledgement\n",
        "sncfloodpfr    - pathfind and relay to destination\n",
        "sncfloodpfrack - pathfind and relay to destination with acknowledgement\n",
-       "evoicrppfr     - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header\n"
-       "evoicrppfrack  - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header with acknowledgement\n"
-       "dpfloodr       - dynamic probabilistic flooding\n"
-       "dpfloodrack    - dynamic probabilistic flooding with acknowledgement\n"
-       "icrpr          - information carrying routing protocol\n"
-       "loarp          - low overhead routing protocol\n"
-       "loarpack       - low overhead routing protocol with acknowledgement\n"
+       "evoicrppfr     - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header\n",
+       "evoicrppfrack  - Evologics ICRP pathfind and relay, path is chosend using Rssi and Integrity of Evo DMACE Header with acknowledgement\n",
+       "dpfloodr       - dynamic probabilistic flooding\n",
+       "dpfloodrack    - dynamic probabilistic flooding with acknowledgement\n",
+       "icrpr          - information carrying routing protocol\n",
+       "loarp          - low overhead routing protocol\n",
+       "loarpack       - low overhead routing protocol with acknowledgement\n",
+       "burst          - burst data transmission, transmitting data > 64 bytes with acknowledgement\n"
       ]).
 
 
@@ -162,6 +166,7 @@
        "\n\n\n",
        "===================================== Send and receive ======================================\n",
        "NL,send[,<Type>],[<Datalen>],<Dst>,<Data>\t- Send data, <Datalen> - optional,
+        \t\t<Type> - tolerant, used to send burst data\n
         \t\t<Type> - optional, used for polling apps: alarm/tolerant/sensitive/broadcast\n",
        "NL,recv,<Datalen>,<Src>,<Dst>,<Data>\t\t- Recv data\n",
        "\n\n\n",
@@ -188,34 +193,17 @@
        "NL,get,protocols\t\t\t- Get description of all protocols\n",
        "NL,get,protocol\t\t\t\t\t- Get current routing protocol\n",
        "NL,get,protocolinfo,<Protocol_name>\t\t\t- Get description of specific protocol\n",
-       "NL,get,neighbours\t\t\t\t- Get current  neighbours
-       \t\t\tAnswer:
-       \t\t\tNL,neighbours,[<Addr1>:<Integrity1>:<Rssi1>:<TimeLastUpdate1(ms)>],[<Addr2>:<Integrity2>:<Rssi2>:<TimeLastUpdate2(ms)>],..\n\n"
+       "NL,get,neighbours\t\t\t\t- Get current  neighbours\n",
        "NL,get,routing\t\t\t\t\t- Get current routing table\n",
        "NL,get,state\t\t\t\t\t- Get current  state of protocol (sm)\n",
-       "NL,get,states\t\t\t\t\t- Get last 50  states of protocol (sm)\n",
+       "NL,get,states\t\t\t\t\t- Get last 50  states of protocol (sm)\n"
        "\n\n\n",
        "======================== Statistics commands for protocols of all types ========================\n",
-       "NL,get,statistics,neighbours\t\t\t- Get statistics of all neighbours from start of program till the current time
-       \t\t\tAnswer:
-       \t\t\tneighbour:<Neighbour>nast update:<Time>count:<Count>Total count:<Total count>\n"
-       "\n",
+       "NL,get,statistics,neighbours\t\t\t- Get statistics of all neighbours from start of program till the current time\n",
        "================== Statistics commands only for protocols of path finding type ==================\n",
-       "NL,get,statistics,paths\t\t\t\t- Get statistics of all paths from start of program till the current time
-       \t\t\tAnswer:
-       \t\t\t<Path><Duration find path><Count found this path><Total count try findpath>\n
-       \t\t\t<Path><Count found this path><Total count try findpath>\n"
-       "\n",
+       "NL,get,statistics,paths\t\t\t\t- Get statistics of all paths from start of program till the current time\n",
        "========================= Statistics commands only for protocols without ack ========================\n",
-       "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time
-       \t\t\tAnswer:
-       \t\t\t<relay/source/destination><Data> send_time:<Time> recv_time:<Time> src:<Address> dst:<Address> last_ttl:<TTL>"
-       "\n\n\n",
-       "========================= Statistics commands only for protocols with ack ========================\n",
-       "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time
-       \t\t\tAnswer:
-       \t\t\t<relay or source> data:<Data> len:<Len> duration:<Time between data transmission and getting ack> state:<Delivered/Failed> total:<Tries> dst:<Adderss> hops:<Hops>"
-       "\n\n\n",
+       "NL,get,statistics,data\t\t\t\t- Get statistics of all messages were sent from start of program till the current time\n",
        "========================= Time commands ========================\n",
        "NL,get,time,monotonic\t\t\t\t-Get monotonic time, time in milliseconds from the start\n"
        "\n\n\n",
@@ -228,7 +216,7 @@
       ]).
 
 -define(MUXHELP, ["\n",
-      "=========================================== MUX commands ===========================================\n",
+      "=========================================== MUX Polling commands ===========================================\n",
       "NL,start,discovery,<Discovery_period>,<Time_discovery>- Run discovery, Time_discovery - whole discovery time in s,
                                                        \tDiscovery_period - time for one discovery try in s
                                                        \tTime_discovery / Discovery_period = Retry_count\n",
@@ -242,6 +230,19 @@
       "=========================================== Sync MUX responses =====================================\n",
       "NL,error,norouting\t\t\t\t- Sync error message, if no routing to dst exists (Static routing)\n",
       "NL,error,noprotocol\t\t\t\t- Sync error message, if no protocol specified\n",
+      "\n\n\n"]).
+
+-define(MUXBURSTHELP, ["\n",
+      "=========================================== MUX Burst commands ===========================================\n",
+       "NL,get,buffer\t\t\t\t\t- Get current buffer, data has to be send\n",
+       "NL,flush,buffer\t\t\t\t\t- Clear all messages are saved in the buffer\n",
+       "NL,get,bitrate\t\t\t\t\t- Bitrate of last burst data transmission\n",
+       "NL,get,status\t\t\t\t\t- Only for burst protocol. Last status of activity\n",
+       "NL,get,service\t\t\t\t\t- Only for burst protocol. Last modem state\n",
+       "========================= Statistics commands only for protocols with ack ========================\n",
+       "NL,get,statistics,tolerant\t\t\t\t- Get statistics of all messages were sent from start of program till the current time\n",
+       "========================= MUX Burst routing commands ========================\n",
+       "NL,update,routing\t\t\t\t\t- Update routing. Routing protocol configured in mux will be used\n",
       "\n\n\n"]).
 
 -define(STATE_DESCR,

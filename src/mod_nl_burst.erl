@@ -1,4 +1,4 @@
-%% Copyright (c) 2015, Oleksiy Kebkal <lesha@evologics.de>
+%% Copyright (c) 2015, Veronika Kebkal <veronika.kebkal@evologics.de>
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 %% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 %% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
--module(mod_mux_nl).
+-module(mod_nl_burst).
 -behaviour(fsm_worker).
 
 -include("fsm.hrl").
@@ -34,55 +34,55 @@
 -export([start/4, register_fsms/4]).
 
 start(Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-  fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
+    fsm_worker:start(?MODULE, Mod_ID, Role_IDs, Sup_ID, {M, F, A}).
 
 register_fsms(Mod_ID, Role_IDs, Share, ArgS) ->
   parse_conf(Mod_ID, ArgS, Share),
-  Roles = fsm_worker:role_info(Role_IDs, [nl_impl, nl]),
+  Roles = fsm_worker:role_info(Role_IDs, [at, nl_impl]),
   Logger = case lists:keyfind(logger, 1, ArgS) of
              {logger,L} -> L; _ -> nothing
            end,
-  [#sm{roles = Roles, logger = Logger, module = fsm_mux_nl}].
+  [#sm{roles = [hd(Roles)], module = fsm_conf}, #sm{roles = Roles, logger = Logger, module = fsm_nl_burst}].
 
-parse_conf(_Mod_ID, ArgS, Share) ->
-  Time_discovery_set  = [Time  || {time_discovery, Time} <- ArgS],
-  Discovery_period_set = [Time  || {discovery_period, Time} <- ArgS],
-  Protocols_set = [P  || {protocols, P} <- ArgS],
 
-  Time_discovery  = set_params(Time_discovery_set, 30), %s
-  Discovery_period = set_params(Discovery_period_set, 10), %s
-
+parse_conf(Mod_ID, ArgS, Share) ->
   ShareID = #sm{share = Share},
+  Start_time = erlang:monotonic_time(milli_seconds),
+  [NL_Protocol] = [Protocol_name  || {nl_protocol, Protocol_name} <- ArgS],
+  Max_queue_set = [Addrs          || {max_queue, Addrs} <- ArgS],
+  Max_burst_len_set  = [Max  || {max_burst_len, Max} <- ArgS],
+  Wait_ack_set  = [Time  || {wait_ack, Time} <- ArgS],
+  Send_ack_set  = [Time  || {send_ack_tmo, Time} <- ArgS],
+  Update_retries_set = [P  || {update_retries, P} <- ArgS],
+  Tmo_transmit = [Time || {tmo_transmit, Time} <- ArgS],
 
-  set_protocols(ShareID, Protocols_set, [{discovery, sncfloodr}, {burst, polling}]),
-  share:put(ShareID, [{time_discovery, Time_discovery},
-                      {discovery_period, Discovery_period}]).
+  Max_queue  = set_params(Max_queue_set, 3),
+  Wait_ack  = set_params(Wait_ack_set, 120), %s
+  Send_ack  = set_params(Send_ack_set, 3),
+  Max_burst_len  = set_params(Max_burst_len_set, Max_queue * 1000),
+  Update_retries  = set_params(Update_retries_set, 1),
+
+  {Tmo_start, Tmo_end}    = set_timeouts(Tmo_transmit, {1, 4}),
+
+  share:put(ShareID, [{nl_start_time, Start_time},
+                      {nl_protocol, NL_Protocol},
+                      {max_queue, Max_queue},
+                      {wait_ack, Wait_ack},
+                      {send_ack_tmo, Send_ack},
+                      {max_burst_len, Max_burst_len},
+                      {tmo_transmit,   {Tmo_start, Tmo_end} },
+                      {update_retries, Update_retries}]),
+
+  ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]).
+
+set_timeouts(Tmo, Defaults) ->
+  case Tmo of
+    [] -> Defaults;
+    [{Start, End}]-> {Start, End}
+  end.
 
 set_params(Param, Default) ->
   case Param of
     []     -> Default;
     [Value]-> Value
   end.
-
-set_protocols(ShareID, Protocols_set, Default) ->
- Protocols =
-  lists:filtermap(
-    fun(X) ->
-      {Protocol_type, _} = X,
-      IfConf = lists:keyfind(Protocol_type, 1, Protocols_set),
-      case IfConf of
-        false -> {true, X};
-        _ -> {true, IfConf}
-      end
-    end, Default),
-
-  lists:map(
-    fun(X) ->
-      case X of
-        {discovery, P} ->
-          share:put(ShareID, [{discovery_protocol, P}]);
-        {burst, P} ->
-          share:put(ShareID, [{burst_protocol, P}]);
-        _ -> nothing
-      end
-    end, Protocols).

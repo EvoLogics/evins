@@ -43,7 +43,8 @@ start(Role_ID, Mod_ID, MM) ->
   _ = {time, period},
   _ = {source, relay},
   _ = {sensitive, alarm, tolerant, broadcast},
-  _ = {set, get, address, start, stop, protocolinfo, protocol, protocols, routing, neighbours, neighbour, state, states, paths, data, statistics, flush, polling, discovery, buffer, time},
+  _ = {set, get, address, start, stop, protocolinfo, protocol, protocols, routing, neighbours, neighbour, state, states, service, bitrate,
+       status, paths, data, statistics, flush, polling, discovery, buffer, time, ps},
   Cfg = #config{eol = "\r\n"},
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
@@ -100,7 +101,6 @@ nl_send_extract(L, Cfg) ->
     end
   catch error: _Reason -> [{nl, error, {parseError, L}}]
   end.
-
 %% NL,set,routing,[A1->A2],[A3->A4],..,default->Addr
 nl_extract_subject(<<"set">>, <<"routing,", Params/binary>>) ->
   Map =
@@ -120,6 +120,12 @@ nl_extract_subject(<<"set">>, <<"neighbours,", Params/binary>>) ->
       [4] -> [list_to_tuple([binary_to_integer(I) || I <- Item]) || Item <- Lst]
     end,
   {nl, set, neighbours, Neighbours};
+nl_extract_subject(<<"set">>, <<"ps,", Params/binary>>) ->
+  Flag = case Params of
+         <<"on">> -> on;
+         <<"off">> -> off
+       end,
+  {nl,set,ps,Flag};
 nl_extract_subject(<<"set">>, <<"debug,", Params/binary>>) ->
   Flag = case Params of
          <<"on">> -> on;
@@ -141,16 +147,31 @@ nl_extract_subject(<<"start">>, <<"polling,", Params/binary>>) ->
            <<"nb">> -> nb
          end,
   {nl,start,polling,Flag};
+
+%% NL,ack,Src,Dst,Data
+nl_extract_subject(<<"ack">>, <<Params/binary>>) ->
+   [BSrc,BDst,Data] = binary:split(Params,<<$,>>, [global]),
+   [Src,Dst] = [binary_to_integer(V) || V <- [BSrc,BDst]],
+   {nl, ack, Src, Dst, Data};
+
 %% NL telegrams with atoms and positive integers as parameters
 nl_extract_subject(Subject, Params) ->
   ParamLst =
     lists:map(fun(<<H:8,_/binary>> = Item) when H >= $0, H =< $9 -> binary_to_integer(Item);
-                 (Item) -> binary_to_existing_atom(Item,utf8)
+                 (Item) when  Item =/= <<>> -> binary_to_existing_atom(Item,utf8)
               end, [Subject | binary:split(Params,<<$,>>,[global])]),
   list_to_tuple([nl | ParamLst]).
 
 from_term({nl, help, Bin}, Cfg) ->
   [Bin, Cfg];
+%% NL,send,ack,Len,Dst,Data
+from_term({nl, send, ack, Len, Dst, Data}, Cfg) ->
+  [list_to_binary(["NL,send,ack,",integer_to_binary(Len),$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
+%% NL,recv,Datalen,Src,Dst,Data
+from_term({nl, recv, Type, Src, Dst, Data}, Cfg) ->
+  BLen = integer_to_binary(byte_size(Data)),
+  BType = atom_to_binary(Type, utf8),
+  [list_to_binary(["NL,recv,",BType,$,,BLen,$,,integer_to_binary(Src),$,,integer_to_binary(Dst),$,,Data,Cfg#config.eol]), Cfg];
 %% NL,recv,Datalen,Src,Dst,Data
 from_term({nl, recv, Src, Dst, Data}, Cfg) ->
   BLen = integer_to_binary(byte_size(Data)),
@@ -161,6 +182,8 @@ from_term({nl,protocolinfo,Protocol,PropList}, Cfg) ->
   %% H = ["name : ",atom_to_list(Protocol),EOL],
   T = [[Key," : ",Value,EOL] || {Key,Value} <- PropList],
   [list_to_binary(["NL,protocolinfo,",atom_to_list(Protocol),$,,EOL,T,EOL]), Cfg];
+from_term({nl, ps, Params}, Cfg)  when is_list(Params) ->
+  [list_to_binary(["NL,ps,",Params,Cfg#config.eol]), Cfg];
 %% NL,routing,[<A1>-><A2>],..,[default->Default]
 from_term({nl, routing, []}, Cfg)  ->
   [list_to_binary(["NL,routing,","default->63",Cfg#config.eol]), Cfg];
@@ -184,17 +207,48 @@ from_term({nl, neighbours, Neighbours}, Cfg) when is_list(Neighbours) ->
               end, Neighbours),
   [list_to_binary(["NL,neighbours,",lists:join(",",NeighboursLst),Cfg#config.eol]), Cfg];
 %% NL,state,State(Event)
-from_term({nl, state, {State, Event}}, Cfg) ->
+from_term({nl, state, {State, Event}}, Cfg) when is_atom(State) ->
   [list_to_binary(["NL,state,",atom_to_list(State),$(,atom_to_list(Event),$),Cfg#config.eol]), Cfg];
+from_term({nl, state, {State, Event}}, Cfg) ->
+  [list_to_binary(["NL,state,",State,$(,Event,$),Cfg#config.eol]), Cfg];
+%% NL,service,status:P1,P2 service:empty
+%% NL,service,status:P1,P2 service:src,dst,type,decoded,transmitted,rssi,integrity
+from_term({nl, service, Status, []}, Cfg) ->
+  EOL = Cfg#config.eol,
+  {status, P1, P2} = Status,
+  BStatus = lists:flatten([io_lib:format("status:~s ~s service:empty",[P1, P2])]),
+  [list_to_binary(["NL,service,",BStatus, EOL]), Cfg];
+from_term({nl, service, Status, Service}, Cfg) ->
+  EOL = Cfg#config.eol,
+  {recvsrv, Src, Dst, Type, Decoded, Transmitted, RRssi, RIntegrity} = Service,
+  BSrv =
+  list_to_binary([integer_to_list(Src),$,,integer_to_list(Dst),$,,Type,$,,
+                  integer_to_list(Decoded),$,,integer_to_list(Transmitted),$,,
+                  integer_to_list(RRssi),$,,integer_to_list(RIntegrity)]),
+  {status, P1, P2} = Status,
+  BStatus = lists:flatten([io_lib:format("status:~s ~s",[P1, P2])]),
+  BService = lists:flatten([io_lib:format(" service:~s",[BSrv])]),
+  [list_to_binary(["NL,service,",BStatus, BService, EOL]), Cfg];
+%% NL,bitrate,empty
+%% NL,bitrate,bitrate
+from_term({nl, bitrate, empty}, Cfg) ->
+  [list_to_binary(["NL,bitrate,empty", Cfg#config.eol]), Cfg];
+from_term({nl, bitrate, Bitrate}, Cfg) ->
+  [list_to_binary(["NL,bitrate,",integer_to_list(Bitrate), Cfg#config.eol]), Cfg];
+%% NL,status,Status
+from_term({nl, status, Status}, Cfg) ->
+  [list_to_binary(["NL,status,",Status, Cfg#config.eol]), Cfg];
 %% NL,states,<EOL>State1(Event1)<EOL>...StateN(EventN)<EOL><EOL>
-from_term({nl, states, []}, Cfg) ->
+from_term({nl, states, S}, Cfg) when S == empty; S == [] ->
   EOL = Cfg#config.eol,
   [list_to_binary(["NL,states,empty",EOL]), Cfg];
 from_term({nl, states, Transitions}, Cfg) ->
   EOL = Cfg#config.eol,
   TransitionsLst =
-    lists:map(fun({State,Event}) ->
-                  lists:flatten([atom_to_list(State),$(,atom_to_list(Event),$),EOL])
+    lists:map(fun({State,Event}) when is_atom(State) ->
+                  lists:flatten([atom_to_list(State),$(,atom_to_list(Event),$),EOL]);
+                 ({State,Event}) ->
+                  lists:flatten([State,$(,Event,$),EOL])
               end, Transitions),
   [list_to_binary(["NL,states,",EOL,lists:join(",",TransitionsLst),EOL]), Cfg];
 %% NL,version,Major,Minor,Description
@@ -217,7 +271,7 @@ from_term({nl,statistics,neighbours,Neighbours}, Cfg) ->
   EOL = Cfg#config.eol,
   NeighboursLst =
     lists:map(fun({Neighbour,Time,Count,Total}) ->
-                  lists:flatten([io_lib:format("neighbour:~p last update:~B count:~B total:~B",[Neighbour,Time,Count,Total]),EOL])
+                  lists:flatten([io_lib:format(" neighbour:~p last update:~B count:~B total:~B",[Neighbour,Time,Count,Total]),EOL])
               end, Neighbours),
   [list_to_binary(["NL,statistics,neighbours,",EOL,NeighboursLst,EOL]), Cfg];
 %% NL,statistics,paths,<EOL> <relay or source> path:<path> duration:<duration> count:<count> total:<total><EOL>...<EOL><EOL>
@@ -229,13 +283,14 @@ from_term({nl,statistics,paths,Paths}, Cfg) ->
   PathsLst =
     lists:map(fun({Path,Duration,Count,Total}) ->
                     PathS = lists:flatten(lists:join(",",[integer_to_list(I) || I <- Path])),
-                    lists:flatten([io_lib:format("path:~s duration:~.1.0f count:~B total:~B",[PathS,Duration,Count,Total]),EOL]);
+                    lists:flatten([io_lib:format(" path:~s duration:~.1.0f count:~B total:~B",[PathS,Duration,Count,Total]),EOL]);
                   ({Path,Count,Total}) ->
                     PathS = lists:flatten(lists:join(",",[integer_to_list(I) || I <- Path])),
-                    lists:flatten([io_lib:format("path:~s count:~B total:~B",[PathS,Count,Total]),EOL])
+                    lists:flatten([io_lib:format(" path:~s count:~B total:~B",[PathS,Count,Total]),EOL])
               end, Paths),
   [list_to_binary(["NL,statistics,paths,",EOL,PathsLst,EOL]), Cfg];
-%% NL,statistics,data,<EOL> <relay or source> data:<data hash> len:<length> duration:<duration> state:<state> total:<total> dst:<dst> hops:<hops><EOL>...<EOL><EOL>
+%% NL,statistics,data,<EOL> <relay or source> data:<data hash> len:<length> duration:<duration> state:<state> src:<total> dst:<dst> hops:<hops><EOL>...<EOL><EOL>
+%% NL,statistics,data,<EOL> <relay or source> data:<data hash> len:<length> send_time:<duration> recv_time:<state> src:<total> dst:<dst> last_ttl:<hops><EOL>...<EOL><EOL>
 %% NL,statistics,data,
 %%  source data:0xabde len:4 duration:5.6 state:delivered total:1 dst:4 hops:1
 %%  source data:0x1bdf len:4 duration:11.4 state:delivered total:1 dst:4 hops:2
@@ -254,6 +309,21 @@ from_term({nl,statistics,data,Data}, Cfg) ->
               end
             end, Data),
   [list_to_binary(["NL,statistics,data,",EOL,DataLst,EOL]), Cfg];
+%% NL,statistics,tolerant,<EOL> <relay or source> data:<data hash> len:<length> duration:<duration> state:<state> src:<total> dst:<dst><EOL>...<EOL><EOL>
+from_term({nl,statistics,tolerant,Data}, Cfg) ->
+  EOL = Cfg#config.eol,
+  DataLst =
+    lists:map(fun(Element) ->
+              case Element of
+                {Role,PC,Hash,Len,Duration,State,Src,Dst} when is_float(Duration) ->
+                    lists:flatten([io_lib:format(" ~p id:~B data:0x~4.16.0b len:~B duration:~.1.0f state:~s src:~B dst:~B",
+                                                 [Role,PC,Hash,Len,Duration,State,Src,Dst]),EOL]);
+                {Role,PC,Hash,Len,Duration,State,Src,Dst} ->
+                    lists:flatten([io_lib:format(" ~p id:~B data:0x~4.16.0b len:~B duration:~B state:~s src:~B dst:~B",
+                                                 [Role,PC,Hash,Len,Duration,State,Src,Dst]),EOL])
+              end
+            end, Data),
+  [list_to_binary(["NL,statistics,tolerant,",EOL,DataLst,EOL]), Cfg];
 %% NL,protocols,Protocol1,...,ProtocolN
 from_term({nl,protocols,Protocols}, Cfg) ->
   [list_to_binary(["NL,protocols,",lists:join(",", [atom_to_binary(P,utf8) || P <- Protocols]),Cfg#config.eol]), Cfg];
@@ -271,9 +341,14 @@ from_term({nl, buffer, []}, Cfg) ->
 from_term({nl, buffer, Buffer}, Cfg) when is_list(Buffer) ->
   EOL = Cfg#config.eol,
   BufferLst = lists:map(fun({Payload, Dst, XMsgType}) ->
-                  lists:flatten([io_lib:format("data:~p dst:~B type:~s",
-                  [Payload, Dst, XMsgType]), EOL])
-              end, Buffer),
+                            <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
+                            lists:flatten([io_lib:format("data:0x~4.16.0b dst:~B type:~s",
+                            [Hash, Dst, XMsgType]), EOL]);
+                           ({Payload, Src, Dst, Len, PC}) ->
+                            <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
+                            lists:flatten([io_lib:format("data:0x~4.16.0b src:~B dst:~B len:~B id:~B",
+                            [Hash, Src, Dst, Len, PC]), EOL])
+                        end, Buffer),
   [list_to_binary(["NL,buffer,",EOL, BufferLst, EOL]), Cfg];
 
 %% NL command with atoms or integers

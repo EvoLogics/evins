@@ -48,7 +48,7 @@
 
 -define(todo, mix:todo(?MODULE, ?LINE, ?ID)).
 
--define(ID, SM#sm.id).
+-define(ID, SM).
 
 -define(TRACE(ID,Fmt,Data), ?Format(ID, Fmt, Data, trace)).
 -define(INFO(ID,Fmt,Data), ?Format(ID, Fmt, Data, info)).
@@ -56,21 +56,22 @@
 -define(ERROR(ID,Fmt,Data), ?Format(ID, Fmt, Data, error)).
 
 -record(sm,{
-	  id,
-	  table,
-	  share,
-	  dets_share,
-	  roles,
-	  module,
-	  env = #{}, %% big state of the fsm
-	  state = idle,
-	  event = eps,
-	  event_params = [],
-	  stack = [],
-	  final = [],
-	  timeouts = []}).
+    id,
+    logger = error,
+    table,
+    share,
+    dets_share,
+    roles,
+    module,
+    env = #{}, %% big state of the fsm
+    state = idle,
+    event = eps,
+    event_params = [],
+    stack = [],
+    final = [],
+    timeouts = []}).
 
 -record(cbstate, {id,     %% cowboy id
-		  fsm_id, %% fsm id
-		  share   %% share ets table id
-		 }). %% cowboy state
+      fsm_id, %% fsm id
+      share   %% share ets table id
+     }). %% cowboy state
