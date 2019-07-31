@@ -228,7 +228,7 @@ handle_event(MM, SM, Term) ->
          fsm:cast(__, nl_impl, {send, {nl, statistics, data, empty}})
         ](SM);
       {nl, set, ps, ON} ->
-        State = if ON -> 1; true -> 0 end,
+        State = if ON == on -> 1; true -> 0 end,
         [fsm:maybe_send_at_command(__, {at, "@PS", integer_to_list(State)}),
          fsm:cast(__, nl_impl, {send, {nl, ps, ok}})
         ](SM);
