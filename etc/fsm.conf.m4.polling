@@ -1,0 +1,15 @@
+divert(-1)
+changequote(<<,>>)
+define(<<address>>, esyscmd(<<echo -n $address>>))
+define(<<subnet>>, esyscmd(<<echo -n $subnet>>))
+define(<<emusubnet>>, esyscmd(<<echo -n $emusubnet>>))
+define(<<evins_node>>, <<dnl
+
+{module, poll$1, [{role,at,iface,{socket,"emusubnet.$1",9200,client}},
+               {role,nl_impl,iface,{socket,"subnet.$1",1111,server}},
+               {role,nmea,iface,{socket,"subnet.$1",9600,server}},
+               {mfa,mod_polling,run,[{nl_protocol,polling},
+                                     {max_sensitive_queue,1}]}]}.
+>>)
+divert(0)dnl
+evins_node(address)

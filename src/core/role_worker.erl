@@ -130,7 +130,7 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts
         end,
   SOpts = case Type of
             client -> [{keepalive, true}, {send_timeout, 1000}, binary, {active, true}, Pkt];
-            server -> [{keepalive, true}, {send_timeout, 1000}, binary, {ip, IP}, {active, true}, {reuseaddr, true}, {backlog, 0}, Pkt]
+            server -> [{keepalive, true}, {send_timeout, 1000}, binary, {ip, IP}, {active, true}, {reuseaddr, true}, {backlog, 1}, Pkt]
           end,
   Self = self(),
   gen_server:cast(Mod_ID, {Self, ID, ok}),
