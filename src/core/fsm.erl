@@ -163,7 +163,7 @@ run_event(MM, #sm{module = Module} = SM, Term) ->
                      {[{_,{S,Push}}], _, Pop} -> {S, push(Push,Tail)};
                      {[], [{_,{S,Push}}], _}  -> {S, push(Push,SM#sm.stack)}
                    end,
-  Handle = list_to_atom("handle_" ++ atom_to_list(State)),    
+  Handle = list_to_atom("handle_" ++ atom_to_list(State)),
   log_transition(SM, Stack, Handle),
   SM1 = Module:Handle(MM, SM#sm{state = State, stack = Stack}, Term),
   case is_record(SM1, sm) of

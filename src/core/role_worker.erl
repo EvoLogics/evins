@@ -310,7 +310,7 @@ handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, cfg = Cfg, mm = #m
   {noreply, State#ifstate{cfg = NewCfg}};
 
 handle_cast_helper({_, {send, Term}}, #ifstate{mm = #mm{iface = {erlang,Target}}} = State) ->
-  Target ! {bridge, Term},
+  catch (Target ! {bridge, Term}),
   {noreply, State};
 
 handle_cast_helper({Src, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = Port, socket = Socket, fsm_pids = FSMs, cfg = Cfg} = State) ->
