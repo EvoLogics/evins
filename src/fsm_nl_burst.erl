@@ -373,8 +373,9 @@ run_hook_handler(MM, SM, Term, Event) ->
   ](SM).
 
 init_nl_burst(SM) ->
+  Initial_local_pc = 1 + rand:uniform(?PKG_ID_MAX - 1),
   share:put(SM, [{burst_data_buffer, queue:new()},
-                {local_pc, 1},
+                {local_pc, Initial_local_pc},
                 {current_neighbours, []},
                 {neighbours_channel, []},
                 {wait_async_pcs, []},
@@ -796,22 +797,10 @@ process_data(SM, Data) ->
           Packet_handler(LSM, EP, Waiting_rest)
     end,
 
-    Name = atom_name(acks, Src),
-    Acks = env:get(SM, Name),
-    ?INFO(?ID, "Current acks ~p, got ID ~p~n", [Acks, Id_remote]),
-
     Destination_handler =
     fun (LSM) when Dst == Local_address ->
-          Updated =
-          if Acks == nothing -> [Id_remote];
-          true ->
-            Member = lists:member(Id_remote, Acks),
-            ?INFO(?ID, "Add ack ~p to ~w, is member ~p~n", [Id_remote, Acks, Member]),
-            if Member -> Acks; true -> [Id_remote | Acks] end
-          end,
-          ?INFO(?ID, "Updated ack list ~p~n", [Updated]),
           [env:put(__, status, "Receive data on destination"),
-           env:put(__, Name, Updated),
+           update_ack_list(__, Src, Id_remote, Payload),
            fsm:cast(__, nl_impl, {send, {nl, recv, tolerant, Src, Dst, Payload}})
           ](LSM);
         (LSM) ->
@@ -826,6 +815,39 @@ process_data(SM, Data) ->
     ?ERROR(?ID, "~p ~p ~p~n", [?ID, ?LINE, Reason]),
     fsm:set_event(SM, eps)
   end.
+
+update_ack_list(SM, Src, PC, Payload) ->
+  <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
+  Name = atom_name(acks, Src),
+  Acks = env:get(SM, Name),
+  ?INFO(?ID, "Current acks ~p, got ID ~p~n", [Acks, PC]),
+  Map = #{pc => PC, hash => Hash, status => not_sent},
+  Updated =
+  if Acks == nothing -> [Map];
+  true ->
+    Member = lists:filter(fun(X) -> #{pc := P} = X, if P == PC -> true; true -> false end end, Acks),
+    ?INFO(?ID, "Add ack ~p to ~w, is member ~p~n", [PC, Acks, Member]),
+    if Member =/= [] ->
+      process_same_id(PC, Hash, Member, Acks);
+    true ->
+      [Map | Acks] end
+  end,
+
+  ?INFO(?ID, "Updated ack list ~p~n", [Updated]),
+  env:put(SM, Name, Updated).
+
+process_same_id(PC, Hash, Member, Acks) ->
+  [M] = Member,
+  Map = M#{hash => Hash, status => not_sent},
+  ExcludedM = lists:filter(
+    fun(X) ->
+      #{pc := P, status := S} = X,
+      if P =/= PC ->
+        if S == not_sent -> true; true -> false end;
+      true -> false
+      end
+    end, Acks),
+  [Map | ExcludedM].
 
 get_buffer(SM) ->
   QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
@@ -881,23 +903,25 @@ send_acks_helper(SM, _, []) -> SM;
 send_acks_helper(SM, Src, Acks) ->
   ?INFO(?ID, "Send acks ~p to src ~p~n", [Acks, Src]),
   Name = atom_name(acks, Src),
-  Max = get_acks_len(SM),
-  NA =
-  lists:reverse(
-   lists:foldl(
-    fun(X, A) when length(A) =< Max -> [X | A];
-       (_X, A) -> A end,
-  [], Acks)),
-
-  ?INFO(?ID, "Next acks ~w~n", [NA]),
-  A = lists:reverse(NA),
-  Payload = burst_nl_hf:encode_ack(SM, A),
-  L = lists:flatten(lists:join(",",[integer_to_list(I) || I <- A])),
+  {Updated_maps, Ids} = prepare_acks(SM, Acks, [], []),
+  ?INFO(?ID, "Next acks ~w ~w~n", [Updated_maps, Ids]),
+  Payload = burst_nl_hf:encode_ack(SM, Ids),
+  L = lists:flatten(lists:join(",",[integer_to_list(I) || I <- Ids])),
   Status = lists:flatten([io_lib:format("Sending ack of packets ~p to ~p",[L, Src])]),
   [env:put(__, status, Status),
-   env:put(__, Name, NA),
+   env:put(__, Name, Updated_maps),
    fsm:cast(__, nl_impl, {send, {nl, send, ack, byte_size(Payload), Src, Payload}})
   ](SM).
+
+prepare_acks(_SM, [], M, L) -> {M, lists:reverse(L)};
+prepare_acks(SM, [H | T], M, L) ->
+  Max = get_acks_len(SM),
+  if length(L) =< Max ->
+    #{pc := PC} = H,
+    prepare_acks(SM, T, [H#{status => sent} | M], [PC | L]);
+  true ->
+    prepare_acks(SM, [], M, L)
+  end.
 
 get_acks_len(SM) ->
   Maxim = 60,
