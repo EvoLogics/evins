@@ -241,6 +241,7 @@ pop_delivered(SM, PC) ->
 
 failed_pc(SM, PC) ->
   Local_address = share:get(SM, local_address),
+  Retr_allowed = share:get(SM, retransmissions_allowed),
   QL = queue:to_list(share:get(SM, nothing, burst_data_buffer, queue:new())),
   NQ =
   lists:foldl(
@@ -256,7 +257,7 @@ failed_pc(SM, PC) ->
     create_default()),
 
     if XPC == PC ->
-      If_pop_q = check_time(SM, Stime),
+      If_pop_q = check_time(SM, Retr_allowed, Stime),
       ?TRACE(?ID, "Failed PC ~p ~p and pop ~p~n", [Stime, X, If_pop_q]),
       if If_pop_q -> Q; true -> queue:in(Tuple, Q) end;
     true -> queue:in(X, Q)
@@ -267,8 +268,9 @@ failed_pc(SM, PC) ->
    share:put(__, burst_data_buffer, NQ)
   ](SM).
 
-check_time(_SM, unknown) -> false;
-check_time(SM, Time) ->
+check_time(_SM, false, _) -> true;
+check_time(_SM, true, unknown) -> false;
+check_time(SM, true, Time) ->
   Wait_ack = share:get(SM, wait_ack),
   CTime = erlang:monotonic_time(milli_seconds),
   Current_time = from_start(SM, CTime),
