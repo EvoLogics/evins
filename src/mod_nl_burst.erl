@@ -55,12 +55,16 @@ parse_conf(Mod_ID, ArgS, Share) ->
   Send_ack_set  = [Time  || {send_ack_tmo, Time} <- ArgS],
   Update_retries_set = [P  || {update_retries, P} <- ArgS],
   Tmo_transmit = [Time || {tmo_transmit, Time} <- ArgS],
+  Delay_set = [Time || {transmission_delay, Time} <- ArgS],
+  Retransmissions_set = [P  || {retransmissions_allowed, P} <- ArgS],
 
   Max_queue  = set_params(Max_queue_set, 3),
   Wait_ack  = set_params(Wait_ack_set, 120), %s
   Send_ack  = set_params(Send_ack_set, 3),
   Max_burst_len  = set_params(Max_burst_len_set, Max_queue * 1000),
   Update_retries  = set_params(Update_retries_set, 1),
+  Delay = set_params(Delay_set, 1), %s
+  Retransmissions = set_params(Retransmissions_set, true), %s
 
   {Tmo_start, Tmo_end}    = set_timeouts(Tmo_transmit, {1, 4}),
 
@@ -70,7 +74,9 @@ parse_conf(Mod_ID, ArgS, Share) ->
                       {wait_ack, Wait_ack},
                       {send_ack_tmo, Send_ack},
                       {max_burst_len, Max_burst_len},
-                      {tmo_transmit,   {Tmo_start, Tmo_end} },
+                      {transmission_delay, Delay},
+                      {retransmissions_allowed, Retransmissions},
+                      {tmo_transmit,   {Tmo_start, Tmo_end}},
                       {update_retries, Update_retries}]),
 
   ?TRACE(Mod_ID, "NL Protocol ~p ~n", [NL_Protocol]).
