@@ -246,9 +246,10 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, nl_impl, {send, {nl, send, error}});
     {nl, send, tolerant, _, _} ->
       Updating = env:get(SM, updating),
+      Delay = share:get(SM, transmission_delay),
       Event_handler =
       fun (LSM) when LSM#sm.state == idle, Updating == false ->
-            fsm:set_event(LSM, try_transmit);
+            fsm:set_timeout(LSM, {s, Delay}, try_transmit);
           (LSM) ->
             fsm:set_event(LSM, eps)
       end,
@@ -677,14 +678,11 @@ push_tolerant_queue(SM, {nl, send, tolerant, Dst, Payload}) ->
               burst_nl_hf:create_default()),
 
   Q = share:get(SM, nothing, burst_data_buffer, queue:new()),
-  %QS = share:get(SM, nothing, statistics_tolerant, queue:new()),
-
   Role = get_role(SM, Src, Dst),
   <<Hash:16, _/binary>> = crypto:hash(md5,Payload),
   STuple = {Role, LocalPC, Hash, Len, 0, unknown, Src, Dst},
   [burst_nl_hf:increase_local_pc(__, local_pc),
    nl_hf:queue_push(__, statistics_tolerant, STuple, 1000),
-   %share:put(__, statistics_tolerant, queue:in(STuple, QS)),
    share:put(__, burst_data_buffer, queue:in(Tuple, Q)),
    fsm:cast(__, nl_impl, {send, {nl, send, LocalPC}})
   ](SM).
