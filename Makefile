@@ -34,6 +34,11 @@ $(shell m4 src/evins.app.src.m4 > src/evins.app.src)
 
 .PHONY: install
 
+clean-deps:: clean
+	@for a in $$(ls $(DEPS_DIR)); do \
+	  make clean -C $(DEPS_DIR)/$$a; \
+	done;
+
 install:: all
 	@mkdir -p $(EVINS_DIR)
 	@tar -xzf $(AR_NAME) -C $(EVINS_DIR)
