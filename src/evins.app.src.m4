@@ -1,6 +1,9 @@
+divert(-1)
+define(`version', esyscmd(`V=$(git describe --abbrev=0) && echo -n $V'))
+divert(0)dnl
 {application,evins,
              [{description,"EvoLogics intelligent Networking Software framework"},
-              {vsn,"0.3.0"},
+              {vsn,"version"},
               {id,"git"},
               {modules,[]},
               {registered,[]},

@@ -30,7 +30,14 @@ APP_VERSION = $(shell cat $(RELX_OUTPUT_DIR)/$(RELX_REL_NAME)/version)
 AR_NAME = $(RELX_OUTPUT_DIR)/$(RELX_REL_NAME)/$(RELX_REL_NAME)-$(APP_VERSION).tar.gz
 EVINS_DIR ?= /opt/evins
 
+$(shell m4 src/evins.app.src.m4 > src/evins.app.src)
+
 .PHONY: install
+
+clean-deps:: clean
+	@for a in $$(ls $(DEPS_DIR)); do \
+	  make clean -C $(DEPS_DIR)/$$a; \
+	done;
 
 install:: all
 	@mkdir -p $(EVINS_DIR)
