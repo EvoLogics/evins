@@ -208,8 +208,9 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
         fsm:set_timeout(
           fsm:cast(fsm:clear_timeouts(SM), at, {send, AT}), ?WAKEUP_TIMEOUT, answer_timeout), eps);
     answer_timeout ->
-      fsm:cast(SM, at, {ctrl, {waitsync, no}}),
-      fsm:send_at_command(SM, {at, "?MODE", ""});
+      fsm:cast(SM, at, {ctrl, {allow, self()}}),
+      fsm:cast(SM, at, {ctrl, reconnect}),
+      fsm:set_event(SM, eps);
     wrong_receive -> fsm:set_event(SM, eps);
     _             -> fsm:set_event(SM#sm{state = alarm}, internal)
   end.
