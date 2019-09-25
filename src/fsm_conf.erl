@@ -53,6 +53,7 @@
 -define(TRANS, [
                 {idle, 
                  [{internal, idle},
+                  {skip_data, idle},
                   {rcv, request_local_address},
                   {error, request_mode},
                   {answer_timeout, idle}
@@ -159,19 +160,23 @@ handle_event(MM, SM, Term) ->
       SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
       fsm:run_event(MM, SM1#sm{event=error}, {});
     {raw,Bin} when SM#sm.state == idle ->
-      Raw_buffer = share:get(SM,raw_buffer),
-      Buffer = <<Raw_buffer/binary,Bin/binary>>,
-      case match_message(Buffer,?EMSG) of
-        {ok,_,_} ->
-          %% force to clean waitsync state
-          share:put(SM, raw_buffer, <<"">>),
-          SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
-          fsm:run_event(MM, SM1#sm{event=error}, {});
-        {more,_,Match_size} ->
-          Part = binary:part(Buffer,{byte_size(Buffer),-Match_size}),
-          share:put(SM, raw_buffer, Part),
-          ?INFO(?ID, "Partially matched part: ~p~n", [Part]),
-          SM
+      case fsm:check_timeout(SM, skip_data) of
+        true -> SM;
+        _ ->
+          Raw_buffer = share:get(SM,raw_buffer),
+          Buffer = <<Raw_buffer/binary,Bin/binary>>,
+          case match_message(Buffer,?EMSG) of
+            {ok,_,_} ->
+              %% force to clean waitsync state
+              share:put(SM, raw_buffer, <<"">>),
+              SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
+              fsm:run_event(MM, SM1#sm{event=error}, {});
+            {more,_,Match_size} ->
+              Part = binary:part(Buffer,{byte_size(Buffer),-Match_size}),
+              share:put(SM, raw_buffer, Part),
+              ?INFO(?ID, "Partially matched part: ~p~n", [Part]),
+              SM
+          end
       end;
     {raw,_} ->
       SM;
@@ -201,6 +206,10 @@ match_message_helper(Bin,_,Msg,Match_size,Unmatch_offset) ->
 handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
   case Event of
     internal      ->
+      fsm:set_timeout(
+        fsm:set_event(
+          fsm:clear_timeouts(SM), eps), {ms, 500}, skip_data);
+    skip_data ->
       %% must be run optionally!
       share:put(SM, yars, [{at,"@ZF","1"},{at, "@ZX","1"},{at,"@ZU","1"},{at,"@ZA","1"}]),
       AT = {at, "?MODE", ""},
