@@ -56,6 +56,7 @@
                   {skip_data, idle},
                   {rcv, request_local_address},
                   {error, request_mode},
+                  {disconnected, idle},
                   {answer_timeout, idle}
                  ]},
 
@@ -65,36 +66,42 @@
 
                 {request_mode,
                  [{rcv, handle_modem},
+                  {disconnected, idle},
                   {answer_timeout, idle}
                  ]},
 
                 {handle_modem,
-                 [{internal, request_local_address},
+                 [{continue, request_local_address},
                   {answer_timeout, idle},
+                  {disconnected, idle},
                   {wrong_receive, request_mode}
                  ]},
 
                 {request_local_address,
                  [{rcv, request_max_address},
                   {wrong_receive, idle},
+                  {disconnected, idle},
                   {answer_timeout, idle}
                  ]},
 
                 {request_max_address,
                  [{rcv, handle_max_address},
                   {wrong_receive, request_local_address},
+                  {disconnected, idle},
                   {answer_timeout, idle}
                  ]},
 
                 {handle_max_address,
                  [{wrong_receive, request_max_address},
                   {yet_another_request, request_pid},
+                  {disconnected, idle},
                   {answer_timeout, idle},
                   {final, final}
                  ]},
 
                 {request_pid,
                  [{rcv, handle_pid},
+                  {disconnected, idle},
                   {answer_timeout, idle},
                   {wrong_receive, alarm}
                  ]},
@@ -102,6 +109,7 @@
                 {handle_pid,
                  [{wrong_receive, alarm},
                   {yet_another_request, handle_yar},
+                  {disconnected, idle},
                   {answer_timeout, idle},
                   {final, final}
                  ]},
@@ -110,12 +118,15 @@
                  [{yet_another_request, handle_yar},
                   {wrong_receive, handle_yar},
                   {rcv, handle_yar},
+                  {disconnected, idle},
                   {answer_timeout, idle},
                   {final, final}
                  ]},
 
                 {final,
-                 [{internal, idle}]}
+                 [{internal, idle},
+                  {disconnected, idle}
+                 ]}
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
@@ -149,13 +160,14 @@ handle_event(MM, SM, Term) ->
     {error,Reason} ->
       ?WARNING(?ID, "error ~p~n", [Reason]),
       exit(Reason);
-    {disconnected, _} ->
+    {disconnected, _} when MM#mm.role == at ->
+      fsm:cast(SM, at, {ctrl, {allow, self()}}),
+      fsm:clear_timeouts(fsm:run_event(MM, SM#sm{event=disconnected}, {}));
+    {connected} when MM#mm.role == at ->
       fsm:cast(SM, at, {ctrl, {allow, self()}}),
       fsm:cast(SM, at, {ctrl, {filter, at}}),
       fsm:cast(SM, at, {ctrl, {mode, data}}),
-      fsm:cast(SM, at, {ctrl, {waitsync, no}});
-    {connected} ->
-      fsm:cast(SM, at, {ctrl, {allow, self()}}),
+      fsm:cast(SM, at, {ctrl, {waitsync, no}}),
       fsm:run_event(MM, SM#sm{event=internal}, {});
     {raw,<<"NET\r\n">>} ->
       %% special case for at/at_impl docking
@@ -222,8 +234,12 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
     answer_timeout ->
       fsm:cast(SM, at, {ctrl, {allow, self()}}),
       fsm:cast(SM, at, {ctrl, reconnect}),
+      fsm:cast(SM, at, {ctrl, {filter, at}}),
+      fsm:cast(SM, at, {ctrl, {mode, data}}),
+      fsm:cast(SM, at, {ctrl, {waitsync, no}}),
       fsm:set_event(fsm:clear_timeouts(SM), eps);
     wrong_receive -> fsm:set_event(SM, eps);
+    disconnected  -> fsm:set_event(SM, eps);
     _             -> fsm:set_event(SM#sm{state = alarm}, internal)
   end.
 
@@ -243,16 +259,16 @@ handle_handle_modem(_MM, SM, Term) ->
   case {SM#sm.event, Term} of
     {rcv, {sync, "?MODE", "AT"}} ->
       SM1 = fsm:send_at_command(SM, {at, "O", ""}),
-      fsm:cast(SM1#sm{event = internal}, at, {ctrl, {mode, data}});
+      fsm:cast(SM1#sm{event = continue}, at, {ctrl, {mode, data}});
     {rcv, {sync, "?MODE", "NET"}} ->
-      fsm:cast(SM#sm{event = internal}, at, {ctrl, {filter, net}});
+      fsm:cast(SM#sm{event = continue}, at, {ctrl, {filter, net}});
     {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
     _                   -> SM#sm{event = internal, state = alarm}
   end.
 
 handle_request_local_address(_MM, SM, _Term) ->
   case SM#sm.event of
-    Event when Event =:= internal; Event =:= rcv ->
+    Event when Event =:= continue; Event =:= rcv ->
       fsm:send_at_command(fsm:clear_timeouts(SM), {at, "?AL", ""});
     wrong_receive -> SM#sm{event = eps};
     _             -> SM#sm{event = internal, state = alarm}
