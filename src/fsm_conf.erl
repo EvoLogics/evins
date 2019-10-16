@@ -51,7 +51,7 @@
 %% AT@ZF1, AT@ZX1, AT@ZU1 (1.8, if AT@ZF1 answer is OK) 
 
 -define(TRANS, [
-                {idle, 
+                {idle,
                  [{internal, idle},
                   {skip_data, idle},
                   {rcv, request_local_address},
@@ -59,47 +59,50 @@
                   {answer_timeout, idle}
                  ]},
 
-                {alarm, 
+                {alarm,
                  [{final, alarm}
                  ]},
 
                 {request_mode,
                  [{rcv, handle_modem},
-                  {answer_timeout, alarm}
+                  {answer_timeout, idle}
                  ]},
 
                 {handle_modem,
                  [{internal, request_local_address},
+                  {answer_timeout, idle},
                   {wrong_receive, request_mode}
                  ]},
 
                 {request_local_address,
                  [{rcv, request_max_address},
                   {wrong_receive, idle},
-                  {answer_timeout, alarm}
+                  {answer_timeout, idle}
                  ]},
 
                 {request_max_address,
                  [{rcv, handle_max_address},
                   {wrong_receive, request_local_address},
-                  {answer_timeout, alarm}
+                  {answer_timeout, idle}
                  ]},
 
                 {handle_max_address,
                  [{wrong_receive, request_max_address},
                   {yet_another_request, request_pid},
+                  {answer_timeout, idle},
                   {final, final}
                  ]},
 
                 {request_pid,
                  [{rcv, handle_pid},
-                  {answer_timeout, alarm},
+                  {answer_timeout, idle},
                   {wrong_receive, alarm}
                  ]},
 
                 {handle_pid,
                  [{wrong_receive, alarm},
                   {yet_another_request, handle_yar},
+                  {answer_timeout, idle},
                   {final, final}
                  ]},
 
@@ -107,7 +110,7 @@
                  [{yet_another_request, handle_yar},
                   {wrong_receive, handle_yar},
                   {rcv, handle_yar},
-                  {answer_timeout, alarm},
+                  {answer_timeout, idle},
                   {final, final}
                  ]},
 
@@ -219,7 +222,7 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
     answer_timeout ->
       fsm:cast(SM, at, {ctrl, {allow, self()}}),
       fsm:cast(SM, at, {ctrl, reconnect}),
-      fsm:set_event(SM, eps);
+      fsm:set_event(fsm:clear_timeouts(SM), eps);
     wrong_receive -> fsm:set_event(SM, eps);
     _             -> fsm:set_event(SM#sm{state = alarm}, internal)
   end.
