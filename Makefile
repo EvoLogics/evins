@@ -14,7 +14,7 @@ C_SRC_OUTPUT ?= $(CURDIR)/priv/evo_serial
 CFLAGS ?= -std=gnu99 -O3 -finline-functions -Wall -Wmissing-prototypes
 LDFLAGS ?= -lm
 
-otp_release = $(shell erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), init:stop()')
+otp_release = $(shell erl +A0 -noinput -boot start_clean -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt()')
 otp_20plus = $(shell test $(otp_release) -ge 20; echo $$?)
 
 ifeq ($(otp_20plus),0)
