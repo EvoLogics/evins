@@ -79,8 +79,9 @@ init(#modstate{behaviour = B, mod_id = Mod_ID, role_ids = Role_IDs, mfa = {_, _,
   end,
   {ok, State#modstate{fsms = FSMs, fsm_pids = [], share = Share}}.
 
-handle_call(behaviour = Request, From, #modstate{behaviour = B, mod_id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
+handle_call(behaviour = _Request, _From, #modstate{behaviour = B, mod_id = _ID} = State) ->
+  % it is no an error. this call is used even from evins:loaded_moules().
+  %gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
   {reply, B, State};
 
 handle_call(Request, From, #modstate{mod_id = ID} = State) ->

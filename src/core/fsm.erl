@@ -125,7 +125,8 @@ handle_cast(Request, SM) ->
 handle_info({timeout,E}, #sm{module = Module} = SM) ->
   case lists:any(fun({Event,_}) -> Event == E end, SM#sm.timeouts) of
     true ->
-      gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {timeout, E}}}),
+      % this should be logged as trace. removed due to a spamming in sinaps
+      %gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {timeout, E}}}),
       TL = lists:filter(fun({_,{interval,_}}) -> true;
                            ({Event,_}) -> Event =/= E
                         end, SM#sm.timeouts),
