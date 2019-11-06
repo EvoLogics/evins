@@ -106,6 +106,9 @@ check_list_term({role,Role,iface,{serial,Port,BaudRate,StartBits,Parity,StopBits
 check_list_term({role,Role,params,Params,iface,{serial,Port,BaudRate,StartBits,Parity,StopBits,FlowControl}})
   when is_atom(Role), is_list(Params), is_list(Port), is_integer(BaudRate), is_integer(StartBits), is_atom(Parity), is_integer(StopBits), is_atom(FlowControl) ->
   ok;
+check_list_term({role,Role,iface,{ssh,Address,Port,Command,Opts}})
+  when is_atom(Role), is_list(Address), is_integer(Port), is_list(Opts) ->
+  ok;
 check_list_term({role,Role,iface,{port,PortName,PortSettings}})
   when is_atom(Role), is_list(PortSettings) ->
   check_port_name(PortName);

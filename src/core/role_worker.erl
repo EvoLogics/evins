@@ -105,6 +105,13 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {serial,Port,BaudRat
   gen_server:cast(Mod_ID, {Self, ID, ok}),
   connect(State#ifstate{proto = serial});
 
+init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {ssh,I,P,Cmd,Opts}}} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {ssh,I,P,Cmd,Opts}}}}),
+  process_flag(trap_exit, true),
+  Self = self(),
+  gen_server:cast(Mod_ID, {Self, ID, ok}),
+  connect(State#ifstate{proto = ssh});
+
 init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,Opts}}} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {init, {socket,IP,Port,Opts}}}}),
   Type = case Opts of
@@ -180,6 +187,8 @@ cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
     {port,_,_} when Port /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
     {serial,_,_,_,_,_,_} when Port /= nothing ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
+    {ssh,_,_,_,_} when Port /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
     _ ->
       nothing
@@ -261,6 +270,25 @@ connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = server, p
       {ok, State}
   end;
 
+connect(#ifstate{id = ID, mm = #mm{iface = {ssh,Host,Port,Cmd,Opts}}, proto = ssh} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
+  case ssh:connect(Host, Port, [silently_accept_hosts, quiet_mode | Opts]) of
+    {ok, Socket} ->
+      {ok, Ref} = ssh_connection:session_channel(Socket, infinity),
+      case Cmd of
+        shell ->
+          ssh_connection:shell(Socket, Ref);
+        _ ->
+          ssh_connection:exec(Socket, Ref, Cmd, infinity)
+      end,
+      {ok, State#ifstate{socket = Socket, port = Ref}};
+    {error, Reason} ->
+      gen_event:notify(error_logger, {fsm_core, self(), {ID, retry}}),
+      error_logger:warning_report([{file,?MODULE,?LINE},{id, ID}, Reason]),
+      {ok, _} = timer:send_after(1000, timeout),
+      {ok, State}
+  end;
+
 connect(#ifstate{id = ID, mm = #mm{iface = {udp,_IP,_Port,_}}, type = client, proto = udp, opt = SOpts} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
   case gen_udp:open(0, SOpts) of
@@ -331,6 +359,8 @@ handle_cast_helper({Src, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = 
           Port ! {self(), {command, Bin}};
         {serial,_,_,_,_,_,_} ->
           serial_send(Port, Bin);
+        {ssh,_,_,_,_} ->
+          ssh_connection:send(Socket, Port, Bin, infinity);
         {erlang,_,_,_} -> todo
       end,
       {noreply, State#ifstate{cfg = NewCfg}};
@@ -355,6 +385,12 @@ handle_cast({_, {ctrl, reconnect}}, #ifstate{type = Type, proto = tcp, mm = MM, 
             State#ifstate{socket = nothing}
     end,
     {noreply, NewState};
+
+handle_cast({_, {ctrl, reconnect}}, #ifstate{proto = ssh, mm = MM, fsm_pids = FSMs, socket = Socket, port = Ref} = State) when Socket =/= nothing ->
+    ok = ssh_connection:close(Socket, Ref),
+    ok = ssh:close(Socket),
+    broadcast(FSMs, {chan_error, MM, disconnected}),
+    {noreply, connect(State#ifstate{socket = nothing, port = nothing})};
 
 handle_cast({_, {ctrl, reconnect}}, #ifstate{mm = MM, fsm_pids = FSMs} = State) ->
     broadcast(FSMs, {chan_error, MM, disconnected}),
@@ -443,6 +479,21 @@ handle_info({tcp, Socket, Bin}, #ifstate{socket = Socket} = State) ->
 handle_info({udp, Socket, _IP, _Port, Bin}, #ifstate{socket = Socket} = State) ->
   process_bin(Bin, State);
 
+%% X=0 for stdout, X=1 for stderr in {data, ChRef, X, Binary}
+handle_info({ssh_cm, Socket, {data, 0, X, Bin}}, #ifstate{id = ID, socket = Socket} = State) ->
+  case X of
+    0 -> process_bin(Bin, State);
+    _ ->
+      error_logger:warning_report([{id, ID},"stderr:",binary_to_list(Bin)]),
+      {noreply, State}
+  end;
+
+handle_info({ssh_cm, Socket, {exit_status, 0, _Sts}}, #ifstate{socket = Socket} = State) ->
+  {noreply, State};
+
+handle_info({ssh_cm, Socket, {eof, 0}}, #ifstate{socket = Socket} = State) ->
+  {noreply, State};
+
 handle_info({tcp, Socket1, Bin}, #ifstate{socket = Socket2} = State) ->
   error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
   {noreply, State};
@@ -450,6 +501,11 @@ handle_info({tcp, Socket1, Bin}, #ifstate{socket = Socket2} = State) ->
 handle_info({udp, Socket1, _IP, _Port, Bin}, #ifstate{socket = Socket2} = State) ->
   error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
   {noreply, State};
+
+handle_info({ssh_cm, Socket1, Msg}, #ifstate{socket = Socket2} = State) when Socket1 =/= Socket2->
+  error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Msg]),
+  {noreply, State};
+
 
 handle_info({PortID,{data,<<Type:8/integer, Bin/binary>>}}, #ifstate{port = PortID, proto = serial} = State) ->
   case Type of
@@ -492,6 +548,13 @@ handle_info({tcp_closed, _}, #ifstate{id = ID, fsm_pids = FSMs, type = server, m
   gen_event:notify(error_logger, {fsm_core, self(), {ID, tcp_closed}}),
   broadcast(FSMs, {chan_closed_client, MM}),
   {noreply, State#ifstate{socket = nothing}};
+
+handle_info({ssh_cm, Socket, {closed, _}}, #ifstate{id = ID, fsm_pids = FSMs, socket = Socket, mm = MM} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, ssh_close}}),
+  broadcast(FSMs, {chan_closed_client, MM}),
+  ssh:close(Socket),
+  {ok, _} = timer:send_after(1000, timeout),
+  {noreply, State#ifstate{socket = nothing, port = nothing}};
 
 handle_info({http, _Socket, Request}, #ifstate{id = _ID, fsm_pids = FSMs, cfg = Cfg, type = server, mm = MM} = State) ->
   %% gen_event:notify(error_logger, {fsm_core, self(), {ID, {http_request, Request}}}),

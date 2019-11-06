@@ -48,6 +48,8 @@ role_workers(ID, Mod_ID, Offset, ConfigData) ->
     [{R,{erlang,I1,Target},E}  || {role,R,params,E,iface,{erlang,id,I1,target,Target}} <- ConfigData] ++
     [{R,{socket,I,P,T},[]}     || {role,R,iface,{socket,I,P,T}} <- ConfigData] ++
     [{R,{socket,I,P,T},E}      || {role,R,params,E,iface,{socket,I,P,T}} <- ConfigData] ++  
+    [{R,{ssh,I,P,C,T},[]}      || {role,R,iface,{ssh,I,P,C,T}} <- ConfigData] ++
+    [{R,{ssh,I,P,C,T},E}       || {role,R,params,E,iface,{ssh,I,P,C,T}} <- ConfigData] ++
     [{R,{udp,I,P,T},[]}        || {role,R,iface,{udp,I,P,T}} <- ConfigData] ++
     [{R,{udp,I,P,T},E}         || {role,R,params,E,iface,{udp,I,P,T}} <- ConfigData] ++
     [{R,{serial,P,B,S,Q,T,F},[]} || {role,R,iface,{serial,P,B,S,Q,T,F}} <- ConfigData] ++
@@ -58,6 +60,7 @@ role_workers(ID, Mod_ID, Offset, ConfigData) ->
                          list_to_atom(lists:flatten(case If of
                                                       {socket,_,_,_}  -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {udp,_,_,_}  -> io_lib:format("~p_~p_~p",[R,ID,N]);
+                                                      {ssh,_,_,_,_}  -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {serial,_,_,_,_,_,_} -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {port,_,_}      -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {cowboy,_,_}    -> io_lib:format("~p_~p_~p",[R,ID,N]);
