@@ -1578,7 +1578,7 @@ build_hdt(Heading) ->
   (["HCHDT", safe_fmt(["~.1.0f"],[Heading],","),",T"]).
 
 build_xdr(Lst) ->
-  F = fun(V) -> if is_integer(V) -> "~B"; true -> "~.1.0f" end end,
+  F = fun(V) -> if is_integer(V) -> "~B"; true -> "~.2.0f" end end,
   (["HCXDR", lists:map(fun({Type,Data,Units,Name}) ->
                                   safe_fmt(["~s",F(Data),"~s","~s"],[Type,Data,Units,Name],",")
                               end, Lst)]).
