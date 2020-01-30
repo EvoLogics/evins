@@ -802,7 +802,7 @@ extract_nmea(<<"EVORPY">>, Params) ->
 %% ID - configuration id (BUSBL/SBL...)
 %% $PEVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
 %% Lat/Lon/Alt x.x reference coordinates
-%% Mode        a   interrogation mode (S = silent / T  = transponder / <I1>:...:<In> = interrogation sequence)
+%% Mode        a   interrogation mode (S = silent / T  = transponder / <I1>:...:<In> = interrogation sequence / T:<I> transition to <I>)
 %% IT          x   interrogation period in us
 %% MP          x   max pressure id dBar (must be equal on all the modems)
 %% AD          x   answer delays in us
@@ -815,13 +815,15 @@ extract_nmea(<<"EVOCTL">>, <<"BUSBL,",Params/binary>>) ->
     Mode = case BMode of
              <<>> -> nothing;
              <<"S">> -> silent;
+             <<"T:",BV/binary>> -> {transitional, binary_to_integer(BV)};
              <<"T">> -> transponder;
              _ -> [binary_to_integer(BI) || BI <- binary:split(BMode, <<":">>, [global])]
            end,
     [IT, MP, AD] = [safe_binary_to_integer(X) || X <- [BIT, BMP, BAD]],
     {nmea, {evoctl, busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}}}
   catch
-    error:_ ->{error, {parseError, evoctl, Params}}
+    error:_ ->
+      {error, {parseError, evoctl, Params}}
   end;
 %% $PEVOCTL,SBL,X,Y,Z,Mode,IT,MP,AD
 %% X,Y,Z           x.x coordinates of SBL node in local frame in meters
@@ -1271,12 +1273,13 @@ build_evoseq(Sid,Total,MAddr,Range,Seq) ->
                               [Sid,Total,MAddr,Range,SFun(Seq)],",")]).
 
 %% $-EVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
-build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}) ->
+build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD} = Term) ->
   SLat = lat_format(Lat),
   SLon = lon_format(Lon),
   SMode = case Mode of
             silent -> "S";
             transponder -> "T";
+            {transitional, TID} -> "T:" ++ integer_to_list(TID);
             Seq when is_list(Seq) ->
               foldl(fun(Id,Acc) ->
                         Acc ++ ":" ++ integer_to_list(Id)
@@ -1546,7 +1549,7 @@ from_term_helper(Sentense) ->
     {evorcm,RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS} ->
       build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS);
     {evossb,UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel} ->
-      build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
+        build_evossb(UTC,TID,DID,S,Err,CS,FS,X,Y,Z,Acc,Pr,Vel);
     {evossa,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
       build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
     {evogps,UTC,TID,DID,Mode,Lat,Lon,Alt} ->
