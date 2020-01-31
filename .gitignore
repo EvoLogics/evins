@@ -7,9 +7,11 @@
 /ebin
 /deps
 /src/fsm.app.src
+/src/evins.app.src
 /relx.config
 /priv/evo_serial
 /_rel
+/erl_crash.dump
 *~
 tmp
 bugs

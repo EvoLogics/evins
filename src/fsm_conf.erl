@@ -51,54 +51,66 @@
 %% AT@ZF1, AT@ZX1, AT@ZU1 (1.8, if AT@ZF1 answer is OK) 
 
 -define(TRANS, [
-                {idle, 
+                {idle,
                  [{internal, idle},
+                  {skip_data, idle},
                   {rcv, request_local_address},
                   {error, request_mode},
+                  {disconnected, idle},
                   {answer_timeout, idle}
                  ]},
 
-                {alarm, 
+                {alarm,
                  [{final, alarm}
                  ]},
 
                 {request_mode,
                  [{rcv, handle_modem},
-                  {answer_timeout, alarm}
+                  {disconnected, idle},
+                  {answer_timeout, idle}
                  ]},
 
                 {handle_modem,
-                 [{internal, request_local_address},
+                 [{continue, request_local_address},
+                  {answer_timeout, idle},
+                  {disconnected, idle},
                   {wrong_receive, request_mode}
                  ]},
 
                 {request_local_address,
                  [{rcv, request_max_address},
                   {wrong_receive, idle},
-                  {answer_timeout, alarm}
+                  {disconnected, idle},
+                  {answer_timeout, idle}
                  ]},
 
                 {request_max_address,
                  [{rcv, handle_max_address},
                   {wrong_receive, request_local_address},
-                  {answer_timeout, alarm}
+                  {disconnected, idle},
+                  {answer_timeout, idle}
                  ]},
 
                 {handle_max_address,
                  [{wrong_receive, request_max_address},
                   {yet_another_request, request_pid},
+                  {disconnected, idle},
+                  {answer_timeout, idle},
                   {final, final}
                  ]},
 
                 {request_pid,
                  [{rcv, handle_pid},
-                  {answer_timeout, alarm},
+                  {disconnected, idle},
+                  {answer_timeout, idle},
                   {wrong_receive, alarm}
                  ]},
 
                 {handle_pid,
                  [{wrong_receive, alarm},
                   {yet_another_request, handle_yar},
+                  {disconnected, idle},
+                  {answer_timeout, idle},
                   {final, final}
                  ]},
 
@@ -106,12 +118,15 @@
                  [{yet_another_request, handle_yar},
                   {wrong_receive, handle_yar},
                   {rcv, handle_yar},
-                  {answer_timeout, alarm},
+                  {disconnected, idle},
+                  {answer_timeout, idle},
                   {final, final}
                  ]},
 
                 {final,
-                 [{internal, idle}]}
+                 [{internal, idle},
+                  {disconnected, idle}
+                 ]}
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
@@ -145,13 +160,14 @@ handle_event(MM, SM, Term) ->
     {error,Reason} ->
       ?WARNING(?ID, "error ~p~n", [Reason]),
       exit(Reason);
-    {disconnected, _} ->
+    {disconnected, _} when MM#mm.role == at ->
+      fsm:cast(SM, at, {ctrl, {allow, self()}}),
+      fsm:clear_timeouts(fsm:run_event(MM, SM#sm{event=disconnected}, {}));
+    {connected} when MM#mm.role == at ->
       fsm:cast(SM, at, {ctrl, {allow, self()}}),
       fsm:cast(SM, at, {ctrl, {filter, at}}),
       fsm:cast(SM, at, {ctrl, {mode, data}}),
-      fsm:cast(SM, at, {ctrl, {waitsync, no}});
-    {connected} ->
-      fsm:cast(SM, at, {ctrl, {allow, self()}}),
+      fsm:cast(SM, at, {ctrl, {waitsync, no}}),
       fsm:run_event(MM, SM#sm{event=internal}, {});
     {raw,<<"NET\r\n">>} ->
       %% special case for at/at_impl docking
@@ -159,19 +175,23 @@ handle_event(MM, SM, Term) ->
       SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
       fsm:run_event(MM, SM1#sm{event=error}, {});
     {raw,Bin} when SM#sm.state == idle ->
-      Raw_buffer = share:get(SM,raw_buffer),
-      Buffer = <<Raw_buffer/binary,Bin/binary>>,
-      case match_message(Buffer,?EMSG) of
-        {ok,_,_} ->
-          %% force to clean waitsync state
-          share:put(SM, raw_buffer, <<"">>),
-          SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
-          fsm:run_event(MM, SM1#sm{event=error}, {});
-        {more,_,Match_size} ->
-          Part = binary:part(Buffer,{byte_size(Buffer),-Match_size}),
-          share:put(SM, raw_buffer, Part),
-          ?INFO(?ID, "Partially matched part: ~p~n", [Part]),
-          SM
+      case fsm:check_timeout(SM, skip_data) of
+        true -> SM;
+        _ ->
+          Raw_buffer = share:get(SM,raw_buffer),
+          Buffer = <<Raw_buffer/binary,Bin/binary>>,
+          case match_message(Buffer,?EMSG) of
+            {ok,_,_} ->
+              %% force to clean waitsync state
+              share:put(SM, raw_buffer, <<"">>),
+              SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
+              fsm:run_event(MM, SM1#sm{event=error}, {});
+            {more,_,Match_size} ->
+              Part = binary:part(Buffer,{byte_size(Buffer),-Match_size}),
+              share:put(SM, raw_buffer, Part),
+              ?INFO(?ID, "Partially matched part: ~p~n", [Part]),
+              SM
+          end
       end;
     {raw,_} ->
       SM;
@@ -201,6 +221,10 @@ match_message_helper(Bin,_,Msg,Match_size,Unmatch_offset) ->
 handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
   case Event of
     internal      ->
+      fsm:set_timeout(
+        fsm:set_event(
+          fsm:clear_timeouts(SM), eps), {ms, 500}, skip_data);
+    skip_data ->
       %% must be run optionally!
       share:put(SM, yars, [{at,"@ZF","1"},{at, "@ZX","1"},{at,"@ZU","1"},{at,"@ZA","1"}]),
       AT = {at, "?MODE", ""},
@@ -208,9 +232,14 @@ handle_idle(_MM, #sm{event = Event} = SM, _Term) ->
         fsm:set_timeout(
           fsm:cast(fsm:clear_timeouts(SM), at, {send, AT}), ?WAKEUP_TIMEOUT, answer_timeout), eps);
     answer_timeout ->
+      fsm:cast(SM, at, {ctrl, {allow, self()}}),
+      fsm:cast(SM, at, {ctrl, reconnect}),
+      fsm:cast(SM, at, {ctrl, {filter, at}}),
+      fsm:cast(SM, at, {ctrl, {mode, data}}),
       fsm:cast(SM, at, {ctrl, {waitsync, no}}),
-      fsm:send_at_command(SM, {at, "?MODE", ""});
+      fsm:set_event(fsm:clear_timeouts(SM), eps);
     wrong_receive -> fsm:set_event(SM, eps);
+    disconnected  -> fsm:set_event(SM, eps);
     _             -> fsm:set_event(SM#sm{state = alarm}, internal)
   end.
 
@@ -230,16 +259,16 @@ handle_handle_modem(_MM, SM, Term) ->
   case {SM#sm.event, Term} of
     {rcv, {sync, "?MODE", "AT"}} ->
       SM1 = fsm:send_at_command(SM, {at, "O", ""}),
-      fsm:cast(SM1#sm{event = internal}, at, {ctrl, {mode, data}});
+      fsm:cast(SM1#sm{event = continue}, at, {ctrl, {mode, data}});
     {rcv, {sync, "?MODE", "NET"}} ->
-      fsm:cast(SM#sm{event = internal}, at, {ctrl, {filter, net}});
+      fsm:cast(SM#sm{event = continue}, at, {ctrl, {filter, net}});
     {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
     _                   -> SM#sm{event = internal, state = alarm}
   end.
 
 handle_request_local_address(_MM, SM, _Term) ->
   case SM#sm.event of
-    Event when Event =:= internal; Event =:= rcv ->
+    Event when Event =:= continue; Event =:= rcv ->
       fsm:send_at_command(fsm:clear_timeouts(SM), {at, "?AL", ""});
     wrong_receive -> SM#sm{event = eps};
     _             -> SM#sm{event = internal, state = alarm}

@@ -206,8 +206,7 @@ connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) -
     {Type, _} when Type == spawn; Type == spawn_driver; Type == spawn_executable; Type == fd ->
       open_port(Port,PortSettings);
     {Application, Executable} when is_atom(Application), is_atom(Executable) ->
-      Path = code:priv_dir(Application) ++ "/" ++ atom_to_list(Executable),
-      io:format("Path: ~p, PortSettings: ~p~n", [Path, PortSettings]),
+      Path = "\"" ++ code:priv_dir(Application) ++ "/" ++ atom_to_list(Executable) ++ "\"",
       open_port({spawn, Path}, PortSettings)
   end,
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
@@ -215,7 +214,7 @@ connect(#ifstate{id = ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) -
 
 connect(#ifstate{id = ID, mm = #mm{iface = {serial,Port,BaudRate,DataBits,Parity,StopBits,FlowControl}}} = State) ->
   process_flag(trap_exit, true),
-  PortID = open_port({spawn, code:priv_dir(evins) ++ "/evo_serial"}, [binary, {packet, 1}, overlapped_io]),
+  PortID = open_port({spawn, "\"" ++ code:priv_dir(evins) ++ "/evo_serial\""}, [binary, {packet, 1}, overlapped_io]),
   Par = case Parity of
             none -> 0;
             odd -> 1;
@@ -233,9 +232,12 @@ connect(#ifstate{id = ID, mm = #mm{iface = {serial,Port,BaudRate,DataBits,Parity
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {port_id, PortID}}}),
   {ok, cast_connected(State#ifstate{port = PortID})};
 
-connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, proto = tcp, opt = SOpts} = State) ->
+connect(#ifstate{id = ID, mm = #mm{iface = {socket,IP,Port,_}}, type = client, proto = tcp, opt = SOpts, socket = OldSocket} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, connecting}}),
   case gen_tcp:connect(IP, Port, SOpts, 1000) of
+    {ok, Socket} when OldSocket /= nothing ->
+      gen_tcp:close(OldSocket),
+      {ok, cast_connected(State#ifstate{socket = Socket})};
     {ok, Socket} ->
       {ok, cast_connected(State#ifstate{socket = Socket})};
     {error, econnrefused} ->
@@ -301,7 +303,7 @@ conditional_cast(FSMs, #{allow := Allow} = _Cfg, Term) when is_pid(Allow) ->
 conditional_cast(FSMs, _, Term) ->
   broadcast(FSMs, Term).
 
-handle_call(_Request, _From, #ifstate{id = ID} = State) ->
+handle_call(_Request, _From, #ifstate{id = _ID} = State) ->
   %% gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
   {noreply, State}.
 
@@ -344,10 +346,17 @@ handle_cast({_, {fsm, Pid, ok}}, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {fsm, Pid, ok}}}),
   process_bin(<<>>, cast_connected(Pid, State#ifstate{fsm_pids = [Pid | State#ifstate.fsm_pids]}));
 
-handle_cast({_, {ctrl, reconnect}}, #ifstate{type = client, proto = tcp, mm = MM, fsm_pids = FSMs, socket = Socket} = State) when Socket =/= nothing ->
+handle_cast({_, {ctrl, reconnect}}, #ifstate{type = Type, proto = tcp, mm = MM, fsm_pids = FSMs, socket = Socket} = State) when Socket =/= nothing ->
     ok = gen_tcp:close(Socket),
     broadcast(FSMs, {chan_error, MM, disconnected}),
-    {ok, NewState} = connect(State),
+    NewState =
+    case Type of
+        client ->
+            {ok, NSi} = connect(State),
+            NSi;
+        server ->
+            State#ifstate{socket = nothing}
+    end,
     {noreply, NewState};
 
 handle_cast({_, {ctrl, reconnect}}, #ifstate{mm = MM, fsm_pids = FSMs} = State) ->
@@ -431,15 +440,11 @@ handle_info({inet_async, LSock, Ref, Error}, #ifstate{id = ID, listener=LSock, a
   error_logger:error_report([{file,?MODULE,?LINE},{id, ID},"Error in socket acceptor",Error]),
   {stop, Error, State};
 
-handle_info({tcp, Socket, Bin}, #ifstate{socket = Socket} = State) ->
+handle_info({tcp, _, Bin}, State) ->
   process_bin(Bin, State);
 
 handle_info({udp, Socket, _IP, _Port, Bin}, #ifstate{socket = Socket} = State) ->
   process_bin(Bin, State);
-
-handle_info({tcp, Socket1, Bin}, #ifstate{socket = Socket2} = State) ->
-  error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
-  {noreply, State};
 
 handle_info({udp, Socket1, _IP, _Port, Bin}, #ifstate{socket = Socket2} = State) ->
   error_logger:error_report([{file,?MODULE,?LINE},"Socket not matching",Socket1, Socket2, Bin]),
