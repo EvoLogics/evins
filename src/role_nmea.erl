@@ -714,7 +714,7 @@ extract_nmea(<<"EVOACA">>, Params) ->
 %% UTC hhmmss.ss
 %% TID transponder ID
 %% DID transceiver ID
-%% CF coordinate frame: T (transceiver frame), B (body frame, xyz), H (horizontal, head-up), N (north-up), G (geodetic, wgs84)
+%% CF coordinate frame: T (transceiver frame), B (body frame, xyz), H (horizontal, head-up), N (north-up), E (east-up), G (geodetic, wgs84)
 %% OP origin point: T (transceiver), V (vessel CRP)
 %% Tr transformations: R (raw), T (raytraced), P (pressure aided)
 %% X,Y,Z coordinates
@@ -737,6 +737,7 @@ extract_nmea(<<"EVOSSB">>, Params) ->
              <<"B">> -> xyz;
              <<"H">> -> xyd;
              <<"N">> -> ned;
+             <<"E">> -> enu;
              <<"G">> -> geod
          end,
     OP = case BOP of
