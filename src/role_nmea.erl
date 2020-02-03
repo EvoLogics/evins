@@ -1379,7 +1379,8 @@ build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD} = Term) ->
             Seq when is_list(Seq) ->
               foldl(fun(Id,Acc) ->
                         Acc ++ ":" ++ integer_to_list(Id)
-                    end, integer_to_list(hd(Seq)), tl(Seq))
+                    end, integer_to_list(hd(Seq)), tl(Seq));
+            _ -> ""
           end,
   (["PEVOCTL,BUSBL",SLat,SLon,
            safe_fmt(["~.1.0f","~s","~B","~B","~B"],
@@ -1501,6 +1502,7 @@ build_evossb(UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB) ->
                   xyz -> {<<"B">>,"~.2.0f"};
                   xyd -> {<<"H">>,"~.2.0f"};
                   ned -> {<<"N">>,"~.2.0f"};
+                  enu -> {<<"E">>,"~.2.0f"};
                   geod -> {<<"G">>,"~.6.0f"}
               end,
   SOP = case OP of
