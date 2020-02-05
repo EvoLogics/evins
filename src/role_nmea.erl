@@ -756,44 +756,42 @@ extract_nmea(<<"EVOSSB">>, Params) ->
     error:_ -> {error, {parseError, evossb, Params}}
   end;
 
-%% $PEVOSSA,UTC,TID,S,Err,CS,FS,B,E,Acc,Pr,Vel
+%% $PEVOSSA,UTC,TID,CF,Tr,B,E,Acc,RSSI,Integrity,ParamA,ParamB
 %% UTC hhmmss.ss
 %% TID transponder ID
 %% DID transceiver ID
-%% S status OK/NOK
-%% Err error code cc_
-%% CS coordinate system: Local frame (LF)/ ENU / GEOD
-%% FS filter status: M measured, F filtered, R reconstructed
-%% B,E bearing and elevation angles
+%% CF coordinate frame: T (transceiver frame), B (body frame, xyz), H (horizontal, head-up), N (north-up), E (east-up)
+%% Tr transformations: R (raw), T (raytraced), P (pressure aided)
+%% B,E bearing and elevation angles [degrees]
 %% Acc accuracy in meters
-%% Pr pressure in dBar (blank, if not available)
-%% Vel velocity in m/s
+%% RSSI
+%% Integrity
+%% ParamA,ParamB: Pr, Vel
+%%      Pr pressure in dBar (blank, if not available)
+%%      Vel velocity in m/s
 extract_nmea(<<"EVOSSA">>, Params) ->
   try
-    [BUTC,BTID,BDID,BS,BErr,BCS,BFS,BB,BE,BAcc,BPr,BVel] =
+    [BUTC,BTID,BDID,BCF,BTr,BB,BE,BAcc,BRSSI,BInt,BParmA,BParmB] =
       lists:sublist(binary:split(Params,<<",">>,[global]),12),
     UTC = extract_utc(BUTC),
-    TID = safe_binary_to_integer(BTID),
-    DID = safe_binary_to_integer(BDID),
-    [B,E,Acc,Pr,Vel] = [safe_binary_to_float(V) || V <- [BB,BE,BAcc,BPr,BVel]],
-    S = case BS of
-          <<"OK">> -> ok;
-          <<"NOK">> -> nok
-        end,
-    CS = case BCS of
-           <<"LF">> -> lf;
-           <<"ENU">> -> enu;
-           <<"GEOD">> -> geod
+    [TID,DID,RSSI,Int] = [safe_binary_to_integer(V) || V <- [BTID,BDID,BRSSI,BInt]],
+    [B,E,Acc,ParmA,ParmB] = [safe_binary_to_float(V) || V <- [BB,BE,BAcc,BParmA,BParmB]],
+    CF = case BCF of
+             <<"T">> -> transceiver;
+             <<"B">> -> xyz;
+             <<"H">> -> xyd;
+             <<"N">> -> ned;
+             <<"E">> -> enu
          end,
-    FS = case BFS of
-           <<"M">> -> measured;
-           <<"F">> -> filtered;
-           <<"R">> -> reconstructed
+    Tr = case BTr of
+           <<"U">> -> unprocessed;
+           <<"R">> -> raw;
+           <<"T">> -> raytraced;
+           <<"P">> -> pressure
          end,
-    Err = binary_to_list(BErr),
-    {nmea, {evossa, UTC, TID, DID, S, Err, CS, FS, B, E, Acc, Pr, Vel}}
+    {nmea, {evossa, UTC, TID, DID, CF, Tr, B, E, Acc, RSSI, Int, ParmA, ParmB}}
   catch
-    error:_ -> {error, {parseError, evossb, Params}}
+    error:_ -> {error, {parseError, evossa, Params}}
   end;
 
 %% $PEVOGPS,UTC,TID,DID,M,Lat,LatPole,Lon,LonPole,Alt
@@ -1522,26 +1520,25 @@ build_evossb(UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB) ->
                     [TID, DID, SCF, SOP, STr, X, Y, Z, Acc, RSSI, Int, ParmA, ParmB], ",")
           ]).
 
-%% $PEVOSSA,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel
-build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel) ->
+%% $PEVOSSA,UTC,TID,DID,CF,Tr,B,E,Acc,RSSI,Integrity,ParamA,ParamB
+build_evossa(UTC,TID,DID,CF,Tr,B,E,Acc,RSSI,Int,ParmA,ParmB) ->
   SUTC = utc_format(UTC),
-  SS = case S of
-         ok -> "OK";
-         nok -> "NOK"
-       end,
-  {SCS,Fmt} = case CS of
-                lf -> {<<"LF">>,"~.2.0f"};
-                enu -> {<<"ENU">>,"~.2.0f"};
-                geod -> {<<"GEOD">>,"~.6.0f"}
+  SCF = case CF of
+            transceiver -> <<"T">>;
+            xyz -> <<"B">>;
+            xyd -> <<"H">>;
+            ned -> <<"N">>;
+            enu -> <<"E">>
         end,
-  SFS = case FS of
-          measured -> <<"M">>;
-          filtered -> <<"F">>;
-          reconstructed -> <<"R">>
+  STr = case Tr of
+            unprocessed -> <<"U">>;
+            raw -> <<"R">>;
+            raytraced -> <<"T">>;
+            pressure -> <<"P">>
         end,
   (["PEVOSSA",SUTC,
-           safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~.2.0f"],
-                    [TID, DID, SS, Err, SCS, SFS, B, E, Acc, Pr, Vel], ",")
+           safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~.1.0f","~.1.0f","~.2.0f","~B","~B","~.2.0f","~.2.0f"],
+                    [TID, DID, SCF, STr, B, E, Acc, RSSI, Int, ParmA, ParmB], ",")
           ]).
 
 build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt) ->
@@ -1685,8 +1682,8 @@ from_term_helper(Sentense) ->
       build_evoaca(UTC,DID,Action);
     {evossb,UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB} ->
       build_evossb(UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB);
-    {evossa,UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel} ->
-      build_evossa(UTC,TID,DID,S,Err,CS,FS,B,E,Acc,Pr,Vel);
+    {evossa,UTC,TID,DID,CF,Tr,B,E,Acc,RSSI,Int,ParmA,ParmB} ->
+      build_evossa(UTC,TID,DID,CF,Tr,B,E,Acc,RSSI,Int,ParmA,ParmB);
     {evogps,UTC,TID,DID,Mode,Lat,Lon,Alt} ->
       build_evogps(UTC,TID,DID,Mode,Lat,Lon,Alt);
     {evorpy,UTC,TID,DID,Mode,Roll,Pitch,Yaw} ->
