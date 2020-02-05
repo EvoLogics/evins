@@ -353,9 +353,9 @@ handle_cast_helper({Src, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = 
           gen_tcp:send(Socket, Bin);
         {udp,IP,P,client} ->
           gen_udp:send(Socket, IP, P, Bin);
-        {udp,IP,P,server} ->
+        {udp,_IP,_P,server} ->
            ok;
-        {port,_,_} when Port == nothing -> 
+        {port,_,_} when Port == nothing ->
           broadcast(FSMs, {chan_error, MM, disconnected});
         {port,_,_} ->
           Port ! {self(), {command, Bin}};
