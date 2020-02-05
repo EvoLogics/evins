@@ -53,7 +53,8 @@ handle_event(MM, SM, Term) ->
       fsm:run_event(MM, SM#sm{event = Event}, {});
     {nl, address, A} ->
       [fsm:clear_timeout(__, get_address),
-       share:put(__, local_address, A)
+       share:put(__, local_address, A),
+       fsm:cast(__, nl_impl, {send, Term})
       ](SM);
     {nl, send, A, Data = <<"start,sensor">>} ->
       P = <<1:1, 0:6, 1:1, Data/binary>>,
