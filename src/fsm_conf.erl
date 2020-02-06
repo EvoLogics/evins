@@ -162,6 +162,9 @@ handle_event(MM, SM, Term) ->
       exit(Reason);
     {disconnected, _} when MM#mm.role == at ->
       fsm:cast(SM, at, {ctrl, {allow, self()}}),
+      fsm:cast(SM, at, {ctrl, {filter, at}}),
+      fsm:cast(SM, at, {ctrl, {mode, data}}),
+      fsm:cast(SM, at, {ctrl, {waitsync, no}}),
       fsm:clear_timeouts(fsm:run_event(MM, SM#sm{event=disconnected}, {}));
     {connected} when MM#mm.role == at ->
       fsm:cast(SM, at, {ctrl, {allow, self()}}),

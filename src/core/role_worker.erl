@@ -326,9 +326,11 @@ handle_cast_helper({Src, {send, Term}}, #ifstate{behaviour = B, mm = MM, port = 
           broadcast(FSMs, {chan_error, MM, disconnected});
         {socket,_,_,_} ->
           gen_tcp:send(Socket, Bin);
-        {udp,IP,P,_} ->
+        {udp,IP,P,client} ->
           gen_udp:send(Socket, IP, P, Bin);
-        {port,_,_} when Port == nothing -> 
+        {udp,_IP,_P,server} ->
+           ok;
+        {port,_,_} when Port == nothing ->
           broadcast(FSMs, {chan_error, MM, disconnected});
         {port,_,_} ->
           Port ! {self(), {command, Bin}};
@@ -455,6 +457,10 @@ handle_info({PortID,{data,<<Type:8/integer, Bin/binary>>}}, #ifstate{port = Port
     ?SER_RECV -> process_bin(Bin, State);
     _ -> {noreply, State}
   end;
+
+handle_info({udp_error, Socket1, Error}, #ifstate{socket = Socket1} = State) ->
+  error_logger:error_report([{file,?MODULE,?LINE},"UDP error",Socket1, Error]),
+  {noreply, State};
 
 handle_info({PortID,{data,Bin}}, #ifstate{port = PortID} = State) ->
   process_bin(Bin, State);
