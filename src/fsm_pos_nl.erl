@@ -20,7 +20,7 @@
                ]).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       -> SM.
+init(SM)       -> fsm:set_timeout(SM, {ms, 500}, evorpy).
 trans()        -> ?TRANS.
 final()        -> [alarm].
 init_event()   -> internal.
@@ -39,6 +39,14 @@ handle_event(MM, SM, Term) ->
           ](SM);
         _ -> SM
       end;
+    {timeout, evorpy} ->
+      PEVORPY = env:get(SM, evorpy),
+      SM1 =
+      if PEVORPY =/= nothing ->
+          fsm:cast(SM, nmea, {send, {nmea, PEVORPY}});
+        true -> SM
+      end,
+      fsm:set_timeout(SM1, {ms, 500}, evorpy);
     {timeout, get_address} ->
       [fsm:set_timeout(__, {s, 1}, get_address),
        fsm:cast(__, nl, {send, {nl, get, address}})
@@ -95,7 +103,8 @@ decode(SM, Tuple = {nl, recv, Dst, Src, <<1:1, 0:5, 1:1, 1:1, BData/binary>>}) -
     NLStr = io_lib:format("~.5f;~.5f;~.5f;~.5f;~.5f;~.5f", [X,Y,Z,R,P,Yw]),
     PEVOSSB = {evossb,0,0,0,xyz,crp,raw,X,Y,Z,0,0,0,nothing,nothing},
     PEVORPY = {evorpy,0,0,0,computed,R,P,Yw},
-    [fsm:cast(__, nl_impl, {send, {nl, recv, Dst, Src, list_to_binary(NLStr)}}),
+    [env:put(__, evorpy, PEVORPY),
+     fsm:cast(__, nl_impl, {send, {nl, recv, Dst, Src, list_to_binary(NLStr)}}),
      fsm:cast(__, nmea, {send, {nmea, PEVOSSB}}),
      fsm:cast(__, nmea, {send, {nmea, PEVORPY}})
     ](SM)
