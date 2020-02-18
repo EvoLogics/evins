@@ -750,7 +750,8 @@ extract_nmea(<<"EVOSSB">>, Params) ->
            <<"U">> -> unprocessed;
            <<"R">> -> raw;
            <<"T">> -> raytraced;
-           <<"P">> -> pressure
+           <<"P">> -> pressure;
+           <<"">> -> nothing
          end,
     {nmea, {evossb, UTC, TID, DID, CF, OP, Tr, X, Y, Z, Acc, RSSI, Int, ParmA, ParmB}}
   catch
@@ -1514,7 +1515,8 @@ build_evossb(UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB) ->
             unprocessed -> <<"U">>;
             raw -> <<"R">>;
             raytraced -> <<"T">>;
-            pressure -> <<"P">>
+            pressure -> <<"P">>;
+            nothing -> <<"">>
         end,
   (["PEVOSSB",SUTC,
            safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~B","~B","~.2.0f","~.2.0f"],
