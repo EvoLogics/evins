@@ -1337,10 +1337,15 @@ build_evo(Request) ->
 
 %% $-EVOTDP,Transceiver,Max_range,Sequence,LAx,LAy,LAz,HL,Yaw,Pitch,Roll
 build_evotdp(Transceiver,Max_range,Sequence,LAx,LAy,LAz,HL,Yaw,Pitch,Roll) ->
-  SLst = lists:reverse(
+  SLst =
+  case Sequence of
+      nothing -> "";
+      _ ->
+         lists:reverse(
            lists:foldl(fun(V,[])  -> [integer_to_list(V)];
                           (V,Acc) -> [integer_to_list(V),":"|Acc]
-                       end, "", Sequence)),
+                       end, "", Sequence))
+  end,
   (["PEVOTDP",
            safe_fmt(["~B","~B","~s","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f"],
                     [Transceiver,Max_range,(SLst),LAx,LAy,LAz,HL,Yaw,Pitch,Roll],",")]).
