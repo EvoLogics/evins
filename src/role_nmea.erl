@@ -1342,8 +1342,8 @@ build_evotdp(Transceiver,Max_range,Sequence,LAx,LAy,LAz,HL,Yaw,Pitch,Roll) ->
       nothing -> "";
       _ ->
          lists:reverse(
-           lists:foldl(fun(V,[])  -> [integer_to_list(V)];
-                          (nothing,Acc) -> Acc;
+           lists:foldl(fun(nothing,Acc) -> Acc;
+                          (V,[])  -> [integer_to_list(V)];
                           (V,Acc) -> [integer_to_list(V),":"|Acc]
                        end, "", Sequence))
   end,
