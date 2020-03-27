@@ -216,7 +216,7 @@ answer_split(L,Wait,Request,Pid) ->
                   case Wait of
                     binary ->
                       %% NOISE,len,i1,i2,i3,data[len]\r\n
-                      case re:run(L,"^NOISE,(\\d+),(\\d+),(\\d+),(\\d+),(.*)",[dotall,{capture,[1,2,3,4,5],binary}]) of
+                      case re:run(L,"^NOISE,(\\d+),(\\d+),(\\d+),(-?\\d+),(.*)",[dotall,{capture,[1,2,3,4,5],binary}]) of
                         {match, [Blen,Bi1,Bi2,Bi3,Tail]} -> 
                           Len = binary_to_integer(Blen),
                           TLen = byte_size(Tail),
