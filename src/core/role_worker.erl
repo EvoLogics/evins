@@ -559,6 +559,11 @@ handle_info({'EXIT', PortID, Reason}, #ifstate{id = ID, module_id = Mod_ID, port
 handle_info({'EXIT',_,_Reason}, State) ->
   {noreply, State};
 
+handle_info({ctrl, Term}, #ifstate{id = ID, module_id = Mod_ID, behaviour = B, cfg = Cfg} = State) ->
+  logger:info("role: ~p-~p~nctrl: ~p", [Mod_ID, ID, Term]),
+  NewCfg = B:ctrl(Term, Cfg),
+  {noreply, State#ifstate{cfg = NewCfg}};
+
 handle_info(Info, #ifstate{id = ID, module_id = Mod_ID} = State) ->
   logger:error("role: ~p-~p~nunhandled info: ~p", [Mod_ID, ID, Info]),
   {stop, unhandled_info, State}.
