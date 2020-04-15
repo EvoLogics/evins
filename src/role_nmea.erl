@@ -913,6 +913,23 @@ extract_nmea(<<"EVOCTL">>, <<"SUSBL,",Params/binary>>) ->
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
   end;
+%% $PEVOCTL,TIMESYNC,Mode,Shift
+%% Mode            a   L - use local time, R - remote time is synchronized
+%% Shift           x   Time shift
+extract_nmea(<<"EVOCTL">>, <<"TIMESYNC,",Params/binary>>) ->
+  try
+    [BMode,BShift] = lists:sublist(binary:split(Params,<<",">>,[global]), 2),
+    Mode =
+    case BMode of
+        <<"L">> -> local;
+        <<"R">> -> remote;
+        _ -> unknown
+    end,
+    Shift = safe_binary_to_integer(BShift),
+    {nmea, {evoctl, timesync, {Mode, Shift}}}
+  catch
+    error:_ ->{error, {parseError, evoctl_timesync, Params}}
+  end;
 %% $PEVOCTL,SINAPS,DID,Cmd,Arg
 %% DID             x   device id
 %% Cmd             a   command (start,stop,georef,selfpos,pos)
@@ -1376,7 +1393,7 @@ build_evoseq(Sid,Total,MAddr,Range,Seq) ->
                               [Sid,Total,MAddr,Range,SFun(Seq)],",")]).
 
 %% $-EVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
-build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD} = Term) ->
+build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}) ->
   SLat = lat_format(Lat),
   SLon = lon_format(Lon),
   SMode = case Mode of
@@ -1406,6 +1423,16 @@ build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD}) ->
   (["PEVOCTL,SBL",
            safe_fmt(["~.3.0f","~.3.0f","~.3.0f","~s","~B","~B","~B"],
                     [X,Y,Z,SMode,IT,MP,AD],",")]);
+%% $PEVOCTL,TIMESYNC,L,Shift
+build_evoctl(timesync, {Mode, Shift}) ->
+  SMode = case Mode of
+            local -> "L";
+            remote -> "R";
+            _ -> ""
+          end,
+  (["PEVOCTL,TIMESYNC",
+           safe_fmt(["~s","~B"],
+                    [SMode, Shift],",")]);
 %% $PEVOCTL,SUSBL,Seq,MRange,SVel
 build_evoctl(susbl, {Seq, MRange, SVel}) ->
     SSeq = foldl(fun(Id,Acc) ->
@@ -1703,6 +1730,8 @@ from_term_helper(Sentense) ->
       build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD});
     {evoctl, sbl, {X, Y, Z, Mode, IT, MP, AD}} ->
       build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD});
+    {evoctl, timesync, Args} ->
+      build_evoctl(timesync, Args);
     {evoctl, susbl, Args} ->
       build_evoctl(susbl, Args);
     {evoctl, sinaps, Args} ->
