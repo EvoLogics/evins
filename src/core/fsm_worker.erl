@@ -135,6 +135,8 @@ handle_cast(Request, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, Request}}),
   {stop, Request, State}.
 
+handle_info({'EXIT',_,shutdown}, State) ->
+  {stop, shutdown, State};
 handle_info({'EXIT',Pid,Reason} = Info, #modstate{mod_id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {exit,Pid,Reason}}}),
   {stop, Info, State};
