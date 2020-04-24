@@ -75,42 +75,42 @@ init(#sm{module = Module} = SM) ->
                              end, SMi#sm.roles)),
   {ok, run_event(nothing, SMi#sm{event = Init_event, final = Finals}, nothing)}.
 
-handle_call(_Request, _From, SM) ->
-  %% gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {Request, From}}}),
+handle_call(Request, From, SM) ->
+  logger:warning("~p", [{fsm_event, self(), {SM#sm.id, {Request, From}}}]),
   {noreply, SM}.
 
 handle_cast({chan, nothing, Term}, #sm{module = Module} = SM) ->
-  %% gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, nothing, Term}}}),
+  logger:debug("~p", [{fsm_event, self(), {SM#sm.id, {chan, nothing, Term}}}]),
   handle_event(Module, nothing, SM, Term);
 
 handle_cast({chan, MM, Term}, #sm{module = Module} = SM) ->
-  %% gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan, MM#mm.role_id, Term}}}),
+  logger:debug("~p", [{fsm_event, self(), {SM#sm.id, {chan, MM#mm.role_id, Term}}}]),
   handle_event(Module, MM, SM, Term);
 
 handle_cast({send_error, MM, Reason}, #sm{module = Module} = SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {send_error, MM#mm.role_id, Reason}}}),
+  logger:error("~p", [{fsm_event, self(), {SM#sm.id, {send_error, MM#mm.role_id, Reason}}}]),
   handle_event(Module, MM, SM, {send_error, Reason});
 
 handle_cast(final, SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, final}}),
+  logger:info("~p", [{fsm_event, self(), {SM#sm.id, final}}]),
   {stop, normal, SM};
 
 handle_cast({chan_closed, MM}, #sm{module = Module} = SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_closed, MM}}}),
+  logger:info("~p", [{fsm_event, self(), {SM#sm.id, {chan_closed, MM}}}]),
   handle_event(Module, MM, SM, {disconnected, closed});
   %% {noreply, SM};
 
 handle_cast({chan_error, MM, Reason}, #sm{module = Module} = SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_error, MM, Reason}}}),
+  logger:warning("~p", [{fsm_event, self(), {SM#sm.id, {chan_error, MM, Reason}}}]),
   handle_event(Module, MM, SM, {disconnected, {error, Reason}});
 
 handle_cast({chan_closed_client, MM}, #sm{module = Module} = SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {chan_closed_client, MM}}}),
+  logger:info("~p", [{fsm_event, self(), {SM#sm.id, {chan_closed_client, MM}}}]),
   handle_event(Module, MM, SM, {disconnected, closed});
   %% {noreply, SM};
 
 handle_cast({chan_parseError, _, _} = Reason, SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, Reason}}),
+  logger:warning("~p", [{fsm_event, self(), {SM#sm.id, Reason}}]),
   {stop, Reason, SM};
 
 handle_cast({role, {_,Role_ID,_,_,_} = Item}, #sm{roles = Roles} = SM) ->
@@ -119,32 +119,32 @@ handle_cast({role, {_,Role_ID,_,_,_} = Item}, #sm{roles = Roles} = SM) ->
   {noreply, SM#sm{roles = [Item | Roles]}};
 
 handle_cast(Request, SM) ->
-  %% gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {unhandled_cast, Request}}}),
+  logger:warning("~p", [{fsm_event, self(), {SM#sm.id, {unhandled_cast, Request}}}]),
   {stop, Request, SM}.
 
 handle_info({timeout,E}, #sm{module = Module} = SM) ->
   case lists:any(fun({Event,_}) -> Event == E end, SM#sm.timeouts) of
     true ->
       % this should be logged as trace. removed due to a spamming in sinaps
-      %gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {timeout, E}}}),
+      %logger:debug("~p", [{fsm_event, self(), {SM#sm.id, {timeout, E}}}]),
       TL = lists:filter(fun({_,{interval,_}}) -> true;
                            ({Event,_}) -> Event =/= E
                         end, SM#sm.timeouts),
       handle_event(Module, nothing, SM#sm{timeouts = TL}, {timeout, E});
     _ ->
-      gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {skipped_timeout, E}}}),
+      logger:warning("~p", [{fsm_event, self(), {SM#sm.id, {skipped_timeout, E}}}]),
       {noreply, SM}
   end;
 
 handle_info(Info, SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {unhandled_info, Info}}),
+  logger:warning("~p", [{fsm_event, self(), {unhandled_info, Info}}]),
   {stop, Info, SM}.
 
 code_change(_, Pid, _) ->
   {ok, Pid}.
 
 terminate(Reason, #sm{module = Module} = SM) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {SM#sm.id, {terminate, Reason}}}),
+  logger:info("~p", [{fsm_event, self(), {SM#sm.id, {terminate, Reason}}}]),
   Module:stop(SM),
   cast_helper(SM#sm.id, {stop, SM, Reason}),
   ok.
@@ -198,7 +198,7 @@ log_transition(SM, Stack, Handle) ->
              {_, [], _}           -> {ioc:timestamp_string(), Handle, SM#sm.event, Stack};
              {_, _,  _}           -> {ioc:timestamp_string(), Handle, SM#sm.event, Stack, Timeouts}
            end,
-  gen_event:notify(error_logger, {fsm_transition, self(), {SM#sm.id, Report}}).
+  logger:info("~p", [{fsm_transition, self(), {SM#sm.id, Report}}]).
 
 %% public functions
 is_final(SM) ->
@@ -301,6 +301,6 @@ role_available(#sm{roles = Roles}, Target_role) ->
   end.
 
 cast_helper(Target, Message) ->
-  %% gen_event:notify(error_logger, {fsm_cast, self(), {Target, Message}}),
+  logger:debug("~p", [{fsm_cast, self(), {Target, Message}}]),
   gen_server:cast(Target, {self(), Message}).
 

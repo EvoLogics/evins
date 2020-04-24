@@ -56,17 +56,17 @@
          }).
 
 start(Behaviour, Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {Mod_ID, start}}),
+  logger:info("~p", [{fsm_core, self(), {Mod_ID, start}}]),
   Ret = gen_server:start_link({local, Mod_ID}, ?MODULE,
                               #modstate{behaviour = Behaviour, role_ids = Role_IDs, mod_id = Mod_ID, sup_id = Sup_ID, mfa = {M, F, A}}, []),
   case Ret of
-    {error, Reason} -> error_logger:error_report({error, Reason, Mod_ID});
+    {error, Reason} -> logger:error("~p", [{error, Reason, Mod_ID}]);
     _ -> nothing
   end,
   Ret.
 
 init(#modstate{behaviour = B, mod_id = Mod_ID, role_ids = Role_IDs, mfa = {_, _, ArgS}} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {Mod_ID, init}}),
+  logger:info("~p", [{fsm_core, self(), {Mod_ID, init}}]),
   process_flag(trap_exit, true),
   Share = share:init(),
   FSMs_pre = B:register_fsms(Mod_ID, Role_IDs, Share, ArgS),
@@ -80,16 +80,16 @@ init(#modstate{behaviour = B, mod_id = Mod_ID, role_ids = Role_IDs, mfa = {_, _,
   {ok, State#modstate{fsms = FSMs, fsm_pids = [], share = Share}}.
 
 handle_call(behaviour = _Request, _From, #modstate{behaviour = B, mod_id = _ID} = State) ->
-  % it is no an error. this call is used even from evins:loaded_moules().
-  %gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
+  % don't log to avoid spam from evins:loaded_moules() and evins:cast().
+  %logger:debug("~p", [{fsm_core, self(), {ID, {Request, From}}}]),
   {reply, B, State};
 
 handle_call(Request, From, #modstate{mod_id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {Request, From}}}),
+  logger:warning("~p", [{fsm_core, self(), {ID, {Request, From}}}]),
   {stop, {Request, From}, State}.
 
 handle_cast({Src_Role_PID, Src_Role_ID, ok} = Req, #modstate{mod_id = ID, role_ids = Role_IDs, fsm_pids = []} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, Req}}),
+  logger:debug("~p", [{fsm_core, self(), {ID, Req}}]),
   {New_Role_IDs, Status} =
     lists:foldl(fun({Role, Role_ID, _, Flag, E} = Item, {Acc_Role_IDs, AccFlag}) ->
                     case Role_ID =:= Src_Role_ID of
@@ -117,36 +117,36 @@ handle_cast({role, Role_ID}, #modstate{role_ids = Role_IDs} = State) ->
   {noreply, State#modstate{role_ids = [Role_ID | Role_IDs]}};  
 
 handle_cast(restart, #modstate{mod_id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, restart}}),
+  logger:info("~p", [{fsm_core, self(), {ID, restart}}]),
   {stop, restart, State};
 
 handle_cast({stop, SM, normal}, #modstate{mod_id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {stop, SM, normal}}}),
+  logger:info("~p", [{fsm_core, self(), {ID, {stop, SM, normal}}}]),
   share:delete(SM),
   %% {noreply, State};
   {stop, normal, State};
 
 handle_cast({stop, SM, Reason}, #modstate{mod_id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {stop, SM, Reason}}}),
+  logger:info("~p", [{fsm_core, self(), {ID, {stop, SM, Reason}}}]),
   share:delete(SM),
   {stop, Reason, State};
 
 handle_cast(Request, #modstate{mod_id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, Request}}),
+  logger:info("~p", [{fsm_core, self(), {ID, Request}}]),
   {stop, Request, State}.
 
 handle_info({'EXIT',_,shutdown}, State) ->
   {stop, shutdown, State};
 handle_info({'EXIT',Pid,Reason} = Info, #modstate{mod_id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {exit,Pid,Reason}}}),
+  logger:info("~p", [{fsm_core, self(), {ID, {exit,Pid,Reason}}}]),
   {stop, Info, State};
 
 handle_info(Info, #modstate{mod_id = ID} = State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, Info}}),
+  logger:warning("~p", [{fsm_core, self(), {ID, Info}}]),
   {stop, Info, State}.
 
 terminate(Reason, #modstate{mod_id = ID, sup_id = _Sup_ID, share = Share}) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {ID, {terminate, Reason}}}),
+  logger:warning("~p", [{fsm_core, self(), {ID, {terminate, Reason}}}]),
   %% FIXME: should it be done? maybe to clean up the tree! no need for temporary
   %% case supervisor:terminate_child(Sup_ID, {fsm, ID}) of
   %%   ok ->

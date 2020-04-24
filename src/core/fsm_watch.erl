@@ -77,7 +77,7 @@ configure_modules(State, Configuration) ->
   State#watchstate{configured_modules = Modules, configuration = Configuration}.
 
 consult(Reply, #watchstate{fabric_config = Fabric_config, user_config = User_config} = State) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {retry, Fabric_config, User_config}}),
+  logger:info("~p", [{fsm_event, self(), {retry, Fabric_config, User_config}}]),
   ConfigFile = choose_config(Fabric_config, User_config),
   case file:consult(ConfigFile) of
     {ok, Configuration} ->
@@ -85,14 +85,14 @@ consult(Reply, #watchstate{fabric_config = Fabric_config, user_config = User_con
         [] ->
           {Reply, run_modules(State, Configuration), ?TIMEOUT};
         Errors ->
-          error_logger:error_report([{file,?MODULE,?LINE}, "Syntax error: terms check", ConfigFile, Errors]),
+          logger:error("~p", [{{file,?MODULE,?LINE}, "Syntax error: terms check", ConfigFile, Errors}]),
           {Reply, State, ?TIMEOUT}
       end;
     {error, {Line, Mod, Term}} ->
-      error_logger:error_report([{file,?MODULE,?LINE}, "Syntax error", ConfigFile, {Line, Mod, Term}]),
+      logger:error("~p", [{{file,?MODULE,?LINE}, "Syntax error", ConfigFile, {Line, Mod, Term}}]),
       {Reply, State, ?TIMEOUT};
     {error, Why} ->
-      error_logger:error_report([{file,?MODULE,?LINE}, "Read/access error", ConfigFile, Why]),
+      logger:error("~p", [{{file,?MODULE,?LINE}, "Read/access error", ConfigFile, Why}]),
       {Reply, State, ?TIMEOUT}
   end.
 
@@ -310,11 +310,11 @@ handle_call({update_config, Filename}, _From, State) ->
   end;
 
 handle_call(Request, From, State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {fsm_watch, call, Request, From, State}}),
+  logger:warning("~p", [{fsm_core, self(), {fsm_watch, call, Request, From, State}}]),
   {noreply, State, ?TIMEOUT}.
 
 handle_cast(Request, State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {fsm_watch, cast, Request, State}}),
+  logger:warning("~p", [{fsm_core, self(), {fsm_watch, cast, Request, State}}]),
   {noreply, State, ?TIMEOUT}.
 
 handle_info(timeout, #watchstate{status = init} = State) ->
@@ -324,13 +324,12 @@ handle_info(timeout, State) ->
   {noreply, State, ?TIMEOUT};
 
 handle_info(Info, State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {fsm_watch, info, Info, State}}),
+  logger:warning("~p", [{fsm_core, self(), {fsm_watch, info, Info, State}}]),
   {noreply, State, ?TIMEOUT}.
 
 terminate(Reason, State) ->
-  gen_event:notify(error_logger, {fsm_core, self(), {fsm_watch, terminate, Reason, State}}),
+  logger:info("~p", [{fsm_core, self(), {fsm_watch, terminate, Reason, State}}]),
   ok.
 
 code_change(_, Pid, _) ->
   {ok, Pid}.
-
