@@ -56,17 +56,17 @@
          }).
 
 start(Behaviour, Mod_ID, Role_IDs, Sup_ID, {M, F, A}) ->
-  logger:info("~p", [{fsm_core, self(), {Mod_ID, start}}]),
+  logger:info("fsm: ~p~nstart", [Mod_ID]),
   Ret = gen_server:start_link({local, Mod_ID}, ?MODULE,
                               #modstate{behaviour = Behaviour, role_ids = Role_IDs, mod_id = Mod_ID, sup_id = Sup_ID, mfa = {M, F, A}}, []),
   case Ret of
-    {error, Reason} -> logger:error("~p", [{error, Reason, Mod_ID}]);
+    {error, Reason} -> logger:error("fsm: ~p~nstart error: ~p", [Mod_ID, Reason]);
     _ -> nothing
   end,
   Ret.
 
 init(#modstate{behaviour = B, mod_id = Mod_ID, role_ids = Role_IDs, mfa = {_, _, ArgS}} = State) ->
-  logger:info("~p", [{fsm_core, self(), {Mod_ID, init}}]),
+  logger:info("fsm: ~p~ninit~nroles: ~p", [Mod_ID, Role_IDs]),
   process_flag(trap_exit, true),
   Share = share:init(),
   FSMs_pre = B:register_fsms(Mod_ID, Role_IDs, Share, ArgS),
@@ -79,17 +79,15 @@ init(#modstate{behaviour = B, mod_id = Mod_ID, role_ids = Role_IDs, mfa = {_, _,
   end,
   {ok, State#modstate{fsms = FSMs, fsm_pids = [], share = Share}}.
 
-handle_call(behaviour = _Request, _From, #modstate{behaviour = B, mod_id = _ID} = State) ->
-  % don't log to avoid spam from evins:loaded_moules() and evins:cast().
-  %logger:debug("~p", [{fsm_core, self(), {ID, {Request, From}}}]),
+handle_call(behaviour, _From, #modstate{behaviour = B} = State) ->
   {reply, B, State};
 
 handle_call(Request, From, #modstate{mod_id = ID} = State) ->
-  logger:warning("~p", [{fsm_core, self(), {ID, {Request, From}}}]),
-  {stop, {Request, From}, State}.
+  logger:error("fsm: ~p~nunhandled call: ~p~nfrom: ~p", [ID, Request, From]),
+  {stop, unhandled_call, State}.
 
-handle_cast({Src_Role_PID, Src_Role_ID, ok} = Req, #modstate{mod_id = ID, role_ids = Role_IDs, fsm_pids = []} = State) ->
-  logger:debug("~p", [{fsm_core, self(), {ID, Req}}]),
+handle_cast({Src_Role_PID, Src_Role_ID, ok}, #modstate{mod_id = ID, role_ids = Role_IDs, fsm_pids = []} = State) ->
+  logger:info("fsm: ~p~nrole init: ~p, pid: ~p", [ID, Src_Role_ID, Src_Role_PID]),
   {New_Role_IDs, Status} =
     lists:foldl(fun({Role, Role_ID, _, Flag, E} = Item, {Acc_Role_IDs, AccFlag}) ->
                     case Role_ID =:= Src_Role_ID of
@@ -102,7 +100,8 @@ handle_cast({Src_Role_PID, Src_Role_ID, ok} = Req, #modstate{mod_id = ID, role_i
      true ->
       {noreply, State#modstate{role_ids = New_Role_IDs}}
   end;
-handle_cast({Src_Role_PID, Src_Role_ID, ok}, #modstate{role_ids = Role_IDs, fsm_pids = PIDs} = State) ->
+handle_cast({Src_Role_PID, Src_Role_ID, ok}, #modstate{mod_id = ID, role_ids = Role_IDs, fsm_pids = PIDs} = State) ->
+  logger:info("fsm: ~p~nrole init: ~p, pid: ~p", [ID, Src_Role_ID, Src_Role_PID]),
   New_role_IDs =
     lists:map(fun({Role, Role_ID, _, _, E} = Item) when Role_ID == Src_Role_ID ->
                   lists:map(fun(PID) ->
@@ -117,36 +116,36 @@ handle_cast({role, Role_ID}, #modstate{role_ids = Role_IDs} = State) ->
   {noreply, State#modstate{role_ids = [Role_ID | Role_IDs]}};  
 
 handle_cast(restart, #modstate{mod_id = ID} = State) ->
+  logger:info("fsm: ~p~nrestart", [ID]),
   logger:info("~p", [{fsm_core, self(), {ID, restart}}]),
   {stop, restart, State};
 
 handle_cast({stop, SM, normal}, #modstate{mod_id = ID} = State) ->
-  logger:info("~p", [{fsm_core, self(), {ID, {stop, SM, normal}}}]),
+  logger:info("fsm: ~p~nstop", [ID]),
   share:delete(SM),
-  %% {noreply, State};
   {stop, normal, State};
 
 handle_cast({stop, SM, Reason}, #modstate{mod_id = ID} = State) ->
-  logger:info("~p", [{fsm_core, self(), {ID, {stop, SM, Reason}}}]),
+  logger:error("fsm: ~p~nstop~nreason: ~p", [ID, Reason]),
   share:delete(SM),
   {stop, Reason, State};
 
 handle_cast(Request, #modstate{mod_id = ID} = State) ->
-  logger:info("~p", [{fsm_core, self(), {ID, Request}}]),
-  {stop, Request, State}.
+  logger:error("fsm: ~p~nunhandled cast: ~p", [ID, Request]),
+  {stop, unhandled_cast, State}.
 
 handle_info({'EXIT',_,shutdown}, State) ->
   {stop, shutdown, State};
-handle_info({'EXIT',Pid,Reason} = Info, #modstate{mod_id = ID} = State) ->
-  logger:info("~p", [{fsm_core, self(), {ID, {exit,Pid,Reason}}}]),
-  {stop, Info, State};
+handle_info({'EXIT',Pid,Reason}, #modstate{mod_id = ID} = State) ->
+  logger:error("fsm: ~p~nexit: ~p~nreason: ~p", [ID, Pid, Reason]),
+  {stop, exit_caught, State};
 
 handle_info(Info, #modstate{mod_id = ID} = State) ->
-  logger:warning("~p", [{fsm_core, self(), {ID, Info}}]),
-  {stop, Info, State}.
+  logger:error("fsm: ~p~nunhandled info: ~p", [ID, Info]),
+  {stop, unhandled_info, State}.
 
 terminate(Reason, #modstate{mod_id = ID, sup_id = _Sup_ID, share = Share}) ->
-  logger:warning("~p", [{fsm_core, self(), {ID, {terminate, Reason}}}]),
+  logger:info("fsm: ~p~nterminate: ~p", [ID, Reason]),
   %% FIXME: should it be done? maybe to clean up the tree! no need for temporary
   %% case supervisor:terminate_child(Sup_ID, {fsm, ID}) of
   %%   ok ->

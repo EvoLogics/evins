@@ -71,82 +71,90 @@ init(#sm{module = Module} = SM) ->
   Self = self(),
   true = lists:all(fun(A) -> A == ok end,
                    lists:map(fun({_,Role_ID,_,_,_}) ->
-                                 cast_helper(Role_ID, {fsm, Self, ok})
+                                 cast_helper(SM, Role_ID, {fsm, Self, ok})
                              end, SMi#sm.roles)),
   {ok, run_event(nothing, SMi#sm{event = Init_event, final = Finals}, nothing)}.
 
-handle_call(Request, From, SM) ->
-  logger:warning("~p", [{fsm_event, self(), {SM#sm.id, {Request, From}}}]),
+handle_call(Request, From, #sm{module = Module} = SM) ->
+  logger:warning("module: ~p, id: ~p~nunexpected call: ~p~nfrom: ~p", [Module, SM#sm.id, Request, From]),
   {noreply, SM}.
 
-handle_cast({chan, nothing, Term}, #sm{module = Module} = SM) ->
-  logger:debug("~p", [{fsm_event, self(), {SM#sm.id, {chan, nothing, Term}}}]),
+handle_cast({chan, nothing, Term}, #sm{module = Module, logger = Logger} = SM) ->
+  case Logger of
+    trace -> logger:debug("module: ~p, id ~p~nchan message: ~p", [Module, SM#sm.id, Term]);
+    _ -> ok
+  end,
   handle_event(Module, nothing, SM, Term);
 
-handle_cast({chan, MM, Term}, #sm{module = Module} = SM) ->
-  logger:debug("~p", [{fsm_event, self(), {SM#sm.id, {chan, MM#mm.role_id, Term}}}]),
+handle_cast({chan, MM, Term}, #sm{module = Module, logger = Logger} = SM) ->
+  case Logger of
+    trace -> logger:debug("module: ~p, id ~p~nrole: ~p~nchan message: ~p", [Module, SM#sm.id, MM#mm.role_id, Term]);
+    _ -> ok
+  end,
   handle_event(Module, MM, SM, Term);
 
 handle_cast({send_error, MM, Reason}, #sm{module = Module} = SM) ->
-  logger:error("~p", [{fsm_event, self(), {SM#sm.id, {send_error, MM#mm.role_id, Reason}}}]),
+  logger:error("module: ~p, id ~p~nrole: ~p~nerror: ~p", [Module, SM#sm.id, MM#mm.role_id, Reason]),
   handle_event(Module, MM, SM, {send_error, Reason});
 
-handle_cast(final, SM) ->
-  logger:info("~p", [{fsm_event, self(), {SM#sm.id, final}}]),
+handle_cast(final, #sm{module = Module} = SM) ->
+  logger:info("module: ~p, id ~p~nfinal", [Module, SM#sm.id]),
   {stop, normal, SM};
 
 handle_cast({chan_closed, MM}, #sm{module = Module} = SM) ->
-  logger:info("~p", [{fsm_event, self(), {SM#sm.id, {chan_closed, MM}}}]),
+  logger:info("module: ~p, id ~p~nrole: ~p~nchan closed", [Module, SM#sm.id, MM#mm.role_id]),
   handle_event(Module, MM, SM, {disconnected, closed});
   %% {noreply, SM};
 
 handle_cast({chan_error, MM, Reason}, #sm{module = Module} = SM) ->
-  logger:warning("~p", [{fsm_event, self(), {SM#sm.id, {chan_error, MM, Reason}}}]),
+  logger:info("module: ~p, id ~p~nrole: ~p~nchan error: ~p", [Module, SM#sm.id, MM#mm.role_id, Reason]),
   handle_event(Module, MM, SM, {disconnected, {error, Reason}});
 
 handle_cast({chan_closed_client, MM}, #sm{module = Module} = SM) ->
-  logger:info("~p", [{fsm_event, self(), {SM#sm.id, {chan_closed_client, MM}}}]),
+  logger:info("module: ~p, id ~p~nrole: ~p~nchan closed client", [Module, SM#sm.id, MM#mm.role_id]),
   handle_event(Module, MM, SM, {disconnected, closed});
   %% {noreply, SM};
 
-handle_cast({chan_parseError, _, _} = Reason, SM) ->
-  logger:warning("~p", [{fsm_event, self(), {SM#sm.id, Reason}}]),
-  {stop, Reason, SM};
+handle_cast({chan_parseError, MM, Reason}, #sm{module = Module} = SM) ->
+  logger:error("module: ~p, id ~p~nrole: ~p~nchan parse error: ~p", [Module, SM#sm.id, MM#mm.role_id, Reason]),
+  {stop, chan_parseError, SM};
 
 handle_cast({role, {_,Role_ID,_,_,_} = Item}, #sm{roles = Roles} = SM) ->
   Self = self(),
-  cast_helper(Role_ID, {fsm, Self, ok}),
+  cast_helper(SM, Role_ID, {fsm, Self, ok}),
   {noreply, SM#sm{roles = [Item | Roles]}};
 
-handle_cast(Request, SM) ->
-  logger:warning("~p", [{fsm_event, self(), {SM#sm.id, {unhandled_cast, Request}}}]),
-  {stop, Request, SM}.
+handle_cast(Request, #sm{module = Module} = SM) ->
+  logger:error("module: ~p, id ~p~nunhandled cast: ~p", [Module, SM#sm.id, Request]),
+  {stop, unhandled_cast, SM}.
 
-handle_info({timeout,E}, #sm{module = Module} = SM) ->
+handle_info({timeout,E}, #sm{module = Module, logger = Logger} = SM) ->
   case lists:any(fun({Event,_}) -> Event == E end, SM#sm.timeouts) of
     true ->
-      % this should be logged as trace. removed due to a spamming in sinaps
-      %logger:debug("~p", [{fsm_event, self(), {SM#sm.id, {timeout, E}}}]),
+      case Logger of
+        trace -> logger:debug("module: ~p, id ~p~ntimeout: ~p", [Module, SM#sm.id, E]);
+        _ -> ok
+      end,
       TL = lists:filter(fun({_,{interval,_}}) -> true;
                            ({Event,_}) -> Event =/= E
                         end, SM#sm.timeouts),
       handle_event(Module, nothing, SM#sm{timeouts = TL}, {timeout, E});
     _ ->
-      logger:warning("~p", [{fsm_event, self(), {SM#sm.id, {skipped_timeout, E}}}]),
+      logger:warning("module: ~p, id ~p~nskipped timeout: ~p", [Module, SM#sm.id, E]),
       {noreply, SM}
   end;
 
-handle_info(Info, SM) ->
-  logger:warning("~p", [{fsm_event, self(), {unhandled_info, Info}}]),
-  {stop, Info, SM}.
+handle_info(Info, #sm{module = Module} = SM) ->
+  logger:error("module: ~p, id ~p~nunhandled info: ~p", [Module, SM#sm.id, Info]),
+  {stop, unhandled_info, SM}.
 
 code_change(_, Pid, _) ->
   {ok, Pid}.
 
 terminate(Reason, #sm{module = Module} = SM) ->
-  logger:info("~p", [{fsm_event, self(), {SM#sm.id, {terminate, Reason}}}]),
+  logger:info("module: ~p, id ~p~nterminate: ~p", [Module, SM#sm.id, Reason]),
   Module:stop(SM),
-  cast_helper(SM#sm.id, {stop, SM, Reason}),
+  cast_helper(SM, SM#sm.id, {stop, SM, Reason}),
   ok.
 
 run_event(_, #sm{event = eps} = SM, _) -> SM;
@@ -172,7 +180,7 @@ run_event(MM, #sm{module = Module} = SM, Term) ->
       case is_final(SM1) of
         true ->
           FSM_ID = list_to_atom("fsm_" ++ atom_to_list(SM#sm.id)),
-          cast_helper(FSM_ID, final);
+          cast_helper(SM, FSM_ID, final);
         _ -> true
       end,
       case SM1#sm.event of
@@ -186,7 +194,7 @@ run_event(MM, #sm{module = Module} = SM, Term) ->
 push(eps, Stack) -> Stack;
 push(Push, Stack) -> [Push|Stack].
 
-log_transition(SM, Stack, Handle) ->
+log_transition(#sm{module = Module} = SM, Stack, Handle) ->
   Timeouts = lists:foldl(fun({Event,TRef},A) ->
                              [{Event,TRef} | A]
                          end, [], SM#sm.timeouts),
@@ -198,7 +206,7 @@ log_transition(SM, Stack, Handle) ->
              {_, [], _}           -> {ioc:timestamp_string(), Handle, SM#sm.event, Stack};
              {_, _,  _}           -> {ioc:timestamp_string(), Handle, SM#sm.event, Stack, Timeouts}
            end,
-  logger:info("~p", [{fsm_transition, self(), {SM#sm.id, Report}}]).
+  logger:info("module: ~p, id ~p~ntransition: ~p", [Module, SM#sm.id, Report]).
 
 %% public functions
 is_final(SM) ->
@@ -277,21 +285,21 @@ maybe_send_at_command(SM, AT, Fun) ->
 broadcast(#sm{roles = Roles} = SM, Target_role, T) ->
   true = lists:all(fun(A) -> A == ok end, 
                    lists:map(fun(Role_ID) ->
-                                 cast_helper(Role_ID, T)
+                                 cast_helper(SM, Role_ID, T)
                              end, [Role_ID || {Role,Role_ID,_,_,_} <- Roles, Role == Target_role])),
   SM.
 
 cast(#cbstate{id = CB_ID, fsm_id = FSM_ID}, T) ->
-  cast_helper(FSM_ID, {chan, CB_ID, T}).
+  cast_helper(nothing, FSM_ID, {chan, CB_ID, T}).
 
 cast(#sm{roles = Roles} = SM, Target_role, T) ->
   Lst = lists:filter(fun({Role,_,_,_,_}) -> Role =:= Target_role end, Roles),
-  [cast_helper(Role_ID, T) || {_,Role_ID,_,_,_} <- Lst],
+  [cast_helper(SM, Role_ID, T) || {_,Role_ID,_,_,_} <- Lst],
   SM.
 
 cast(#sm{roles = Roles} = SM, #mm{role = Target_role} = MM, EOpts, T, Cond) ->
   Lst = lists:filter(fun({Role,_,_,_,_} = RoleT) -> (Role == Target_role) and Cond(MM,RoleT,EOpts) end, Roles),
-  [cast_helper(Role_ID, T) || {_,Role_ID,_,_,_} <- Lst],
+  [cast_helper(SM, Role_ID, T) || {_,Role_ID,_,_,_} <- Lst],
   SM.
 
 role_available(#sm{roles = Roles}, Target_role) ->
@@ -300,7 +308,11 @@ role_available(#sm{roles = Roles}, Target_role) ->
     _ -> true
   end.
 
-cast_helper(Target, Message) ->
-  logger:debug("~p", [{fsm_cast, self(), {Target, Message}}]),
+cast_helper(SM, Target, Message) ->
+  case SM of
+    #sm{module = Module, logger = debug} ->
+      logger:warning("module: ~p, id: ~p~ncast: ~p~nto: ~p", [Module, SM#sm.id, Message, Target]);
+    _ -> ok
+  end,
   gen_server:cast(Target, {self(), Message}).
 
