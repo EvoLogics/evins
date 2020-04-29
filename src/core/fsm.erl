@@ -35,10 +35,10 @@
 
 %% helper functions
 -export([clear_timeout/2, clear_timeouts/2, clear_timeouts/1]).
--export([run_event/3, send_at_command/2, broadcast/3, cast/2, cast/3, cast/5]).
+-export([run_event/3, send_at_command/2, send_at_command/3, broadcast/3, cast/2, cast/3, cast/5]).
 -export([role_available/2]).
 -export([set_event/2, set_timeout/3, maybe_set_timeout/3, set_interval/3, check_timeout/2]).
--export([maybe_send_at_command/2,maybe_send_at_command/3]).
+-export([maybe_send_at_command/2, maybe_send_at_command/3, maybe_send_at_command/4]).
 
 %% gen_server callbacks
 -export([code_change/3, handle_call/3, handle_cast/2, handle_info/2, init/1, terminate/2]).
@@ -269,19 +269,25 @@ set_event(SM, Event) ->
   SM#sm{event = Event}.
 
 send_at_command(SM, AT) ->
+  send_at_command(SM, ?ANSWER_TIMEOUT, AT).
+
+send_at_command(SM, Answer_timeout, AT) ->
   set_event(
     set_timeout(
-      cast(SM, at, {send, AT}), ?ANSWER_TIMEOUT, answer_timeout), eps).
+      cast(SM, at, {send, AT}), Answer_timeout, answer_timeout), eps).
 
 maybe_send_at_command(SM, AT) ->
   maybe_send_at_command(SM, AT, fun(LSM,_) -> LSM end).
 
 maybe_send_at_command(SM, AT, Fun) ->
+  maybe_send_at_command(SM, ?ANSWER_TIMEOUT, AT, Fun).
+
+maybe_send_at_command(SM, Answer_timeout, AT, Fun) ->
   case fsm:check_timeout(SM, answer_timeout) of
     true ->
       Fun(SM,blocked);
     _ ->
-      Fun(fsm:send_at_command(SM, AT), ok)
+      Fun(fsm:send_at_command(SM, Answer_timeout, AT), ok)
     end.
 
 broadcast(#sm{roles = Roles} = SM, Target_role, T) ->
