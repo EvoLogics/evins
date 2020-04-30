@@ -40,16 +40,11 @@
 -export([module_id/2,mfa/1,mfa/2]).
 
 %% TODO: reflect status, that running configuration doesn't correspond to the stored in the memory
-
--export([rb/1,rb/2]).
--export([logon/0,logon/1,logoff/0,q/0]).
--export([tail/0,tail/1,tail/2]).
+-export([logon/0,logoff/0]).
 -export([fsm_events/0]).
 
-%% private API
--export([log/1]).
-
--define(TAIL,10).
+logon()  -> logger:set_handler_config(default, level, debug).
+logoff() -> logger:set_handler_config(default, level, warning).
 
 called_by(Process, Initial_call) ->
   lists:filter(fun(L) ->
@@ -88,82 +83,8 @@ config() -> gen_server:call(fsm_watch, config).
 store_config() -> gen_server:call(fsm_watch, {store, user_config()}).
 store_config(Filename) -> gen_server:call(fsm_watch, {store, Filename}).
 
-rb(start)          -> fsm_rb:start();
-rb(stop)           -> fsm_rb:stop().
-rb(start, Options) -> fsm_rb:start(Options).
-
 fsm_events() ->
   [fsm_event, fsm_transition, fsm_cast, fsm_event, fsm_progress].
-
-fsm_rb_request(Fun,Args) ->
-  case whereis(rb_server) of
-    undefined -> io:format("Report broweser is not running~n");
-    _ -> apply(fsm_rb,Fun,Args)
-  end.
-
-tail(list, N)             -> fsm_rb_request(list_tail, [all, N]);
-tail({list, Type}, N)     -> fsm_rb_request(list_tail, [Type,N]);
-tail({show, Type}, N)     -> fsm_rb_request(show_tail, [Type,N]);
-tail({grep, RegExp}, N)   -> fsm_rb_request(grep_tail, [RegExp, N]).
-tail(list)                -> fsm_rb_request(list_tail, [all, ?TAIL]);
-tail({grep, RegExp})      -> fsm_rb_request(grep_tail, [RegExp, ?TAIL]);
-tail({show, Types})       -> fsm_rb_request(show_tail, [Types, ?TAIL]);
-tail(N) when is_number(N) -> fsm_rb_request(tail,[N]).
-tail()                    -> fsm_rb_request(tail, []).
-
-logon() ->
-  case whereis(fsm_logon) of
-    undefined ->
-      Pid = spawn(evins,log,[init]),
-      register(fsm_logon,Pid),
-      ok;
-    _ ->
-      {error, already_started}
-  end.
-
-logon(RegExp) ->
-  case whereis(fsm_logon) of
-    undefined ->
-      Pid = spawn(evins,log,[{init,RegExp}]),
-      register(fsm_logon,Pid),
-      ok;
-    _ ->
-      {error, already_started}
-  end.
-
-q() -> logoff().
-
-logoff() ->
-  case whereis(fsm_logon) of
-    undefined -> 
-      {error, not_started};
-    Pid ->
-      exit(Pid,kill),
-      ok
-  end.
-
-log(init) ->
-  case whereis(rb_server) of
-    undefined -> io:format("Report broweser is not running~n");
-    _ -> N = fsm_rb:tail(),
-         timer:sleep(1000),
-         log(N)
-  end;
-log(N) when is_number(N) ->
-  NN = fsm_rb:tail_after(N),
-  timer:sleep(1000),
-  log(NN);
-log({init,RegExp}) ->
-  case whereis(rb_server) of
-    undefined -> io:format("Report broweser is not running~n");
-    _ -> N = fsm_rb:last_no(),
-         timer:sleep(1000),
-         log({N,RegExp})
-  end;
-log({N,RegExp}) ->
-  NN = fsm_rb:grep_after(RegExp,N),
-  timer:sleep(1000),
-  log({NN,RegExp}).
 
 update_config(ConfigFile) ->
   Mod_supervisors = [Id || {Id,_,_,_} <- supervisor:which_children(fsm_supervisor), Id /= fsm_watch],

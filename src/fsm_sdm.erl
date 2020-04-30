@@ -36,10 +36,7 @@
 -define(TRANS, []).
 
 start_link(SM) -> fsm:start_link(SM).
-init(SM)       ->
-  evins:rb(start),
-  evins:logon(),
-  SM.
+init(SM)       -> SM.
 trans()        -> ?TRANS.
 final()        -> [].
 init_event()   -> eps.

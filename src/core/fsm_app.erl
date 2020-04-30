@@ -33,7 +33,6 @@
 start(_Type, _Args) ->
   case maybe_config(log_output) of
     on ->
-      evins:rb(start),
       evins:logon();
     _ ->
       nothing
