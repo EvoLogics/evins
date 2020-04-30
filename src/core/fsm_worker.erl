@@ -117,24 +117,17 @@ handle_cast({role, Role_ID}, #modstate{role_ids = Role_IDs} = State) ->
 
 handle_cast(restart, #modstate{mod_id = ID} = State) ->
   logger:info("fsm: ~p~nrestart", [ID]),
-  logger:info("~p", [{fsm_core, self(), {ID, restart}}]),
   {stop, restart, State};
 
-handle_cast({stop, SM, normal}, #modstate{mod_id = ID} = State) ->
-  logger:info("fsm: ~p~nstop", [ID]),
-  share:delete(SM),
-  {stop, normal, State};
-
-handle_cast({stop, SM, Reason}, #modstate{mod_id = ID} = State) ->
-  logger:error("fsm: ~p~nstop~nreason: ~p", [ID, Reason]),
-  share:delete(SM),
+handle_cast({stop, _SM, Reason}, #modstate{mod_id = ID} = State) ->
+  logger:info("fsm: ~p~nstop~nreason: ~p", [ID, Reason]),
   {stop, Reason, State};
 
 handle_cast(Request, #modstate{mod_id = ID} = State) ->
   logger:error("fsm: ~p~nunhandled cast: ~p", [ID, Request]),
   {stop, unhandled_cast, State}.
 
-handle_info({'EXIT',_,shutdown}, State) ->
+handle_info({'EXIT',_,_Reason}, State) ->
   {noreply, State};
 
 handle_info(Info, #modstate{mod_id = ID} = State) ->

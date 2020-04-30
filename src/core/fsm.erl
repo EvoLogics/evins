@@ -144,6 +144,9 @@ handle_info({timeout,E}, #sm{module = Module, logger = Logger} = SM) ->
       {noreply, SM}
   end;
 
+handle_info({'EXIT',_,_Reason}, State) ->
+  {noreply, State};
+
 handle_info(Info, #sm{module = Module} = SM) ->
   logger:error("module: ~p, id ~p~nunhandled info: ~p", [Module, SM#sm.id, Info]),
   {stop, unhandled_info, SM}.
@@ -154,8 +157,7 @@ code_change(_, Pid, _) ->
 terminate(Reason, #sm{module = Module} = SM) ->
   logger:info("module: ~p, id ~p~nterminate: ~p", [Module, SM#sm.id, Reason]),
   Module:stop(SM),
-  cast_helper(SM, SM#sm.id, {stop, SM, Reason}),
-  ok.
+  gen_server:cast(SM#sm.id, {stop, SM, fsm_crashed}).
 
 run_event(_, #sm{event = eps} = SM, _) -> SM;
 run_event(MM, #sm{module = Module} = SM, Term) ->
