@@ -163,7 +163,9 @@ update_cfg(Cfg, TermList) ->
                       {{sync, "!ZS", "OK"}, Telegram} -> WCfg#{pid => list_to_integer(lists:nthtail(5, Telegram))};
                       _ -> WCfg
                     end
-                  catch _E:_R -> erlang:display(erlang:get_stacktrace()),
+                  catch E:R:Stk ->
+                                 logger:warning("role at~nerror caught: ~p:~p~nstack_trace: ~p",
+                                                [E, R, Stk]),
                                  WCfg
                   end
               end, Cfg, TermList).
