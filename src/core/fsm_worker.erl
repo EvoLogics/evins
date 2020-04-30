@@ -134,7 +134,7 @@ handle_cast(Request, #modstate{mod_id = ID} = State) ->
   logger:error("fsm: ~p~nunhandled cast: ~p", [ID, Request]),
   {stop, unhandled_cast, State}.
 
-handle_info({'EXIT',_,shutdown}, #modstate{mod_id = ID} = State) ->
+handle_info({'EXIT',_,shutdown}, State) ->
   {noreply, State};
 
 handle_info(Info, #modstate{mod_id = ID} = State) ->

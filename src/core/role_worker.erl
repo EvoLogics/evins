@@ -555,7 +555,7 @@ handle_info({'EXIT', PortID, Reason}, #ifstate{id = ID, module_id = Mod_ID, port
   broadcast(FSMs, {chan_error, MM, Reason}),
   {ok, _} = timer:send_after(1000, timeout),
   {noreply, State#ifstate{port = nothing}};
-handle_info({'EXIT',_,shutdown}, #ifstate{id = ID, module_id = Mod_ID} = State) ->
+handle_info({'EXIT',_,shutdown}, State) ->
   {noreply, State};
 
 handle_info(Info, #ifstate{id = ID, module_id = Mod_ID} = State) ->
