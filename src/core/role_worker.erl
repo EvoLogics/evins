@@ -510,6 +510,11 @@ handle_info({'EXIT', PortID, _Reason}, #ifstate{id = ID, port = PortID, fsm_pids
   {ok, _} = timer:send_after(1000, timeout),
   {noreply, State#ifstate{port = nothing}};
 
+handle_info({ctrl, Term}, #ifstate{id = ID, behaviour = B, cfg = Cfg} = State) ->
+  gen_event:notify(error_logger, {fsm_core, self(), {ID, {ctrl, Term}}}),
+  NewCfg = B:ctrl(Term, Cfg),
+  {noreply, State#ifstate{cfg = NewCfg}};
+
 handle_info(Info, #ifstate{id = ID} = State) ->
   gen_event:notify(error_logger, {fsm_core, self(), {ID, {unhandled_info, Info, State}}}),
   {stop, Info, State}.
