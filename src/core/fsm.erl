@@ -291,17 +291,13 @@ cast(#cbstate{id = CB_ID, fsm_id = FSM_ID}, T) ->
   cast_helper(FSM_ID, {chan, CB_ID, T}).
 
 cast(#sm{roles = Roles} = SM, Target_role, T) ->
-  case lists:filter(fun({Role,_,_,_,_}) -> Role =:= Target_role end, Roles) of
-    [{_,Role_ID,_,_,_}] -> cast_helper(Role_ID, T);
-    _ -> error_logger:error_report([{file,?MODULE,?LINE}, {id, ?ID}, "No role", [Target_role, T, Roles]])
-  end,
+  Lst = lists:filter(fun({Role,_,_,_,_}) -> Role =:= Target_role end, Roles),
+  [cast_helper(Role_ID, T) || {_,Role_ID,_,_,_} <- Lst],
   SM.
 
 cast(#sm{roles = Roles} = SM, #mm{role = Target_role} = MM, EOpts, T, Cond) ->
-  case lists:filter(fun({Role,_,_,_,_} = RoleT) -> (Role == Target_role) and Cond(MM,RoleT,EOpts) end, Roles) of
-    [{_,Role_ID,_,_,_}] -> cast_helper(Role_ID, T);
-    Other -> error_logger:error_report([{file,?MODULE,?LINE}, {id, ?ID}, "No target", [MM, EOpts, T, Other]])
-  end,
+  Lst = lists:filter(fun({Role,_,_,_,_} = RoleT) -> (Role == Target_role) and Cond(MM,RoleT,EOpts) end, Roles),
+  [cast_helper(Role_ID, T) || {_,Role_ID,_,_,_} <- Lst],
   SM.
 
 role_available(#sm{roles = Roles}, Target_role) ->
