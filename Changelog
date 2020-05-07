@@ -2,6 +2,12 @@
 
 Reactivation of Changelog on 13.04.2020
 
+### Fixed
+ - solved race condition of parallel fsm start up by 
+   casting of additional {allowed} messages on fsm connection 
+   to the role_worker
+ - role_at fixed AT?NOISE response
+
 ## [Unrelased]
 
 ### Added
