@@ -1,10 +1,3 @@
 # Change Log
 
-Reactivation of Changelog on 13.04.2020
-
 ## [Unrelased]
-
-### Added
- - added a possibility to call ctrl handler from role_worker implementation,
-   for example, by calling timer:send_after(T, {ctrl,X}) from
-   role_worker functions
