@@ -425,7 +425,7 @@ status_extract(P) ->
 
 extended_extract(P) ->
   try
-    [Key,Param] = [binary_to_list(B) || B <- binary:split(P,<<",">>)],
+    [Key,Params] = [binary_to_list(B) || B <- binary:split(P,<<",">>)],
     {async, {extended, [$% | Key], Params}}
   catch
     error:_ -> {error, {parseError, extended, binary_to_list(P)}}
