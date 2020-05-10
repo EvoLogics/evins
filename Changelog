@@ -9,6 +9,7 @@
  - role_at fixed AT?NOISE response
 
 ### Added
+ - added support of AT% commands to role_at 
  - added share:match_object function 
  - added a possibility to call ctrl handler from role_worker implementation,
    for example, by calling timer:send_after(T, {ctrl,X}) from
