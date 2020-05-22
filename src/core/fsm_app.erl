@@ -37,6 +37,18 @@ start(_Type, _Args) ->
     _ ->
       nothing
   end,
+  case maybe_config(log_file) of
+    nothing -> nothing; % do not start disk logging unless path is specified
+    Path ->
+          logger:add_handler(file_logger, logger_disk_log_h,
+                             #{level => debug,
+                               config => #{file => Path,
+                                           max_no_files => maybe_config(log_max_no_files, 5),
+                                           max_no_bytes => maybe_config(log_max_no_bytes, 4194304)},
+                               formatter => {logger_formatter,
+                                             #{template => [time, " ", pid, " ", level, ": ", msg, "\n"],
+                                               single_line => true}}})
+  end,
   User_config = maybe_config(user_config),
   Fabric_config = maybe_config(fabric_config),
   fsm_supervisor:start_link([Fabric_config, User_config]).
@@ -45,6 +57,12 @@ maybe_config(Name) ->
   case application:get_env(evins, Name) of
     {ok, Path} -> Path;
     _ -> nothing
+  end.
+
+maybe_config(Name, Default) ->
+  case application:get_env(evins, Name) of
+    {ok, Path} -> Path;
+    _ -> Default
   end.
 
 stop(_State) ->
