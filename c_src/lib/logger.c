@@ -12,8 +12,9 @@ void logger_init(uint16_t level) {
 }
 
 #ifdef LOGGER
-void logger_(uint16_t level, const char *msg,
-             const char *file, int line, const char *func, ...) {
+void logger_(uint16_t level,
+             const char *file, int line, const char *func,
+             const char *msg, ...) {
     va_list ap;
 
     if ((log_level & LOG_LOCATION))
@@ -34,7 +35,7 @@ void logger_(uint16_t level, const char *msg,
     if ((log_level & (LOG_LOCATION | LOG_PREFIX)))
         fprintf(stderr, ": ");
 
-    va_start(ap, func);
+    va_start(ap, msg);
     vfprintf(stderr, msg, ap);
     va_end(ap);
 
@@ -44,7 +45,7 @@ void logger_(uint16_t level, const char *msg,
 void logger_mat_(uint16_t level, size_t m, size_t n, const double *data, const char *name,
                  const char *file, int line, const char *func) {
     const double *p = data;
-    logger_(level, "matrix %zux%zu, name = \"%s\":\r\n", file, line, func, m, n, name);
+    logger_(level, file, line, func, "matrix %zux%zu, name = \"%s\":\r\n", m, n, name);
 
     for (size_t i = 0; i < m; ++i) {
         fprintf(stderr, "    [ ");
@@ -59,8 +60,9 @@ void logger_mat_(uint16_t level, size_t m, size_t n, const double *data, const c
     fflush(stderr);
 }
 #else
-void logger_(uint16_t level, const char *msg,
-             const char *file, int line, const char *func, ...) {
+void logger_(uint16_t level,
+             const char *file, int line, const char *func,
+             const char *msg, ...) {
     (void)level;
     (void)msg;
     (void)file;
