@@ -227,6 +227,9 @@ int io_set_flowcontrol(const context_t *ctx, int flowcontrol) {
     if (!GetCommState(ctx->fd, &dcb))
         return -1;
 
+    dcb.fOutX = FALSE;
+    dcb.fInX = FALSE;
+
     if (flowcontrol) {
         dcb.fOutxCtsFlow = TRUE;
         dcb.fRtsControl = RTS_CONTROL_HANDSHAKE;
