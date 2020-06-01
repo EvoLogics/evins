@@ -7,6 +7,7 @@
    casting of additional {allowed} messages on fsm connection 
    to the role_worker
  - role_at fixed AT?NOISE response
+ - fixed NMEA RMC parsing
 
 ### Added
  - added support of AT% commands to role_at 
