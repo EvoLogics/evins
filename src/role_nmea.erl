@@ -1218,8 +1218,13 @@ build_rmc(UTC,Status,Lat,Lon,Speed,Tangle,Date,Magvar) ->
   SLon = lon_format(Lon),
   {YY,MM,DD} = Date,
   SDate = io_lib:format("~2.10.0B~2.10.0B~2.10.0B",[DD,MM,YY rem 100]),
-  ME = case Magvar < 0 of true -> "W"; _ -> "E" end,
-  SRest = safe_fmt(["~5.1.0f","~5.1.0f","~s","~5.1.0f","~s"], [Speed,Tangle,SDate,abs(Magvar),ME], ","),
+  {AMagvar, ME} =
+    case Magvar of
+      nothing -> {nothing, nothing};
+      _ when Magvar < 0 -> {-Magvar, "W"};
+      _ -> {Magvar, "E"}
+    end,
+  SRest = safe_fmt(["~.3.0f","~.3.0f","~s","~.3.0f","~s"], [Speed,Tangle,SDate,AMagvar,ME], ","),
   (["GPRMC",SUTC,SStatus,SLat,SLon,SRest]).
 
 %% hhmmss.ss,llll.ll,a,yyyyy.yy,a,x,xx,x.x,x.x,M, x.x,M,x.x,xxxx
