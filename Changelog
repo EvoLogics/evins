@@ -10,6 +10,7 @@
  - fixed NMEA RMC parsing
 
 ### Added
+ - role_at parametrization via config file
  - added support of AT% commands to role_at 
  - added share:match_object function 
  - added a possibility to call ctrl handler from role_worker implementation,

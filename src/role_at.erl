@@ -40,9 +40,22 @@ start(Role_ID, Mod_ID, MM) ->
           {eol,Other} -> Other;
           _ -> "\n"
         end,
-  Cfg = #{filter => at, mode => data, waitsync => no, request => "",
-          telegram => "", eol => EOL, ext_networking => no, pid => 0,
-          allow => nobody},
+  Filter = case lists:keyfind(filter,1,MM#mm.params) of
+             {filter,F} -> F;
+             _ -> at
+           end,
+  Allow = case lists:keyfind(allow,1,MM#mm.params) of
+            {allow,A} -> A;
+            _ -> nobody
+          end,
+  Ext = case lists:keyfind(ext_networking,1,MM#mm.params) of
+          {ext_networking,E} -> E;
+          _ -> no
+        end,
+  Cfg = #{filter => Filter, mode => data, waitsync => no, request => "",
+          telegram => "", eol => EOL, ext_networking => Ext, pid => 0,
+          allow => Allow},
+  io:format(">>>>>>>>>>>>>>>>>>>>> Cfg: ~p~n", [Cfg]),
   role_worker:start(?MODULE, Role_ID, Mod_ID, MM, Cfg).
 
 ctrl({filter, F}, Cfg)         -> Cfg#{filter => F};
