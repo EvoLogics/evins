@@ -11,3 +11,8 @@ ifeq ($(otp_20plus),0)
 endif
 
 include ../../erlang.mk
+
+clean-deps:: clean
+	@for a in $$(ls $(DEPS_DIR)); do \
+	  make clean -C $(DEPS_DIR)/$$a; \
+	done;
