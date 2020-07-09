@@ -1,18 +1,14 @@
 PROJECT = evins
 
-DEPS = cowboy parse_trans
+DEPS = cowboy parse_trans jsx edown
+dep_jsx = git https://github.com/talentdeficit/jsx 2.8.0
+dep_edown = git https://github.com/uwiger/edown.git 0.8
 dep_cowboy = git https://github.com/extend/cowboy 2.6.3
 dep_cowlib = git https://github.com/extend/cowlib 2.7.3
 dep_ranch = git https://github.com/extend/ranch 1.7.1
 dep_parse_trans = git https://github.com/uwiger/parse_trans 3.3.0
 
 CT_SUITES = share
-
-C_SRC_TYPE = executable
-C_SRC_OUTPUT ?= $(CURDIR)/priv/evo_serial
-
-CFLAGS ?= -std=gnu99 -O3 -finline-functions -Wall -Wmissing-prototypes
-LDFLAGS ?= -lm
 
 otp_release = $(shell erl +A0 -noinput -boot start_clean -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt()')
 otp_20plus = $(shell test $(otp_release) -ge 20; echo $$?)
