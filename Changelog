@@ -32,5 +32,7 @@
 
 # Removed
  - evins:rb() function, just remove it from your code
+ - dependency on ninenines libraries: cowboy, ranch, cowlib
+ - dependency on jsx
 
 Reactivation of Changelog on 13.04.2020
