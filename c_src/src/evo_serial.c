@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef _WIN32
   #include <io.h>
@@ -54,6 +55,7 @@ int main(void) {
         .parity = SPNONE
     };
     ssize_t rs;
+    bool safe_to_read = true;
 
     erl_outp.head = erl_outp.tail = erl_outp.data;
     rs_outp.head  = rs_outp.tail  = rs_outp.data;
@@ -64,6 +66,9 @@ int main(void) {
     ctx[2] = NULL;
 
     for (;;) {
+        if (!safe_to_read)
+            goto skip_read;
+
         if ((rs = erl_read(ctx[0], &erl_inp)) < 0 && rs == -1)
             return 1;
         else if (rs > 0 && erl_inp.state == CREADY) {
@@ -91,15 +96,16 @@ int main(void) {
             case CSEND:
                 {
                     size_t n_write = erl_inp.len - 1, cf = cbuf_free(&rs_outp);
-                    if (cf < n_write)
+                    if (cf < n_write) {
+                        logger(LOG_ERROR, "DROPPING DATA\r\n");
                         n_write = cf;
+                    }
 
                     memcpy(rs_outp.head, erl_inp.data + 1, n_write);
                     rs_outp.head += n_write;
 
-                    // TODO: make a notification of bottleneck overflow
-                    // if (n_write != erl_inp.len - 1)
-                    //     notiy_about_data_drop();
+                    if (cf - n_write < 254)
+                        safe_to_read = false;
 
                     break;
                 }
@@ -110,6 +116,7 @@ int main(void) {
 #endif
         }
 
+skip_read:
         if (ctx[2]) {
             if ((rs = io_read(ctx[2], rs_inp, sizeof(rs_inp))) < 0 && rs == -1)
                 return 1;
@@ -131,6 +138,9 @@ int main(void) {
                 else if (rs > 0) {
                     rs_outp.tail += rs;
                     cbuf_norm(&rs_outp);
+
+                    if (cbuf_free(&rs_outp) >= 254)
+                        safe_to_read = true;
                 } else
                     break;
             }
@@ -146,10 +156,16 @@ int main(void) {
                 break;
         }
 
-        if (!ctx[0]->req[0] || (ctx[2] && !ctx[2]->req[0]))
+        // TODO: rewrite all the logic and prioritize flushing buffers
+
+        // WTF? i don't know why, but without this block communication doesn't work
+        if ((safe_to_read && !ctx[0]->req[0]) || (ctx[2] && !ctx[2]->req[0]))
             continue;
 
-        io_poll(ctx, 3);
+        if (!safe_to_read)
+            io_poll(ctx + 1, 2);
+        else
+            io_poll(ctx, 3);
     }
 
     return 0;

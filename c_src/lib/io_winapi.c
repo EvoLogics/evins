@@ -9,7 +9,7 @@ static int io_set_params(context_t *ctx);
 context_t *io_stdin(void) {
     static context_t ctx;
     ctx.fd = GetStdHandle(STD_INPUT_HANDLE);
-    ctx.ov_read.hEvent  = CreateEvent(NULL, TRUE, FALSE, NULL);
+    ctx.ov_read.hEvent  = CreateEvent(NULL, TRUE, FILE_FLAG_OVERLAPPED, NULL);
     return &ctx;
 }
 
@@ -226,6 +226,9 @@ int io_set_flowcontrol(const context_t *ctx, int flowcontrol) {
 
     if (!GetCommState(ctx->fd, &dcb))
         return -1;
+
+    dcb.fOutX = FALSE;
+    dcb.fInX = FALSE;
 
     if (flowcontrol) {
         dcb.fOutxCtsFlow = TRUE;

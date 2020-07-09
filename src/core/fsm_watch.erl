@@ -77,7 +77,7 @@ configure_modules(State, Configuration) ->
   State#watchstate{configured_modules = Modules, configuration = Configuration}.
 
 consult(Reply, #watchstate{fabric_config = Fabric_config, user_config = User_config} = State) ->
-  gen_event:notify(error_logger, {fsm_event, self(), {retry, Fabric_config, User_config}}),
+  logger:info("read configuration: ~p", [{Fabric_config, User_config}]),
   ConfigFile = choose_config(Fabric_config, User_config),
   case file:consult(ConfigFile) of
     {ok, Configuration} ->
@@ -85,11 +85,14 @@ consult(Reply, #watchstate{fabric_config = Fabric_config, user_config = User_con
         [] ->
           {Reply, run_modules(State, Configuration), ?TIMEOUT};
         Errors ->
+          logger:error("read configuration: ~p~nerrors: ~p", [ConfigFile, Errors]),
           {Reply, State, ?TIMEOUT}
       end;
     {error, {Line, Mod, Term}} ->
+      logger:error("read configuration: ~p~nsyntax error: ~p", [ConfigFile, {Line, Mod, Term}]),
       {Reply, State, ?TIMEOUT};
     {error, Why} ->
+      logger:error("read configuration: ~p~nerror: ~p", [ConfigFile, Why]),
       {Reply, State, ?TIMEOUT}
   end.
 
@@ -307,10 +310,12 @@ handle_call({update_config, Filename}, _From, State) ->
   end;
 
 handle_call(Request, From, State) ->
-  {noreply, State, ?TIMEOUT}.
+  logger:error("fsm_watch~nunhandled call: ~p~nfrom: ~p", [Request, From]),
+  {stop, unhandled_call, State}.
 
 handle_cast(Request, State) ->
-  {noreply, State, ?TIMEOUT}.
+  logger:error("fsm_watch~nunhandled cast: ~p", [Request]),
+  {stop, unhandled_cast, State}.
 
 handle_info(timeout, #watchstate{status = init} = State) ->
   consult(noreply, State#watchstate{status = running});
@@ -319,11 +324,12 @@ handle_info(timeout, State) ->
   {noreply, State, ?TIMEOUT};
 
 handle_info(Info, State) ->
-  {noreply, State, ?TIMEOUT}.
+  logger:error("fsm_watch~nunhandled info: ~p", [Info]),
+  {stop, unhandled_info, State}.
 
-terminate(Reason, State) ->
+terminate(Reason, _State) ->
+  logger:info("fsm_watch~nterminate: ~p", [Reason]),
   ok.
 
 code_change(_, Pid, _) ->
   {ok, Pid}.
-

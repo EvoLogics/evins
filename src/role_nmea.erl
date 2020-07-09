@@ -691,21 +691,22 @@ extract_nmea(<<"EVORCP">>, Params) ->
     error:_ -> {error, {parseError, evorcp, Params}}
   end;
 
-%% $-EVOACA,UTC,DID,action
+%% $-EVOACA,UTC,DID,action,duration
 %% UTC hhmmss.ss
 %% DID transceiver ID
 %% action - action
 extract_nmea(<<"EVOACA">>, Params) ->
   try
-    [BUTC,BDID,BAction] =
-      lists:sublist(binary:split(Params,<<",">>,[global]),3),
+    [BUTC,BDID,BAction,BDuration] =
+      lists:sublist(binary:split(Params,<<",">>,[global]),4),
     UTC = extract_utc(BUTC),
     DID = safe_binary_to_integer(BDID),
+    Duration = safe_binary_to_integer(BDuration),
     Action = case BAction of
                  <<"S">> -> send;
                  <<"R">> -> recv
              end,
-    {nmea, {evoaca, UTC, DID, Action}}
+    {nmea, {evoaca, UTC, DID, Action, Duration}}
   catch
     error:_ -> {error, {parseError, evoaca, Params}}
   end;
@@ -749,7 +750,8 @@ extract_nmea(<<"EVOSSB">>, Params) ->
            <<"U">> -> unprocessed;
            <<"R">> -> raw;
            <<"T">> -> raytraced;
-           <<"P">> -> pressure
+           <<"P">> -> pressure;
+           <<"">> -> nothing
          end,
     {nmea, {evossb, UTC, TID, DID, CF, OP, Tr, X, Y, Z, Acc, RSSI, Int, ParmA, ParmB}}
   catch
@@ -1357,10 +1359,16 @@ build_evo(Request) ->
 
 %% $-EVOTDP,Transceiver,Max_range,Sequence,LAx,LAy,LAz,HL,Yaw,Pitch,Roll
 build_evotdp(Transceiver,Max_range,Sequence,LAx,LAy,LAz,HL,Yaw,Pitch,Roll) ->
-  SLst = lists:reverse(
-           lists:foldl(fun(V,[])  -> [integer_to_list(V)];
+  SLst =
+  case Sequence of
+      nothing -> "";
+      _ ->
+         lists:reverse(
+           lists:foldl(fun(nothing,Acc) -> Acc;
+                          (V,[])  -> [integer_to_list(V)];
                           (V,Acc) -> [integer_to_list(V),":"|Acc]
-                       end, "", Sequence)),
+                       end, "", Sequence))
+  end,
   (["PEVOTDP",
            safe_fmt(["~B","~B","~s","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f"],
                     [Transceiver,Max_range,(SLst),LAx,LAy,LAz,HL,Yaw,Pitch,Roll],",")]).
@@ -1515,14 +1523,14 @@ build_evorcp(Type, Status, Substatus, Interval, Mode, Cycles, Broadcast) ->
            safe_fmt(["~s","~s","~s","~.2.0f","~s","~B","~s"], [SType, SStatus, Substatus, Interval, SMode, NCycles, SCast], ","),
            ",,"]).
 
-%% $-EVOACA,UTC,DID,action
-build_evoaca(UTC, DID, Action) ->
+%% $-EVOACA,UTC,DID,action,duration
+build_evoaca(UTC, DID, Action, Duration) ->
   SUTC = utc_format(UTC),
   SAction = case Action of
                 send -> "S";
                 recv -> "R"
             end,
-  (["PEVOACA",SUTC,safe_fmt(["~3.10.0B","~s"], [DID,SAction], ",")]).
+  (["PEVOACA",SUTC,safe_fmt(["~3.10.0B","~s", "~B"], [DID,SAction,Duration], ",")]).
 
 
 %% $PEVOSSB,UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Integrity,ParamA,ParamB
@@ -1545,7 +1553,8 @@ build_evossb(UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB) ->
             unprocessed -> <<"U">>;
             raw -> <<"R">>;
             raytraced -> <<"T">>;
-            pressure -> <<"P">>
+            pressure -> <<"P">>;
+            nothing -> <<"">>
         end,
   (["PEVOSSB",SUTC,
            safe_fmt(["~3.10.0B","~3.10.0B","~s","~s","~s",Fmt,Fmt,"~.2.0f","~.2.0f","~B","~B","~.2.0f","~.2.0f"],
@@ -1710,8 +1719,8 @@ from_term_helper(Sentense) ->
       build_evorct(TX_utc,TX_phy,GPS,Pressure,AHRS,Lever_arm,HL);
     {evorcm,RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS} ->
       build_evorcm(RX_utc,RX_phy,Src,RSSI,Int,PSrc,TS,AS,TSS,TDS,TDOAS);
-    {evoaca,UTC,DID,Action} ->
-      build_evoaca(UTC,DID,Action);
+    {evoaca,UTC,DID,Action,Duration} ->
+      build_evoaca(UTC,DID,Action,Duration);
     {evossb,UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB} ->
       build_evossb(UTC,TID,DID,CF,OP,Tr,X,Y,Z,Acc,RSSI,Int,ParmA,ParmB);
     {evossa,UTC,TID,DID,CF,Tr,B,E,Acc,RSSI,Int,ParmA,ParmB} ->

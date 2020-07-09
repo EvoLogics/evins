@@ -1,8 +1,5 @@
-/c_src/env.mk
 /.erlang.mk
 /ebin
 /deps
 /src/fsm.app.src
-/relx.config
 /_rel
-/config/sys.config

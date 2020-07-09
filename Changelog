@@ -8,6 +8,8 @@
    to the role_worker
  - role_at fixed AT?NOISE response
  - fixed NMEA RMC parsing
+ - evins:stop() and evins:restart() caused crash reports, number of such cases
+   was greatly reduced
 
 ### Added
  - role_at parametrization via config file
@@ -21,5 +23,14 @@
    through network;
  - added fsm_ctd_nl, mod_ctd_nl - sending ctd sensor information through network;
  - added maybe_send_at_command with parametrized answer_timeout
+
+### Changed
+ - logger now uses OTP21 API, core log messages are changed
+ - evins:logon()/evins:logoff() enables debug-level messages on console
+ - to enable disk-logginng specify command-line oprtion -evins log_file "\"log/evins\""
+   and optional -evins log_max_no_files 5 and -evins log_max_no_bytes 4194304
+
+# Removed
+ - evins:rb() function, just remove it from your code
 
 Reactivation of Changelog on 13.04.2020

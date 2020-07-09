@@ -27,11 +27,10 @@
 #define LOG_PREFIX           (1 << 8)
 #define LOG_LOCATION         (1 << 9)
 
-#define logger(level, fmt, ...)                                           \
+#define logger(level, ...)                                                \
     do {                                                                  \
         if ((level & log_level))                                          \
-            logger_(level, fmt, __FILE__, __LINE__, __func__,             \
-                    ## __VA_ARGS__);                                      \
+            logger_(level, __FILE__, __LINE__, __func__, __VA_ARGS__);    \
     } while(0)
 #define logger_mat(level, m, n, data, name)                               \
     do {                                                                  \
@@ -41,8 +40,8 @@
     } while(0)
 
 void logger_init(uint16_t level);
-void logger_(uint16_t level, const char *msg,
-             const char *file, int line, const char *func, ...);
+void logger_(uint16_t level, const char *file, int line, const char *func,
+             const char *msg, ...);
 void logger_mat_(uint16_t level, size_t m, size_t n, const double *data, const char *name,
                  const char *file, int line, const char *func);
 

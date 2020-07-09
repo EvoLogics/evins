@@ -6908,7 +6908,7 @@ endif
 RELX ?= $(ERLANG_MK_TMP)/relx
 RELX_CONFIG ?= $(CURDIR)/relx.config
 
-RELX_URL ?= https://erlang.mk/res/relx-v3.27.0
+RELX_URL ?= https://github.com/okebkal/relx/releases/download/v3.22.1-i/relx
 RELX_OPTS ?=
 RELX_OUTPUT_DIR ?= _rel
 RELX_REL_EXT ?=

@@ -1,16 +1,23 @@
 CC      ?= gcc
 STRIP   ?= strip
 CFLAGS  = -std=gnu99 -Iinclude -W -Wall -Werror -pedantic \
-		  -fdata-sections -ffunction-sections \
 		  -D__USE_MINGW_ANSI_STDIO=1
 
-LDFLAGS = -lm -Wl,--gc-sections
+LDFLAGS = -lm
+
+# improve stripping performance (breaks debug info, reduces binary size)
+CFLAGS += -fdata-sections -ffunction-sections
+LDFLAGS += -Wl,--gc-sections
+
+# debug info (don't forget to comment stripping out)
+#CFLAGS += -g -DLOGGER -O0 -fsanitize=address
+#LDFLAGS += -fsanitize=address
 
 PSOURCES := $(wildcard src/*.c)
 POBJS := $(patsubst %.c,%.o,$(PSOURCES))
 PDEPS := $(patsubst %.o,%.dep,$(POBJS))
 
-PROGS := $(patsubst src/%.c,../priv/%,$(PSOURCES))
+PROGS := $(patsubst src/%.c,../priv/%$(BIN_SFX),$(PSOURCES))
 
 LSOURCES := $(wildcard lib/*.c)
 LOBJS := $(patsubst %.c,%.o,$(LSOURCES))
@@ -23,7 +30,7 @@ clean:
 	@echo "    CLEAN"
 	@-rm -f $(PROGS) $(POBJS) $(PDEPS) $(LOBJS) $(LDEPS)
 
-../priv/%: src/%.o $(LOBJS)
+../priv/%$(BIN_SFX): src/%.o $(LOBJS)
 	@echo "    LD  " $@
 	@$(CC) $< $(LOBJS) $(LDFLAGS) -o $@
 	@$(STRIP) $@
