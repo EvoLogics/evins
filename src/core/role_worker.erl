@@ -473,7 +473,7 @@ handle_info({inet_async, LSock, Ref, Error}, #ifstate{id = ID, module_id = Mod_I
   logger:error("role: ~p-~p~ninet_async error: ~p", [Mod_ID, ID, Error]),
   {stop, Error, State};
 
-handle_info({tcp, Socket, Bin}, #ifstate{socket = Socket} = State) ->
+handle_info({tcp, _, Bin}, State) ->
   process_bin(Bin, State);
 
 handle_info({udp, Socket, _IP, _Port, Bin}, #ifstate{socket = Socket} = State) ->
