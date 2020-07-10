@@ -6,6 +6,8 @@ dep_parse_trans = git https://github.com/uwiger/parse_trans 3.3.0
 
 CT_SUITES = share
 
+FULL = 1
+
 otp_release = $(shell erl +A0 -noinput -boot start_clean -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt()')
 otp_20plus = $(shell test $(otp_release) -ge 20; echo $$?)
 
