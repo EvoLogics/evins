@@ -7,6 +7,6 @@ divert(0)dnl
               {id,"git"},
               {modules,[]},
               {registered,[]},
-              {applications,[kernel,stdlib,sasl,jsx,cowboy]},
+              {applications,[kernel,stdlib]},
               {mod,{fsm_app,["/usr/local/etc/fsm.conf"]}},
               {start_phases,[]}]}.

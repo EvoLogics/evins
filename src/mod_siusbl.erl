@@ -44,5 +44,6 @@ register_fsms(_Mod_ID, Role_IDs, _Share, ArgS) ->
       _ -> 1
     end,
   Roles = fsm_worker:role_info(Role_IDs, [at]),
+  logger:set_module_level(fsm_siusbl, info),
   [#sm{roles = [hd(Roles)], module = fsm_conf},
    #sm{roles = Roles, env = #{target => Target}, module = fsm_siusbl}].

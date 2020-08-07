@@ -28,8 +28,9 @@
 -module(ioc).
 
 -include("fsm.hrl").
+-include_lib("kernel/include/logger.hrl").
 
--export([format/5, format/6, format/7, id/0, timestamp_string/0]).
+-export([format/2, id/0, timestamp_string/0]).
 -import(mix, [microseconds/0]).
 
 -define(NONE,    "\e[0m").
@@ -58,33 +59,28 @@ timestamp_string() ->
   {M, S, U} = os:timestamp(),
   lists:flatten(io_lib:format("~p.~s.~s", [M, intfmt(6,S), intfmt(6,U)])).
 
-format(Module, Line, ID, Format, Color) ->
-  format_helper(Module, Line, ID, standard_io, Format, [], Color).
+format(#{level := Level,
+         msg := {report, #{format := Fmt, args := Args, id := ID}},
+         meta := #{
+           mfa := {Module, _, _},
+           line := Line,
+           time := Timestamp}}, Config) ->
+  Msg = format_helper(Module, Line, ID, Timestamp, Fmt, Args, Level),
+  case maps:get(single_line, Config) of
+    true ->
+      [re:replace(string:trim(Msg),",?\r?\n\s*",", ",
+                  [{return,list},global,unicode]), "\n"];
+    _false ->
+      Msg
+  end;
+format(_Other, _) ->
+  io_lib:format("Other: ~p~n", [_Other]).
 
-format(Module, Line, ID, Format, Data, Color) ->
-  format_helper(Module, Line, ID, standard_io, Format, Data, Color).
-
-format(Module, Line, ID, IoDevice, Format, Data, Color) ->
-  format_helper(Module, Line, ID, IoDevice, Format, Data, Color).
-
-format_helper(Module, Line, ID, IoDevice, Format, Data, Type) when is_atom(ID) ->
-  format_helper(Module, Line, #sm{logger = trace, id = ID}, IoDevice, Format, Data, Type);
-format_helper(_, _, #sm{logger = nothing}, _, _, _, _) ->
-  nothing;
-format_helper(_, _, #sm{logger = error}, _, _, _, T) when T /= error ->
-  nothing;
-format_helper(_, _, #sm{logger = warning}, _, _, _, T) when T == trace; T == info ->
-  nothing;
-format_helper(_, _, #sm{logger = info}, _, _, _, T) when T == trace ->
-  nothing;
-format_helper(Module, Line, SM, _IoDevice, Format, Data, Type) ->
-  ID = SM#sm.id,
-  Timestamp = os:timestamp(),
+format_helper(Module, Line, #sm{id = ID}, Timestamp, Format, Data, Level) ->
   Message = lists:flatten(io_lib:format(Format,Data)),
-  TS = fun({M,S,U}) -> lists:flatten(io_lib:format("~p.~s.~s", [M, intfmt(6,S), intfmt(6,U)])) end,
   HS = fun(I,M,L) -> lists:flatten(io_lib:format("~p:~p:~p:", [M, L, I])) end,
-  Fmt = "~34s ~s" ++ "~s" ++ "~s",
-  Color = case Type of
+  Fmt = "~48s ~s" ++ "~s" ++ "~s",
+  Color = case Level of
             trace -> ?NONE;
             info -> ?LBLUE;
             warning -> ?LRED;
@@ -92,6 +88,9 @@ format_helper(Module, Line, SM, _IoDevice, Format, Data, Type) ->
             _ -> ?NONE
           end,
   Params = [HS(ID, Module, Line), Color] ++ [Message] ++ [?NONE],
-  io:format("~18s " ++ Fmt, [TS(Timestamp) | Params]).
-  %% gen_event:notify(error_logger, {fsm_progress, self(), {Color, ID, Module, Line, Timestamp, Message}}).
+  lists:flatten(io_lib:format("~18B " ++ Fmt, [Timestamp | Params]));
+format_helper(Module, Line, ID, Timestamp, Format, Data, Level) when is_atom(ID) ->
+  format_helper(Module, Line, #sm{id = ID}, Timestamp, Format, Data, Level);
+format_helper(Module, Line, _, Timestamp, Format, Data, Level) ->
+  format_helper(Module, Line, #sm{id = ""}, Timestamp, Format, Data, Level).
 

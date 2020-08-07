@@ -76,47 +76,47 @@ init(#sm{module = Module} = SM) ->
   {ok, run_event(nothing, SMi#sm{event = Init_event, final = Finals}, nothing)}.
 
 handle_call(Request, From, #sm{module = Module} = SM) ->
-  logger:warning("module: ~p, id: ~p~nunexpected call: ~p~nfrom: ~p", [Module, SM#sm.id, Request, From]),
+  ?WARNING(?ID, "module: ~p, id: ~p~nunexpected call: ~p~nfrom: ~p", [Module, SM#sm.id, Request, From]),
   {noreply, SM}.
 
 handle_cast({chan, nothing, Term}, #sm{module = Module, logger = Logger} = SM) ->
   case Logger of
-    trace -> logger:debug("module: ~p, id ~p~nchan message: ~p", [Module, SM#sm.id, Term]);
+    trace -> ?TRACE(?ID,"module: ~p, id ~p~nchan message: ~p", [Module, SM#sm.id, Term]);
     _ -> ok
   end,
   handle_event(Module, nothing, SM, Term);
 
 handle_cast({chan, MM, Term}, #sm{module = Module, logger = Logger} = SM) ->
   case Logger of
-    trace -> logger:debug("module: ~p, id ~p~nrole: ~p~nchan message: ~p", [Module, SM#sm.id, MM#mm.role_id, Term]);
+    trace -> ?TRACE(?ID, "module: ~p, id ~p~nrole: ~p~nchan message: ~p", [Module, SM#sm.id, MM#mm.role_id, Term]);
     _ -> ok
   end,
   handle_event(Module, MM, SM, Term);
 
 handle_cast({send_error, MM, Reason}, #sm{module = Module} = SM) ->
-  logger:error("module: ~p, id ~p~nrole: ~p~nerror: ~p", [Module, SM#sm.id, MM#mm.role_id, Reason]),
+  ?ERROR(?ID, "module: ~p, id ~p~nrole: ~p~nerror: ~p", [Module, SM#sm.id, MM#mm.role_id, Reason]),
   handle_event(Module, MM, SM, {send_error, Reason});
 
 handle_cast(final, #sm{module = Module} = SM) ->
-  logger:info("module: ~p, id ~p~nfinal", [Module, SM#sm.id]),
+  ?INFO(?ID, "module: ~p, id ~p~nfinal", [Module, SM#sm.id]),
   {stop, normal, SM};
 
 handle_cast({chan_closed, MM}, #sm{module = Module} = SM) ->
-  logger:info("module: ~p, id ~p~nrole: ~p~nchan closed", [Module, SM#sm.id, MM#mm.role_id]),
+  ?INFO(?ID, "module: ~p, id ~p~nrole: ~p~nchan closed", [Module, SM#sm.id, MM#mm.role_id]),
   handle_event(Module, MM, SM, {disconnected, closed});
   %% {noreply, SM};
 
 handle_cast({chan_error, MM, Reason}, #sm{module = Module} = SM) ->
-  logger:info("module: ~p, id ~p~nrole: ~p~nchan error: ~p", [Module, SM#sm.id, MM#mm.role_id, Reason]),
+  ?INFO(?ID, "module: ~p, id ~p~nrole: ~p~nchan error: ~p", [Module, SM#sm.id, MM#mm.role_id, Reason]),
   handle_event(Module, MM, SM, {disconnected, {error, Reason}});
 
 handle_cast({chan_closed_client, MM}, #sm{module = Module} = SM) ->
-  logger:info("module: ~p, id ~p~nrole: ~p~nchan closed client", [Module, SM#sm.id, MM#mm.role_id]),
+  ?INFO(?ID, "module: ~p, id ~p~nrole: ~p~nchan closed client", [Module, SM#sm.id, MM#mm.role_id]),
   handle_event(Module, MM, SM, {disconnected, closed});
   %% {noreply, SM};
 
 handle_cast({chan_parseError, MM, Reason}, #sm{module = Module} = SM) ->
-  logger:error("module: ~p, id ~p~nrole: ~p~nchan parse error: ~p", [Module, SM#sm.id, MM#mm.role_id, Reason]),
+  ?ERROR(?ID, "module: ~p, id ~p~nrole: ~p~nchan parse error: ~p", [Module, SM#sm.id, MM#mm.role_id, Reason]),
   {stop, chan_parseError, SM};
 
 handle_cast({role, {_,Role_ID,_,_,_} = Item}, #sm{roles = Roles} = SM) ->
@@ -125,14 +125,14 @@ handle_cast({role, {_,Role_ID,_,_,_} = Item}, #sm{roles = Roles} = SM) ->
   {noreply, SM#sm{roles = [Item | Roles]}};
 
 handle_cast(Request, #sm{module = Module} = SM) ->
-  logger:error("module: ~p, id ~p~nunhandled cast: ~p", [Module, SM#sm.id, Request]),
+  ?ERROR(?ID, "module: ~p, id ~p~nunhandled cast: ~p", [Module, SM#sm.id, Request]),
   {stop, unhandled_cast, SM}.
 
 handle_info({timeout,E}, #sm{module = Module, logger = Logger} = SM) ->
   case lists:any(fun({Event,_}) -> Event == E end, SM#sm.timeouts) of
     true ->
       case Logger of
-        trace -> logger:debug("module: ~p, id ~p~ntimeout: ~p", [Module, SM#sm.id, E]);
+        trace -> ?TRACE(?ID, "module: ~p, id ~p~ntimeout: ~p", [Module, SM#sm.id, E]);
         _ -> ok
       end,
       TL = lists:filter(fun({_,{interval,_}}) -> true;
@@ -140,7 +140,7 @@ handle_info({timeout,E}, #sm{module = Module, logger = Logger} = SM) ->
                         end, SM#sm.timeouts),
       handle_event(Module, nothing, SM#sm{timeouts = TL}, {timeout, E});
     _ ->
-      logger:warning("module: ~p, id ~p~nskipped timeout: ~p", [Module, SM#sm.id, E]),
+      ?WARNING(?ID, "module: ~p, id ~p~nskipped timeout: ~p", [Module, SM#sm.id, E]),
       {noreply, SM}
   end;
 
@@ -148,14 +148,14 @@ handle_info({'EXIT',_,_Reason}, State) ->
   {noreply, State};
 
 handle_info(Info, #sm{module = Module} = SM) ->
-  logger:error("module: ~p, id ~p~nunhandled info: ~p", [Module, SM#sm.id, Info]),
+  ?ERROR(?ID, "module: ~p, id ~p~nunhandled info: ~p", [Module, SM#sm.id, Info]),
   {stop, unhandled_info, SM}.
 
 code_change(_, Pid, _) ->
   {ok, Pid}.
 
 terminate(Reason, #sm{module = Module} = SM) ->
-  logger:info("module: ~p, id ~p~nterminate: ~p", [Module, SM#sm.id, Reason]),
+  ?INFO(?ID, "module: ~p, id ~p~nterminate: ~p", [Module, SM#sm.id, Reason]),
   Module:stop(SM),
   gen_server:cast(SM#sm.id, {stop, SM, fsm_crashed}).
 
@@ -208,7 +208,7 @@ log_transition(#sm{module = Module} = SM, Stack, Handle) ->
              {_, [], _}           -> {ioc:timestamp_string(), Handle, SM#sm.event, Stack};
              {_, _,  _}           -> {ioc:timestamp_string(), Handle, SM#sm.event, Stack, Timeouts}
            end,
-  logger:info("module: ~p, id ~p~ntransition: ~p", [Module, SM#sm.id, Report]).
+  ?INFO(?ID, "module: ~p, id ~p~ntransition: ~p", [Module, SM#sm.id, Report]).
 
 %% public functions
 is_final(SM) ->
@@ -319,7 +319,7 @@ role_available(#sm{roles = Roles}, Target_role) ->
 cast_helper(SM, Target, Message) ->
   case SM of
     #sm{module = Module, logger = debug} ->
-      logger:warning("module: ~p, id: ~p~ncast: ~p~nto: ~p", [Module, SM#sm.id, Message, Target]);
+      ?WARNING(?ID, "module: ~p, id: ~p~ncast: ~p~nto: ~p", [Module, SM#sm.id, Message, Target]);
     _ -> ok
   end,
   gen_server:cast(Target, {self(), Message}).

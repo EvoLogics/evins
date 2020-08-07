@@ -49,6 +49,7 @@ init_event()   -> eps.
 stop(_SM)      -> ok.
 
 handle_event(_MM, SM, Term) ->
+  ?INFO(?ID, "Term: ~p~n", [Term]),
   case Term of
     {allowed} ->
       fsm:cast(SM, at, {send, {at, "?S", ""}}),

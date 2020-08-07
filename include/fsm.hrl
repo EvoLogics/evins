@@ -28,13 +28,17 @@
 
 -type ref() :: atom() | {atom(),atom()} | {global,any()} | {via,atom(),any()} | pid().
 
--define(Format(ID, Fmt, Color), ioc:format(?MODULE, ?LINE, ID, Fmt, Color)).
--define(Format(ID, Fmt, Data, Color), ioc:format(?MODULE, ?LINE, ID, Fmt, Data, Color)).
--define(Format(ID, Fmt, IODevice, Data, Color), ioc:format(?MODULE, ?LINE, ID, IODevice, Fmt, Data, Color)).
+%% -define(Format(ID, Fmt, Level), ioc:format(?MODULE, ?LINE, ID, Fmt, Level)).
+%% -define(Format(ID, Fmt, Data, Level), ioc:format(?MODULE, ?LINE, ID, Fmt, Data, Level)).
+%% -define(Format(ID, Fmt, Args, Level), logger:log(Level, #{module => ?MODULE, line => ?LINE, sm => SM, format => Fmt, args => Args}).
+
+-include_lib("kernel/include/logger.hrl").
+
+-define(Format(ID, Fmt, Args, Level), ?LOG(Level, #{format => Fmt, args => Args, id => ID})).
 
 -record(mm,{role,role_id,status=false,params=[],iface}).
-%% iface = {IP,Port,Type} | {Port, PortSettings}
 
+%% iface = {IP,Port,Type} | {Port, PortSettings}
 -define(ANSWER_TIMEOUT, {s, 1}).
 -define(WAKEUP_TIMEOUT, {s, 6}).
 
@@ -50,10 +54,15 @@
 
 -define(ID, SM).
 
--define(TRACE(ID,Fmt,Data), ?Format(ID, Fmt, Data, trace)).
+-define(TRACE(ID,Fmt,Data), ?Format(ID, Fmt, Data, debug)).
 -define(INFO(ID,Fmt,Data), ?Format(ID, Fmt, Data, info)).
 -define(WARNING(ID,Fmt,Data), ?Format(ID, Fmt, Data, warning)).
 -define(ERROR(ID,Fmt,Data), ?Format(ID, Fmt, Data, error)).
+
+-define(TRACE(ID,Fmt), ?Format(ID, Fmt, [], debug)).
+-define(INFO(ID,Fmt), ?Format(ID, Fmt, [], info)).
+-define(WARNING(ID,Fmt), ?Format(ID, Fmt, [], warning)).
+-define(ERROR(ID,Fmt), ?Format(ID, Fmt, [], error)).
 
 -record(sm,{
     id,

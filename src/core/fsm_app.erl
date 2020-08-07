@@ -29,35 +29,26 @@
 -behaviour(application).
 
 -export([start/2, stop/1]).
--export([delete_standard_report_handler/0]).
 
-delete_standard_report_handler() ->
-  case error_logger:delete_report_handler(log_mf_h) of
-    {_,Dir,MaxB,MaxF,_,_,_,_,Fun} ->
-      error_logger:add_report_handler(fsm_log_mf_h,fsm_log_mf_h:init(Dir,MaxB,MaxF,Fun));
-    _ ->
-      timer:apply_after(100, ?MODULE, delete_standard_report_handler, [])
-  end.
+setup_logger(console) ->
+  logger:set_handler_config(default, formatter, {ioc, #{single_line => true}});
+setup_logger(file) ->
+  logger:add_handler(evins, logger_disk_log_h,
+                     #{formatter => {ioc, #{single_line => true}},
+                       config => #{file => maybe_config(logger_dir,"/opt/evins/log") ++ "/evins",
+                                   max_no_files => maybe_config(logger_maxfiles, 5),
+                                   max_no_bytes => maybe_config(logger_maxbytes, 4194304)}
+                      });
+setup_logger(_) ->
+  nothing.
 
 start(_Type, _Args) ->
-  case maybe_config(log_output) of
-    on ->
-      evins:logon();
-    _ ->
-      nothing
+  Sinks = maybe_config(logger_output, []),
+  case lists:member(console, Sinks) of
+    true -> nothing;
+    _ -> logger:remove_handler(default)
   end,
-  case maybe_config(log_file) of
-    nothing -> nothing; % do not start disk logging unless path is specified
-    Path ->
-          logger:add_handler(file_logger, logger_disk_log_h,
-                             #{level => debug,
-                               config => #{file => Path,
-                                           max_no_files => maybe_config(log_max_no_files, 5),
-                                           max_no_bytes => maybe_config(log_max_no_bytes, 4194304)},
-                               formatter => {logger_formatter,
-                                             #{template => [time, " ", pid, " ", level, ": ", msg, "\n"],
-                                               single_line => true}}})
-  end,
+  [setup_logger(Sink) || Sink <- Sinks],
   User_config = maybe_config(user_config),
   Fabric_config = maybe_config(fabric_config),
   fsm_supervisor:start_link([Fabric_config, User_config]).
