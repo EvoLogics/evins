@@ -29,6 +29,7 @@
  - evins:logon()/evins:logoff() enables debug-level messages on console
  - to enable disk-logginng specify command-line oprtion -evins log_file "\"log/evins\""
    and optional -evins log_max_no_files 5 and -evins log_max_no_bytes 4194304
+ - updated erlang.mk
 
 # Removed
  - evins:rb() function, just remove it from your code
