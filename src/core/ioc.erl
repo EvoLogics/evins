@@ -73,8 +73,8 @@ format(#{level := Level,
     _false ->
       Msg
   end;
-format(_Other, _) ->
-  io_lib:format("Other: ~p~n", [_Other]).
+format(LogEvent, Config) ->
+  logger_formatter:format(LogEvent, Config).
 
 format_helper(Module, Line, #sm{id = ID}, Timestamp, Format, Data, Level) ->
   Message = lists:flatten(io_lib:format(Format,Data)),

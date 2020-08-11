@@ -39,6 +39,8 @@
 -export([module_parameters/1,module_parameters/2,store_config/0,store_config/1,config/1,config/0]).
 -export([module_id/2,mfa/1,mfa/2]).
 
+-export([set_module_level/2]).
+
 %% TODO: reflect status, that running configuration doesn't correspond to the stored in the memory
 -export([logon/0,logoff/0]).
 -export([fsm_events/0]).
@@ -197,3 +199,12 @@ restart(Id) ->
 restart_all() ->
   Modules = configured_modules(),
   [restart(ID) || {_,ID} <- Modules].
+
+set_module_level(Module, Options) ->
+  Logger = case lists:keyfind(logger, 1, Options) of
+             {logger,trace} -> debug;
+             {logger,L} -> L;
+             _ -> nothing
+           end,
+  logger:set_module_level(Module, Logger).
+  
