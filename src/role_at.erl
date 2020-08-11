@@ -191,8 +191,9 @@ answer_split(L,Wait,Request,Pid) ->
         {match, [Recv,_,_,<<>>,<<>>,BLen,Tail]} ->
           recv_extract(L,Recv,binary_to_integer(BLen),Tail,Wait,Request,Pid);
         nomatch ->
-          case re:run(L,"^(RECVSTART|RECVEND,|RECVFAILED,|RECVSRV,|SEND[^,]*,|BITRATE,|RADDR,|SRCLEVEL,|PHYON|PHYOFF|USBL[^,]*,"
+          case re:run(L,"^(RECVPROBE,|RECVSTART|RECVEND,|RECVFAILED,|RECVSRV,|SEND[^,]*,|BITRATE,|RADDR,|SRCLEVEL,|PHYON|PHYOFF|USBL[^,]*,"
                       "|ECLK,|RTO,|DROPCNT,|DELIVERED|FAILED|EXPIRED|CANCELED|STATUS,|%)(.*?)\r\n(.*)",[dotall,{capture,[1,2,3],binary}]) of
+            {match, [<<"RECVPROBE,">>,P,L1]} -> [recvprobe_extract(P)  | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVSTART">>,<<>>,L1]} -> [{async, {recvstart}}  | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVEND,">>,P,L1]}     -> [recvend_extract(P)    | answer_split(L1,Wait,Request,Pid)];
             {match, [<<"RECVFAILED,">>,P,L1]}  -> [recvfailed_extract(P) | answer_split(L1,Wait,Request,Pid)];
@@ -497,6 +498,17 @@ recvsrv_extract(P) ->
     error:_ -> {error, {parseError, recvsrv, binary_to_list(P)}}
   end.
 
+%% RECVPROBE,bit_value,timestamp,dur,rssi,int,vel
+recvprobe_extract(P) ->
+  try
+    {match, [Bb,Busec,Bdur,Br,Bi,Bv]} =
+      re:run(P,"^([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*)$",[dotall,{capture,[1,2,3,4,5,6],binary}]),
+    [Bit,Usec,Dur,R,I,V] = [binary_to_integer(X) || X <- [Bb,Busec,Bdur,Br,Bi,Bv]],
+    {async,{recvprobe,Bit,Usec,Dur,R,I,V}}
+  catch
+    error:_ -> {error, {parseError, recvprobe, binary_to_list(P)}}
+  end.
+  
 recv_extract(L,Brecv,Len,Tail,Wait,Request,Pid) ->
   Recv = case Brecv of
            <<"RECV,">> -> recv;
@@ -602,7 +614,8 @@ from_term(Term, #{txtime := TXTime} = Cfg) ->
 %% {at,"*SEND",dst,data}   {at,{pid,Pid},"*SEND",dst,data}   
 %% {at,"*SENDIM",dst,flag,data}  {at,{pid,Pid},"*SENDIM",dst,flag,data}  
 %% {at,"*SENDIMS",dst,usec,data} {at,{pid,Pid},"*SENDIMS",dst,usec,data} 
-%% {at,"*SENDPBM",dst,data}      {at,{pid,Pid},"*SENDPBM",dst,data}      
+%% {at,"*SENDPBM",dst,data}      {at,{pid,Pid},"*SENDPBM",dst,data}
+%% {at,"*SENDPROBE",bit_value,follow_flag,usec}
 %% {at,"req","params"}
 %% {at,help,"req"}
 %%
@@ -648,6 +661,13 @@ from_term_helper({at,{pid,Pid},"*SENDPBM",Dst,Data},_,F) ->
 from_term_helper({at,"*SENDPBM",Dst,Data},Pid,_) when is_integer(Dst) and is_binary(Data) ->
   {"*SENDPBM", singleline,
    ["AT*SENDPBM,p", integer_to_binary(Pid), ",", integer_to_binary(byte_size(Data)), ",", integer_to_binary(Dst), ",", Data]};
+%% {at,"*SENDPROBE",bit_value,follow_flag,usec}
+from_term_helper({at,"*SENDPROBE",V,Flag,Usec},_,_) ->
+  SUsec = case Usec of
+            X when is_integer(X) -> integer_to_binary(Usec);
+            none -> ""
+          end,
+  {"*SENDPROBE", singleline, ["AT*SENDPROBE,",integer_to_binary(V),$,,integer_to_binary(Flag),$,,SUsec]};
 %% other {at,...} terms
 from_term_helper({at,"$",Req,_}, _, _) ->
   {"$", multiline,

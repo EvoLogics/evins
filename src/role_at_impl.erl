@@ -59,6 +59,7 @@ split(L, Cfg) ->
       [<<"AT*SENDIM,", _/binary>>, _]  -> at_send_extract(sendim, L, Cfg);
       [<<"AT*SENDIMS,", _/binary>>, _] -> at_send_extract(sendims, L, Cfg);
       [<<"AT*SENDPBM,", _/binary>>, _] -> at_send_extract(sendpbm, L, Cfg);
+      [<<"AT*SENDPROBE,",_/binary>>, _]-> at_sendprobe_extract(L, Cfg);
       [Answer, Rest] ->
         case re:run(Answer,"AT([?@&!]?[^0-9]*)(.*)", [dotall, {capture, [1, 2], list}]) of
           {match, [Cmd, Param]} -> [{at, Cmd, Param} | split(Rest, Cfg)];
@@ -91,6 +92,16 @@ at_send_extract(sendims, L, Cfg) ->
   RE = "AT\\*SENDIMS(,p([0-9]*))?,(\\d+),(\\d+),(\\d*),(.*)",
   {match, [_, BPID, BLen, BDst, BUSEC, Rest]} = re:run(L,RE, [dotall, {capture, [1, 2, 3, 4, 5, 6], binary}]),
   parse_send_payload(sendims, Rest, BLen, BPID, [BDst, BUSEC], L, Cfg).
+
+at_sendprobe_extract(L, _Cfg) ->
+  RE = "AT\\*SENDPROBE,(\\d+),(\\d+),(\\d*)",
+  {match, [Bb, Bf, BUsec]} = re:run(L,RE, [dotall, {capture, [1, 2, 3], binary}]),
+  [B,F] = [binary_to_integer(V) || V <- [Bb, Bf]],
+  Usec = case BUsec of
+           <<>> -> none;
+           _ -> binary_to_integer(BUsec)
+         end,
+  {at,"*SENDPROBE",B,F,Usec}.
 
 parse_send_payload(Type, Rest, BLen, BPID, Custom, L, Cfg) ->
   EOL = maps:get(eol, Cfg),
@@ -157,6 +168,10 @@ from_term({async, {Recv,Len,S,D,X,Dur,R,I,V,Payload}}, Cfg) ->
   SRecv = case Recv of recv -> "RECV"; recvims -> "RECVIMS" end,
   Data = io_lib:format("~s,~b,~b,~b,~b,~b,~b,~b,~.2.0f,", [SRecv,Len,S,D,X,Dur,R,I,V]),
   [list_to_binary([Data,Payload,"\r\n"]), Cfg];
+
+from_term({async, {recvprobe,Bit,Usec,Dur,R,I,V}}, Cfg) ->
+  Data = io_lib:format("RECVPROBE,~b,~p,~b,~b,~b,~.2.0f,",[Bit,Usec,Dur,R,I,V]),
+  [list_to_binary([Data,"\r\n"]), Cfg];  
 
 from_term({async, {pid, Pid}, {Recv,Len,S,D,X,Dur,R,I,V,Payload}}, Cfg) ->
   SRecv = case Recv of recv -> "RECV"; recvims -> "RECVIMS" end,
