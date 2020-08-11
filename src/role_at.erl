@@ -503,7 +503,8 @@ recvprobe_extract(P) ->
   try
     {match, [Bb,Busec,Bdur,Br,Bi,Bv]} =
       re:run(P,"^([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*)$",[dotall,{capture,[1,2,3,4,5,6],binary}]),
-    [Bit,Usec,Dur,R,I,V] = [binary_to_integer(X) || X <- [Bb,Busec,Bdur,Br,Bi,Bv]],
+    [Bit,Usec,Dur,R,I] = [binary_to_integer(X) || X <- [Bb,Busec,Bdur,Br,Bi]],
+    V = binary_to_float(Bv),
     {async,{recvprobe,Bit,Usec,Dur,R,I,V}}
   catch
     error:_ -> {error, {parseError, recvprobe, binary_to_list(P)}}
