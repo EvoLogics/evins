@@ -241,34 +241,37 @@ extract_nmea(<<"ZDA">>, Params) ->
   end;
 
 %% LBL location
-%% $-EVOLBL,Type,r,Loc_no,Ser_no,Lat,Lon,Alt,Pressure,,
+%% $-EVOLBL,Type,Frame,Loc_no,Ser_no,Lat,Lon,Alt,Pressure,CF1,CF2,CF2
 %% Alt - meters
 %% Pressure - dbar
 %% Type: I or C
+%% Frame: N (ned), G (geod), L (local), r (reserved)
 %% I - initialized georeferenced position
 %% C - calibrated georeferenced position
 %% D - undefined position
 extract_nmea(<<"EVOLBL">>, Params) ->
   try
-    [BType,_,BLoc,BSer,BLat,BLon,BAlt,BPressure,_,_,_] = binary:split(Params,<<",">>,[global]),
+    [BType,BFrame,BLoc,BSer,BLat,BLon,BAlt,BPressure,_,_,_] = binary:split(Params,<<",">>,[global]),
     Type = binary_to_list(BType),
+    Frame = binary_to_list(BFrame),
     [Loc,Ser] = [safe_binary_to_integer(X) || X <- [BLoc,BSer]],
     [Lat,Lon,Alt,Pressure] = [safe_binary_to_float(X) || X <- [BLat,BLon,BAlt,BPressure]],
-    {nmea,{evolbl, Type, Loc, Ser, Lat, Lon, Alt, Pressure}}
+    {nmea, {evolbl, Type, Frame, Loc, Ser, Lat, Lon, Alt, Pressure, nothing, nothing, nothing}}
   catch
     error:_ -> {error, {parseError, evolbl, Params}}
   end;
 
 %% LBL position
-%% $-EVOLBP,Timestamp,Tp_array,Type,Status,Coordinates,Lat,Lon,Alt,Pressure,Major,Minor,Direction,SMean,Std
+%% $-EVOLBP,Timestamp,Tp_array,Type,Status,Frame,Lat,Lon,Alt,Pressure,Major,Minor,Direction,SMean,Std
 %% Timestamp hhmmss.ss
 %% Tp_array c--c %% B01B02B04 %% our case 1:2:3:4
 %% Type a- %% R1 or T1 %% in our case just address
 %% Status A %% OK | or others
-%% Coordinates r (degrees, 7 digits)
+%% Frame: N (ned), G (geod), L (local), r (reserved)
 extract_nmea(<<"EVOLBP">>, Params) ->
   try
-    [BUTC,BArray,BAddress,BStatus,_,BLat,BLon,BAlt,BPressure,_,_,_,Bsmean,Bstd] = binary:split(Params,<<",">>,[global]),
+    [BUTC,BArray,BAddress,BStatus,BFrame,BLat,BLon,BAlt,BPressure,BMa,BMi,BDir,Bsmean,Bstd] = binary:split(Params,<<",">>,[global]),
+    Frame = binary_to_list(BFrame),
     Basenodes = if BArray == <<>> -> [];
                    true -> [binary_to_integer(Bnode) || Bnode <- binary:split(BArray, <<":">>, [global])]
                 end,
@@ -281,8 +284,8 @@ extract_nmea(<<"EVOLBP">>, Params) ->
     UTC = 60*(60*HH + MM) + SS,
     Status = binary_to_list(BStatus),
     Address = binary_to_integer(BAddress),
-    [Lat,Lon,Alt,Pressure,SMean,Std] = [safe_binary_to_float(X) || X <- [BLat,BLon,BAlt,BPressure,Bsmean,Bstd]],
-    {nmea, {evolbp, UTC, Basenodes, Address, Status, Lat, Lon, Alt, Pressure, SMean, Std}}
+    [Lat,Lon,Alt,Pressure,SMean,Std,Ma,Mi,Dir] = [safe_binary_to_float(X) || X <- [BLat,BLon,BAlt,BPressure,Bsmean,Bstd,BMa,BMi,BDir]],
+    {nmea, {evolbp, UTC, Basenodes, Address, Status, Frame, Lat, Lon, Alt, Pressure, Ma, Mi, Dir, SMean, Std}}
   catch
     error:_ -> {error, {parseError, evolbp, Params}}
   end;
@@ -942,6 +945,44 @@ extract_nmea(<<"EVOCTL">>, <<"SINAPS,",Params/binary>>) ->
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
   end;
+%% PEVOCTL,QLBL,CFG,<code>,<period>,<offset>
+extract_nmea(<<"EVOCTL">>, <<"QLBL,CFG,",Params/binary>>) ->
+  try
+    BLst = lists:sublist(binary:split(Params,<<",">>,[global]), 3),
+    [Code, Period, Offset] = [binary_to_integer(X) || X <- BLst],
+    {nmea, {evoctl, qlbl, #{command => config, code => Code, period => Period, offset => Offset}}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}
+  end;
+%% PEVOCTL,QLBL,REF,<lat>,<lon>,<alt>
+extract_nmea(<<"EVOCTL">>, <<"QLBL,REF,",Params/binary>>) ->
+  try
+    BLst = lists:sublist(binary:split(Params,<<",">>,[global]), 3),
+    [Lat,Lon,Alt] = [safe_binary_to_float(X) || X <- BLst],
+    {nmea, {evoctl, qlbl, #{command => reference, lat => Lat, lon => Lon, alt => Alt}}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}
+  end;
+%% PEVOCTL,QLBL,TX,<src>,<code>,<counter>
+extract_nmea(<<"EVOCTL">>, <<"QLBL,TX,",Params/binary>>) ->
+  try
+    BLst = lists:sublist(binary:split(Params,<<",">>,[global]), 3),
+    [Src, Code, Cnt] = [binary_to_integer(V) || V <- BLst],
+    {nmea, {evoctl, qlbl, #{command => transmit, source => Src, code => Code, counter => Cnt}}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}
+  end;
+%% PEVOCTL,QLBL,RX
+extract_nmea(<<"EVOCTL">>, <<"QLBL,RX">>) ->
+  {nmea, {evoctl, qlbl, #{command => stop}}};
+%% PEVOCTL,QLBL,CAL
+extract_nmea(<<"EVOCTL">>, <<"QLBL,CAL,",Params/binary>>) ->
+  try
+    Frame = binary_to_integer(Params),
+    {nmea, {evoctl, qlbl, #{frame => Frame, command => calibrate}}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}    
+  end;
 extract_nmea(<<"EVOCTL">>, Params) ->
   {error, {parseError, evoctl, Params}};
 
@@ -1252,12 +1293,12 @@ build_gll(Lat,Lon,UTC,Status,Mode) ->
           end,
   (["GPGLL",SLat,SLon,SUTC,SStatus,SMode]).
 
-build_evolbl(Type,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure) ->
-  S = safe_fmt(["~s","~s","~B","~B","~.7.0f","~.7.0f","~.2.0f","~.2.0f"],
-               [Type,"r",Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure],","),
-  (["PEVOLBL",S,",,,"]).
+build_evolbl(Type,Frame,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure,CF1,CF2,CF3) ->
+  S = safe_fmt(["~s","~s","~B","~B","~.7.0f","~.7.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f"],
+               [Type,Frame,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure,CF1,CF2,CF3],","),
+  (["PEVOLBL",S]).
 
-build_evolbp(UTC, Basenodes, Address, Status, Lat_rad, Lon_rad, Alt, Pressure, SMean, Std) ->
+build_evolbp(UTC, Basenodes, Address, Status, Frame, Lat_rad, Lon_rad, Alt, Pressure, Ma, Mi, Dir, SMean, Std) ->
   S = erlang:trunc(UTC),
   MS = UTC - S + 0.0,
   SS = S rem 60,
@@ -1273,8 +1314,8 @@ build_evolbp(UTC, Basenodes, Address, Status, Lat_rad, Lon_rad, Alt, Pressure, S
            nothing -> "";
            _ -> (io_lib:format("~.3.0f",[float(Std)]))
          end,
-  SRest = safe_fmt(["~B","~s","~s","~.7.0f","~.7.0f","~.2.0f","~.2.0f","~s","~s","~s","~.3.0f","~s"],
-                   [Address,Status,"r",Lat_rad,Lon_rad,Alt,Pressure,"","","",SMean,SStd],","),
+  SRest = safe_fmt(["~B","~s","~s","~.7.0f","~.7.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.2.0f","~.3.0f","~s"],
+                   [Address,Status,Frame,Lat_rad,Lon_rad,Alt,Pressure,Ma,Mi,Dir,SMean,SStd],","),
   (["PEVOLBP",SUTC,SNodes,SRest]).
 
 build_simsvt(Total, Idx, Lst) ->
@@ -1446,7 +1487,6 @@ build_evoctl(susbl, {Seq, MRange, SVel}) ->
   (["PEVOCTL,SUSBL",
            safe_fmt(["~s","~.1.0f","~.1.0f"],
                     [SSeq,MRange,SVel],",")]);
-
 %% $PEVOCTL,SUSBL,Seq,MRange,SVel
 build_evoctl(sinaps, {DID, Cmd, Arg}) ->
     SCmd = binary_to_list(Cmd),
@@ -1458,7 +1498,24 @@ build_evoctl(sinaps, {DID, Cmd, Arg}) ->
            end,
   (["PEVOCTL,SINAPS",
            safe_fmt(["~B","~s","~s"],
-                    [DID,SCmd,SArg],",")]).
+                    [DID,SCmd,SArg],",")]);
+build_evoctl(qlbl, #{command := config, code := Code, period := Period, offset := Offset}) ->
+  ["PEVOCTL,QLBL,CFG",
+   safe_fmt(["~B","~B","~B"],
+            [Code,Period,Offset],",")];
+build_evoctl(qlbl, #{command := reference, lat := Lat, lon := Lon, alt := Alt}) ->
+  ["PEVOCTL,QLBL,REF",
+   safe_fmt(["~.7.0f","~.7.0f","~.2.0f"],
+            [Lat, Lon, Alt], ",")];
+build_evoctl(qlbl, #{command := transmit, source := Src, code := Code, counter := Cnt}) ->
+  ["PEVOCTL,QLBL,TX",
+   safe_fmt(["~B","~B","~B"],
+            [Src,Code,Cnt],",")];
+build_evoctl(qlbl, #{command := stop}) ->
+  ["PEVOCTL,QLBL,RX"];
+build_evoctl(qlbl, #{frame := Frame, command := calibrate}) ->
+  ["PEVOCTL,QLBL,CAL",
+   safe_fmt(["~B"],[Frame],",")].
 
 %% $-EVORCT,TX,TX_phy,Lat,LatS,Lon,LonS,Alt,S_gps,Pressure,S_pressure,Yaw,Pitch,Roll,S_ahrs,LAx,LAy,LAz,HL
 build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,Ly,Lz},HL) ->
@@ -1697,10 +1754,10 @@ from_term_helper(Sentense) ->
       build_zda(UTC,DD,MM,YY,Z1,Z2);
     {gll,Lat,Lon,UTC,Status,Mode} ->
       build_gll(Lat,Lon,UTC,Status,Mode);
-    {evolbl,Type,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure} ->
-      build_evolbl(Type,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure);
-    {evolbp,UTC,Basenodes,Address,Status,Lat_rad,Lon_rad,Alt,Pressure,SMean,Std} ->
-      build_evolbp(UTC,Basenodes,Address,Status,Lat_rad,Lon_rad,Alt,Pressure,SMean,Std);
+    {evolbl,Type,Frame,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure,CF1,CF2,CF3} ->
+      build_evolbl(Type,Frame,Loc_no,Ser_no,Lat_rad,Lon_rad,Alt,Pressure,CF1,CF2,CF3);
+    {evolbp,UTC,Basenodes,Address,Status,Frame,Lat_rad,Lon_rad,Alt,Pressure,Ma,Mi,Dir,SMean,Std} ->
+      build_evolbp(UTC,Basenodes,Address,Status,Frame,Lat_rad,Lon_rad,Alt,Pressure,Ma,Mi,Dir,SMean,Std);
     {simsvt,Total,Idx,Lst} ->
       build_simsvt(Total, Idx, Lst);
     {'query',evo,Name} ->
@@ -1741,6 +1798,8 @@ from_term_helper(Sentense) ->
       build_evoctl(susbl, Args);
     {evoctl, sinaps, Args} ->
       build_evoctl(sinaps, Args);
+    {evoctl, qlbl, Args} ->
+      build_evoctl(qlbl, Args);
     {hdg,Heading,Dev,Var} ->
       build_hdg(Heading,Dev,Var);
     {hdt,Heading} ->

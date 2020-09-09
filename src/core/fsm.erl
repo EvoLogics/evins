@@ -300,9 +300,12 @@ broadcast(#sm{roles = Roles} = SM, Target_role, T) ->
 cast(#cbstate{id = CB_ID, fsm_id = FSM_ID}, T) ->
   cast_helper(nothing, FSM_ID, {chan, CB_ID, T}).
 
-cast(#sm{roles = Roles} = SM, Target_role, T) ->
+cast(#sm{roles = Roles} = SM, Target_role, T) when is_atom(Target_role) ->
   Lst = lists:filter(fun({Role,_,_,_,_}) -> Role =:= Target_role end, Roles),
   [cast_helper(SM, Role_ID, T) || {_,Role_ID,_,_,_} <- Lst],
+  SM;
+cast(SM, #mm{role_id = Role_ID}, T) ->
+  cast_helper(SM, Role_ID, T),
   SM.
 
 cast(#sm{roles = Roles} = SM, #mm{role = Target_role} = MM, EOpts, T, Cond) ->
