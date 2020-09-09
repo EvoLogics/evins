@@ -1515,7 +1515,7 @@ build_evoctl(qlbl, #{command := stop}) ->
   ["PEVOCTL,QLBL,RX"];
 build_evoctl(qlbl, #{frame := Frame, command := calibrate}) ->
   ["PEVOCTL,QLBL,CAL",
-   safe_fmt(["~B"],[Frame],",")].
+   safe_fmt(["~p"],[Frame],",")].
 
 %% $-EVORCT,TX,TX_phy,Lat,LatS,Lon,LonS,Alt,S_gps,Pressure,S_pressure,Yaw,Pitch,Roll,S_ahrs,LAx,LAy,LAz,HL
 build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,Ly,Lz},HL) ->
