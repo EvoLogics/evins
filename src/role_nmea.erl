@@ -975,7 +975,7 @@ extract_nmea(<<"EVOCTL">>, <<"QLBL,TX,",Params/binary>>) ->
 %% PEVOCTL,QLBL,RX
 extract_nmea(<<"EVOCTL">>, <<"QLBL,RX">>) ->
   {nmea, {evoctl, qlbl, #{command => stop}}};
-%% PEVOCTL,QLBL,CAL
+%% PEVOCTL,QLBL,CAL,<frame>
 extract_nmea(<<"EVOCTL">>, <<"QLBL,CAL,",Params/binary>>) ->
   try
     Frame = binary_to_integer(Params),
@@ -1217,6 +1217,8 @@ safe_fmt(Fmts, Values, Join) ->
               end, "", Z).
 
 
+utc_format(nothing) ->
+  ",";
 utc_format(UTC) ->
   S = erlang:trunc(UTC),
   MS = UTC - S + 0.0,
