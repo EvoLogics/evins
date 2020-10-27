@@ -88,4 +88,6 @@ match_object(SM, Pattern) ->
   ets:match_object(SM#sm.share, Pattern).
 
 match_delete(SM, Pattern) ->
-  ets:match_delete(SM#sm.share, Pattern).
+  ets:match_delete(SM#sm.share, Pattern),
+  SM.
+

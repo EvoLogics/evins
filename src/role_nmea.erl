@@ -981,7 +981,7 @@ extract_nmea(<<"EVOCTL">>, <<"QLBL,RST">>) ->
 %% PEVOCTL,QLBL,CAL,<frame>
 extract_nmea(<<"EVOCTL">>, <<"QLBL,CAL,",Params/binary>>) ->
   try
-    Frame = binary_to_integer(Params),
+    Frame = binary_to_atom(Params, utf8),
     {nmea, {evoctl, qlbl, #{frame => Frame, command => calibrate}}}
   catch
     error:_ ->{error, {parseError, evoctl, Params}}    
