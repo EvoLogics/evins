@@ -24,6 +24,7 @@
  - added fsm_ctd_nl, mod_ctd_nl - sending ctd sensor information through network;
  - added maybe_send_at_command with parametrized answer_timeout
  - PEVOCTL,QLBL message set
+ - PEVOERR,Report message
 
 ### Changed
  - logger now uses OTP21 API, core log messages are changed

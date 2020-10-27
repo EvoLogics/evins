@@ -986,6 +986,9 @@ extract_nmea(<<"EVOCTL">>, <<"QLBL,CAL,",Params/binary>>) ->
 extract_nmea(<<"EVOCTL">>, Params) ->
   {error, {parseError, evoctl, Params}};
 
+extract_nmea(<<"EVOERR">>, Params) ->
+  {nmea, {evoerr, Params}};
+
 %% $--HDG,Heading,Devitaion,D_sign,Variation,V_sign
 %% Heading        x.x magnetic sensor heading in degrees
 %% Deviation      x.x deviation, degrees
@@ -1665,6 +1668,17 @@ build_evorpy(UTC,TID,DID,Mode,Roll,Pitch,Yaw) ->
                     [TID, DID, SMode, Roll, Pitch, Yaw], ",")
           ]).
 
+build_evoerr(Report) ->
+  Msg = 
+    case Report of
+      out_of_range -> "out of range";
+      _ when is_atom(Report) -> atom_to_list(Report);
+      _ when is_list(Report) -> Report;
+      _ when is_binary(Report) -> binary_to_list(Report);
+      _ -> io_lib:format("~p",[Report])
+    end,
+  ["PEVOERR,",re:replace(Msg,"[$*\r\n]","", [global,{return,list}])].
+
 build_hdg(Heading,Dev,Var) ->
   F = fun(V) -> case V < 0 of true -> {"W",-V}; _ -> {"E",V} end end,
   {DevS,DevA} = F(Dev),
@@ -1802,6 +1816,8 @@ from_term_helper(Sentense) ->
       build_evoctl(sinaps, Args);
     {evoctl, qlbl, Args} ->
       build_evoctl(qlbl, Args);
+    {evoerr, Report} ->
+      build_evoerr(Report);
     {hdg,Heading,Dev,Var} ->
       build_hdg(Heading,Dev,Var);
     {hdt,Heading} ->
