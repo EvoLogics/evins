@@ -29,7 +29,7 @@
 -include("fsm.hrl").
 
 -export([init/0, delete/1, get/2, get/3, get/4, put/2, put/3, put/4, clean/2]).
--export([update_with/3, update_with/4, update_with/5, match/2, match_object/2]).
+-export([update_with/3, update_with/4, update_with/5, match/2, match_object/2, match_delete/2]).
          
 init() ->
   ets:new(table, [ordered_set, public]).
@@ -86,3 +86,6 @@ match(SM, Pattern) ->
 
 match_object(SM, Pattern) ->
   ets:match_object(SM#sm.share, Pattern).
+
+match_delete(SM, Pattern) ->
+  ets:match_delete(SM#sm.share, Pattern).
