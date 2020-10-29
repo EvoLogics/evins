@@ -949,7 +949,7 @@ extract_nmea(<<"EVOCTL">>, <<"SINAPS,",Params/binary>>) ->
 extract_nmea(<<"EVOCTL">>, <<"QLBL,CFG,",Params/binary>>) ->
   try
     BLst = lists:sublist(binary:split(Params,<<",">>,[global]), 3),
-    [Code, Period, Offset] = [binary_to_integer(X) || X <- BLst],
+    [Code, Period, Offset] = [safe_binary_to_integer(X) || X <- BLst],
     {nmea, {evoctl, qlbl, #{command => config, code => Code, period => Period, offset => Offset}}}
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
