@@ -82,7 +82,7 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {cowboy,I,P}}} = Sta
   process_flag(trap_exit, true),
   Self = self(),
   gen_server:cast(Mod_ID, {Self, ID, ok}),
-  {ok, State};    
+  {ok, cast_connected(State)};
 
 init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {erlang,Target}}} = State) ->
   logger:info("role: ~p-~p~ninit: erlang_direct, target: ~p", [Mod_ID, ID, Target]),
@@ -189,6 +189,8 @@ cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
     {serial,_,_,_,_,_,_} when Port /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
     {ssh,_,_,_,_} when Port /= nothing ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
+    {cowboy,_,_} ->
       gen_server:cast(FSM, {chan, MM, {connected}});
     _ ->
       nothing
