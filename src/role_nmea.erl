@@ -945,12 +945,13 @@ extract_nmea(<<"EVOCTL">>, <<"SINAPS,",Params/binary>>) ->
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
   end;
-%% PEVOCTL,QLBL,CFG,<code>,<period>,<offset>,<address>
+%% PEVOCTL,QLBL,CFG,<Hz>,<amap>
 extract_nmea(<<"EVOCTL">>, <<"QLBL,CFG,",Params/binary>>) ->
   try
-    BLst = lists:sublist(binary:split(Params,<<",">>,[global]), 4),
-    [Code, Period, Offset, Address] = [safe_binary_to_integer(X) || X <- BLst],
-    {nmea, {evoctl, qlbl, #{command => config, code => Code, period => Period, offset => Offset, address => Address}}}
+    [BHz, BMap] = lists:sublist(binary:split(Params,<<",">>,[global]), 2),
+    Freq = safe_binary_to_integer(BHz),
+    AMap = [safe_binary_to_integer(X) || X <- binary:split(BMap,<<":">>, [global])],
+    {nmea, {evoctl, qlbl, #{command => config, freq => Freq, amap => AMap}}}
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
   end;
@@ -1507,10 +1508,16 @@ build_evoctl(sinaps, {DID, Cmd, Arg}) ->
   (["PEVOCTL,SINAPS",
            safe_fmt(["~B","~s","~s"],
                     [DID,SCmd,SArg],",")]);
-build_evoctl(qlbl, #{command := config, code := Code, period := Period, offset := Offset, address := Address}) ->
+build_evoctl(qlbl, #{command := config, freq := Freq, amap := AMap}) ->
+  SFun = fun(nothing) -> "";
+            (Lst) -> (
+                       lists:reverse(
+                         lists:foldl(fun(V,[])  -> [safe_fmt(["~B"],[V])];
+                                        (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
+                                     end, "", Lst))) end,
   ["PEVOCTL,QLBL,CFG",
-   safe_fmt(["~B","~B","~B","~B"],
-            [Code,Period,Offset,Address],",")];
+   safe_fmt(["~B","~s"],
+            [Freq,SFun(AMap)],",")];
 build_evoctl(qlbl, #{command := reference, lat := Lat, lon := Lon, alt := Alt}) ->
   ["PEVOCTL,QLBL,REF",
    safe_fmt(["~.7.0f","~.7.0f","~.2.0f"],
