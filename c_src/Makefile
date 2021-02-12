@@ -1,7 +1,7 @@
 CC      ?= gcc
 STRIP   ?= strip
-CFLAGS  = -std=gnu99 -Iinclude -W -Wall -Werror -pedantic \
-		  -D__USE_MINGW_ANSI_STDIO=1
+CFLAGS  += -std=gnu99 -Iinclude -W -Wall -Werror -pedantic \
+		  -D__USE_MINGW_ANSI_STDIO=1 -O2
 
 LDFLAGS = -lm
 

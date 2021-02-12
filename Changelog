@@ -25,6 +25,7 @@
  - added maybe_send_at_command with parametrized answer_timeout
  - PEVOCTL,QLBL message set
  - PEVOERR,Report message
+ - added connection simulation for erlang connection type in role_worker
 
 ### Changed
  - logger now uses OTP21 API, core log messages are changed

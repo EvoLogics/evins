@@ -52,6 +52,7 @@
           acceptor = nothing,   % Asynchronous acceptor's internal reference
           socket = nothing,     % Active TCP Socket
           port = nothing,       % Port reference
+          pid = nothing,        % Pid of the linked process for erlang connection type
           id,                   % Role_ID
           module_id,            % FSM handling module name
           fsm_pids = [],        % FSM controller module PID
@@ -89,7 +90,7 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {erlang,Target}}} = 
   process_flag(trap_exit, true),
   Self = self(),
   gen_server:cast(Mod_ID, {Self, ID, ok}),
-  {ok, State};
+  connect(State);
 
 init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) ->
   logger:info("role: ~p-~p~ninit: erlang_port, port: ~p, settings: ~p", [Mod_ID, ID, Port, PortSettings]),
@@ -178,7 +179,7 @@ cast_connected(#ifstate{fsm_pids = FSMs} = State) ->
   lists:map(fun(FSM) -> maybe_cast_allowed(FSM, State) end, FSMs),
   State.
 
-cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
+cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port, pid = Pid} = State) ->
   case MM#mm.iface of
     {socket,_,_,_} when Socket /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
@@ -191,6 +192,8 @@ cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
     {ssh,_,_,_,_} when Port /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
     {cowboy,_,_} ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
+    {erlang,_} when Pid /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
     _ ->
       nothing
@@ -209,6 +212,27 @@ maybe_cast_allowed(FSM, #ifstate{mm = MM, cfg = #{allow := Allow}} = State) ->
   State;
 maybe_cast_allowed(_, State) ->
   State.
+
+connect(#ifstate{mm = #mm{iface = {erlang,{Target,Host}}}} = State) ->
+  _P = net_adm:ping(Host),
+  case rpc:call(Host, erlang, whereis, [Target]) of
+    Pid when is_pid(Pid) ->
+      erlang:monitor(process, Pid),
+      {ok, cast_connected(State#ifstate{pid = Pid})};
+    _ ->
+      {ok, _} = timer:send_after(1000, timeout),
+      {ok, State}
+  end;
+
+connect(#ifstate{mm = #mm{iface = {erlang,Target}}} = State) ->
+  case whereis(Target) of
+    undefined ->
+      {ok, _} = timer:send_after(1000, timeout),
+      {ok, State};
+    Pid ->
+      erlang:monitor(process, Pid),
+      {ok, cast_connected(State#ifstate{pid = Pid})}
+  end;
 
 connect(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {port,Port,PortSettings}}} = State) ->
   process_flag(trap_exit, true),
@@ -565,6 +589,11 @@ handle_info({ctrl, Term}, #ifstate{id = ID, module_id = Mod_ID, behaviour = B, c
   logger:info("role: ~p-~p~nctrl: ~p", [Mod_ID, ID, Term]),
   NewCfg = B:ctrl(Term, Cfg),
   {noreply, State#ifstate{cfg = NewCfg}};
+
+handle_info({'DOWN',_,process,_Pid,_}, #ifstate{fsm_pids = FSMs, mm = #mm{iface = {erlang,_Target}} = MM} = State) ->
+  broadcast(FSMs, {chan_error, MM, disconnected}),
+  {ok, _} = timer:send_after(1000, timeout),
+  {noreply, State#ifstate{pid = nothing}};
 
 handle_info(Info, #ifstate{id = ID, module_id = Mod_ID} = State) ->
   logger:error("role: ~p-~p~nunhandled info: ~p", [Mod_ID, ID, Info]),
