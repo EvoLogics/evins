@@ -945,13 +945,23 @@ extract_nmea(<<"EVOCTL">>, <<"SINAPS,",Params/binary>>) ->
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
   end;
-%% PEVOCTL,QLBL,CFG,<Hz>,<amap>
+%% PEVOCTL,QLBL,CFG,<key1>,<value1>[,...,[<keyN>,<valueN>]]
+%% N <= 3, keys: H (Hz), M (amap), S (source level)
 extract_nmea(<<"EVOCTL">>, <<"QLBL,CFG,",Params/binary>>) ->
   try
-    [BHz, BMap] = lists:sublist(binary:split(Params,<<",">>,[global]), 2),
-    Freq = safe_binary_to_integer(BHz),
-    AMap = [safe_binary_to_integer(X) || X <- binary:split(BMap,<<":">>, [global])],
-    {nmea, {evoctl, qlbl, #{command => config, freq => Freq, amap => AMap}}}
+    BLst = binary:split(Params,<<",">>,[global]),
+    {nmea, {evoctl, qlbl,
+            lists:foldl(fun(Idx,Map) ->
+                            [BName,BValue] = lists:sublist(BLst, (Idx - 1) * 2 + 1, 2),
+                            case BName of
+                              <<"H">> -> Map#{freq => safe_binary_to_integer(BValue)};
+                              <<"M">> ->
+                                AMap = [safe_binary_to_integer(X) || X <- binary:split(BValue,<<":">>, [global])],
+                                Map#{amap => AMap};
+                              <<"S">> -> Map#{source_level => safe_binary_to_integer(BValue)};
+                              _ -> Map
+                            end
+                        end, #{command => config}, lists:seq(1,length(BLst) div 2))}}
   catch
     error:_ ->{error, {parseError, evoctl, Params}}
   end;
@@ -1508,16 +1518,21 @@ build_evoctl(sinaps, {DID, Cmd, Arg}) ->
   (["PEVOCTL,SINAPS",
            safe_fmt(["~B","~s","~s"],
                     [DID,SCmd,SArg],",")]);
-build_evoctl(qlbl, #{command := config, freq := Freq, amap := AMap}) ->
+build_evoctl(qlbl, #{command := config} = Map) ->
   SFun = fun(nothing) -> "";
             (Lst) -> (
                        lists:reverse(
                          lists:foldl(fun(V,[])  -> [safe_fmt(["~B"],[V])];
                                         (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
                                      end, "", Lst))) end,
-  ["PEVOCTL,QLBL,CFG",
-   safe_fmt(["~B","~s"],
-            [Freq,SFun(AMap)],",")];
+  {FL, VL} = 
+    lists:unzip(
+      lists:filtermap(fun(freq = K) -> {true, {"H,~B",maps:get(K,Map)}};
+                         (source_level = K) -> {true, {"S,~B",maps:get(K,Map)}};
+                         (amap = K) -> {true, {"M,~s",SFun(maps:get(K,Map))}};
+                         (_) -> false
+                      end, maps:keys(Map))),
+  ["PEVOCTL,QLBL,CFG", safe_fmt(FL, VL, ",")];
 build_evoctl(qlbl, #{command := reference, lat := Lat, lon := Lon, alt := Alt}) ->
   ["PEVOCTL,QLBL,REF",
    safe_fmt(["~.7.0f","~.7.0f","~.2.0f"],
