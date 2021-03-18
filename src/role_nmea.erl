@@ -93,7 +93,7 @@ split(L, #{re := RParse} = Cfg) ->
           CS = checksum(Raw),
           Flag = case binary_to_list(XOR) of
                    [] -> true;
-                   LCS -> CS == list_to_integer(LCS, 16)
+                   LCS -> try CS == list_to_integer(LCS, 16) catch _:_ -> false end
                  end,
           if Flag ->
              [extract_nmea(Cmd, Params) | split(Rest, Cfg)];
