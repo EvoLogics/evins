@@ -625,6 +625,9 @@ from_term(Term, #{txtime := TXTime} = Cfg) ->
 %% запятой от строки параметров отделаютсятя только send параметры
 from_term_priv({raw,Data}, Cfg) when is_binary(Data) -> 
   [Data, Cfg];
+from_term_priv({at,"O",[]}, #{filter := Filter, mode := Mode} = Cfg) when Filter == at,
+																		  Mode == data ->
+  [<<>>, Cfg];
 from_term_priv(Term, #{pid := Pid, filter := Filter, eol := EOL} = Cfg) ->
   %% io:format("Term = ~p~n",[Term]),
   {Request, Wait, Telegram} = from_term_helper(Term, Pid, Filter),

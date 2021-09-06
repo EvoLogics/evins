@@ -29,6 +29,7 @@
 -behaviour(fsm).
 
 -include("../include/fsm.hrl").
+-compile({parse_transform, pipeline}).
 
 -export([start_link/1, trans/0, final/0, init_event/0]).
 -export([init/1,handle_event/3,stop/1]).
@@ -160,7 +161,7 @@ handle_event(MM, SM, Term) ->
     {error,Reason} ->
       ?WARNING(?ID, "error ~p~n", [Reason]),
       exit(Reason);
-    {disconnected, _} when MM#mm.role == at ->
+	{disconnected, _} when MM#mm.role == at ->
       fsm:cast(SM, at, {ctrl, {allow, self()}}),
       fsm:cast(SM, at, {ctrl, {filter, at}}),
       fsm:cast(SM, at, {ctrl, {mode, data}}),
@@ -172,7 +173,12 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, at, {ctrl, {mode, data}}),
       fsm:cast(SM, at, {ctrl, {waitsync, no}}),
       fsm:run_event(MM, SM#sm{event=internal}, {});
-    {raw,<<"NET\r\n">>} ->
+    {connected} ->
+	  LA = share:get(SM, local_address),
+	  Pid = share:get(SM, pid),
+	  fsm:cast(SM, at_impl, {send, {config, #{local_address => LA, pid => Pid}}});
+	{raw, Response} when Response == <<"NET\r\n">>;
+						 Response == <<"AT\r\n">> ->
       %% special case for at/at_impl docking
       share:put(SM, raw_buffer, <<"">>),
       SM1 = fsm:cast(SM, at, {ctrl, {waitsync, no}}),
@@ -261,8 +267,13 @@ handle_request_mode(_MM, SM, _Term) ->
 handle_handle_modem(_MM, SM, Term) ->
   case {SM#sm.event, Term} of
     {rcv, {sync, "?MODE", "AT"}} ->
-      SM1 = fsm:send_at_command(SM, {at, "O", ""}),
-      fsm:cast(SM1#sm{event = continue}, at, {ctrl, {mode, data}});
+      [fsm:clear_timeouts(__),
+	   fsm:send_at_command(__, {at, "O", ""}),
+	   % Do not wait sync answer for "0"
+	   fsm:clear_timeouts(__),
+	   fsm:set_event(__, continue),
+	   fsm:cast(__, at, {ctrl, {mode, data}})
+	  ](SM);
     {rcv, {sync, "?MODE", "NET"}} ->
       fsm:cast(SM#sm{event = continue}, at, {ctrl, {filter, net}});
     {rcv, {sync, _, _}} -> SM#sm{event = wrong_receive};
