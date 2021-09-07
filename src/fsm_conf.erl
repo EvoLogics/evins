@@ -173,7 +173,7 @@ handle_event(MM, SM, Term) ->
       fsm:cast(SM, at, {ctrl, {mode, data}}),
       fsm:cast(SM, at, {ctrl, {waitsync, no}}),
       fsm:run_event(MM, SM#sm{event=internal}, {});
-    {connected} ->
+    {connected} when MM#mm.role == at_impl ->
 	  LA = share:get(SM, local_address),
 	  Pid = share:get(SM, pid),
 	  fsm:cast(SM, at_impl, {send, {config, #{local_address => LA, pid => Pid}}});
