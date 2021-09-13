@@ -10,6 +10,8 @@
  - fixed NMEA RMC parsing
  - evins:stop() and evins:restart() caused crash reports, number of such cases
    was greatly reduced
+ - fsm_conf sending ATO for modems with at filter - no response expected
+ - eclck parse command
 
 ### Added
  - role_at parametrization via config file
@@ -26,6 +28,8 @@
  - PEVOCTL,QLBL message set
  - PEVOERR,Report message
  - added connection simulation for erlang connection type in role_worker
+ - fsm_conf generates config command in case of connected event from upper
+ layer - at_impl
 
 ### Changed
  - logger now uses OTP21 API, core log messages are changed
@@ -39,5 +43,6 @@
  - evins:rb() function, just remove it from your code
  - dependency on ninenines libraries: cowboy, ranch, cowlib
  - dependency on jsx
+ - network and mac protocols
 
 Reactivation of Changelog on 13.04.2020
