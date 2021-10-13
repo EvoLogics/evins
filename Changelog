@@ -12,6 +12,7 @@
    was greatly reduced
 
 ### Added
+ - added NMEA SLBL command set
  - role_at parametrization via config file
  - added support of AT% commands to role_at 
  - added share:match_object function 

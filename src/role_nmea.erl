@@ -997,6 +997,46 @@ extract_nmea(<<"EVOCTL">>, <<"QLBL,CAL,",Params/binary>>) ->
   catch
     error:_ ->{error, {parseError, evoctl, Params}}    
   end;
+%% PEVOCTL,SLBL,TX,UTC,DD,MM,YYYY,MP,A1:..:AN,F1:...FN,B1:...:BM
+%% DD = Day, 01 to 31
+%% MM = Month, 01 to 12
+%% YYYY = Year
+extract_nmea(<<"EVOCTL">>, <<"SLBL,TX,",Params/binary>>) ->
+  try
+    [BUTC,BD,BM,BY,BMP,BBasenodes,BOffsets,BTargets] = binary:split(Params,<<",">>,[global]),
+    UTC = extract_utc(BUTC), %% seconds
+    [DD,MM,YY,MP] = [binary_to_integer(X) || X <- [BD,BM,BY,BMP]],
+    SS = calendar:datetime_to_gregorian_seconds({{YY,MM,DD},{0,0,0}}),
+    D = SS div 86400,
+    Extract_list = fun(<<>>) -> [];
+                         (BN) -> [binary_to_integer(BV) || BV <- binary:split(BN, <<":">>, [global])]
+                      end,
+    Basenodes = Extract_list(BBasenodes),
+    Offsets = Extract_list(BOffsets),
+    Targets = Extract_list(BTargets),
+    CMap = #{command => start, targets => Targets, baseline => Basenodes, offsets => Offsets, start_time => UTC * 1000000, day => D, pressure_factor => MP},
+    {nmea, {evoctl, slbl, CMap}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}    
+  end;
+%% PEVOCTL,SLBL,RX,Mode
+%% Mode: gentle|force
+extract_nmea(<<"EVOCTL">>, <<"SLBL,RX,",Params/binary>>) ->
+  Mode =
+    case Params of
+      <<"gentle">> -> gentle;
+      _ -> force
+    end,
+  {nmea, {evoctl, slbl, #{command => stop, mode => Mode}}};
+%% PEVOCTL,SLBL,REF,<lat>,<lon>,<alt>
+extract_nmea(<<"EVOCTL">>, <<"SLBL,REF,",Params/binary>>) ->
+  try
+    BLst = lists:sublist(binary:split(Params,<<",">>,[global]), 3),
+    [Lat,Lon,Alt] = [safe_binary_to_float(X) || X <- BLst],
+    {nmea, {evoctl, slbl, #{command => reference, lat => Lat, lon => Lon, alt => Alt}}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}
+  end;
 extract_nmea(<<"EVOCTL">>, Params) ->
   {error, {parseError, evoctl, Params}};
 
@@ -1242,7 +1282,7 @@ utc_format(UTC) ->
   SS = S rem 60,
   Min = erlang:trunc(S/60) rem 60,
   HH = erlang:trunc(S/3600) rem 24,
-  io_lib:format(",~2.10.0B~2.10.0B~5.2.0f",[HH,Min,float(SS+MS)]).
+  io_lib:format(",~2.10.0B~2.10.0B~6.3.0f",[HH,Min,float(SS+MS)]).
 
 lat_format(nothing) -> ",,";
 lat_format(Lat) ->
@@ -1547,7 +1587,26 @@ build_evoctl(qlbl, #{command := reset}) ->
   ["PEVOCTL,QLBL,RST"];
 build_evoctl(qlbl, #{frame := Frame, command := calibrate}) ->
   ["PEVOCTL,QLBL,CAL",
-   safe_fmt(["~p"],[Frame],",")].
+   safe_fmt(["~p"],[Frame],",")];
+build_evoctl(slbl,#{command := start, targets := Targets, baseline := Basenodes, offsets := Offsets, start_time := UTC, day := D, pressure_factor := MP}) ->
+  SFun = fun(nothing) -> "";
+            (Lst) -> (
+                       lists:reverse(
+                         lists:foldl(fun(V,[])  -> [safe_fmt(["~B"],[V])];
+                                        (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
+                                     end, "", Lst))) end,
+  SUTC = utc_format(UTC),
+  {{YY,MM,DD},_} = calendar:gregorian_seconds_to_datetime(D * 86400),
+  SDate = io_lib:format("~2.10.0B,~2.10.0B,~4.10.0B", [DD,MM,YY]),
+  ["PEVOCTL,SLBL,TX",SUTC,
+   safe_fmt(["~s","~2.10.0B","~s","~s","~s"],
+            [SDate,MP,SFun(Basenodes),SFun(Offsets),SFun(Targets)],",")];
+build_evoctl(slbl,#{command := stop, mode := Mode}) ->
+  ["PEVOCTL,SLBL,RX",safe_fmt(["~s"],[Mode],",")];
+build_evoctl(slbl, #{command := reference, lat := Lat, lon := Lon, alt := Alt}) ->
+  ["PEVOCTL,SLBL,REF",
+   safe_fmt(["~.7.0f","~.7.0f","~.2.0f"],
+            [Lat, Lon, Alt], ",")].
 
 %% $-EVORCT,TX,TX_phy,Lat,LatS,Lon,LonS,Alt,S_gps,Pressure,S_pressure,Yaw,Pitch,Roll,S_ahrs,LAx,LAy,LAz,HL
 build_evorct(TX_utc,TX_phy,{Lat,Lon,Alt,GPSS},{P,PS},{Yaw,Pitch,Roll,AHRSS},{Lx,Ly,Lz},HL) ->
@@ -1844,6 +1903,8 @@ from_term_helper(Sentense) ->
       build_evoctl(sinaps, Args);
     {evoctl, qlbl, Args} ->
       build_evoctl(qlbl, Args);
+    {evoctl, slbl, Args} ->
+      build_evoctl(slbl, Args);
     {evoerr, Report} ->
       build_evoerr(Report);
     {hdg,Heading,Dev,Var} ->
