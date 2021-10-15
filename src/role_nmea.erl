@@ -300,14 +300,14 @@ extract_nmea(<<"EVOLBP">>, Params) ->
 %% Sv[1-4]      x.x Sound velocity for the previous depth [m/s].
 extract_nmea(<<"SIMSVT">>, Params) ->
   try
-    [<<"P">>,BTotal,BIdx,BD1,DS1,BD2,BS2,BD3,BS3,BD4,BS4] = binary:split(Params,<<",">>,[global]),
+    [<<"P">>,BTotal,BIdx,BD1,BS1,BD2,BS2,BD3,BS3,BD4,BS4] = binary:split(Params,<<",">>,[global]),
     [Total,Idx] = [binary_to_integer(X) || X <- [BTotal,BIdx]],
     Lst = foldl(fun({BD,BS},Acc) ->
                     case {safe_binary_to_float(BD),safe_binary_to_float(BS)} of
                       {D,S} when is_float(D), is_float(S) -> [{D,S} | Acc];
                       _ -> Acc
                     end
-                end, [], [{BD1,DS1},{BD2,BS2},{BD3,BS3},{BD4,BS4}]),
+                end, [], [{BD4,BS4},{BD3,BS3},{BD2,BS2},{BD1,BS1}]),
     {nmea, {simsvt, Total, Idx, Lst}}
   catch
     error:_ -> {error, {parseError, simsvt, Params}}
