@@ -313,6 +313,39 @@ extract_nmea(<<"SIMSVT">>, Params) ->
     error:_ -> {error, {parseError, simsvt, Params}}
   end;
 
+%%
+%% $-EVOSVP,Type,TotalPoints,Index,PA1,PB1,PC1,PA2,PB2,PC2,PA3,PB3,PC3,PA4,PB4,PC4
+%% Only "P" supported
+%% Type         a_  "ZV"  for DBS-SoundVelocity.
+%%                  "PTV" for Pressure-Temperature-SoundVelocity.
+%%                  "CTD" for Conductivity-Temperature-SoundVelocity.
+%% TotalPoints  x   Total number of points in the sound profile
+%% Index        x   The index for the first point in this telegram, a range from 0 to (TotalPoints -1)
+%% PA[1-4]      x.x Depth [m] (ZV), Relative Pressure [dbar] (PTV, CTD).
+%% PB[1-4]      x.x Temperature [°C] (PTV and CTD).
+%% PC[1-4]      x.x Sound velocity [m/s] (ZV and PTV), Conductivity (CTD)
+extract_nmea(<<"EVOSVP">>, Params) ->
+  try
+    [BType,BTotal,BIdx,A1,B1,C1,A2,B2,C2,A3,B3,C3,A4,B4,C4] = binary:split(Params,<<",">>,[global]),
+    Type =
+    case BType of
+        <<"ZV">> -> zv;
+        <<"PTV">> -> ptv;
+        <<"CTD">> -> ctd;
+        _ -> unknown
+    end,
+    [Total,Idx] = [binary_to_integer(X) || X <- [BTotal,BIdx]],
+    Lst = foldl(fun({A,B,C},Acc) ->
+                    case {safe_binary_to_float(A),safe_binary_to_float(B),safe_binary_to_float(C)} of
+                      {FA,FB,FC} when is_float(FA), is_float(FB), is_float(FC) -> [{FA,FB,FC} | Acc];
+                      _ -> Acc
+                    end
+                end, [], [{A4,B4,C4},{A3,B3,C3},{A2,B2,C2},{A1,B1,C1}]),
+    {nmea, {evosvp, Type, Total, Idx, Lst}}
+  catch
+    error:_ -> {error, {parseError, evosvp, Params}}
+  end;
+
 %% $PSXN,10,Tok,Roll,Pitch,Heave,UTC,*xx
 %% 10      x         Message type (Roll, Pitch and Heave)
 %% Roll    x.x       Roll in degrees. Positive with port side up.
@@ -1346,6 +1379,22 @@ build_simsvt(Total, Idx, Lst) ->
   SHead = io_lib:format(",~B,~B", [Total, Idx]),
   (["PSIMSVT,P",SHead,SPoints,STail]).
 
+build_evosvp(Type, Total, Idx, Lst) ->
+  SType =
+  case Type of
+      zv -> "ZV";
+      ptv -> "PTV";
+      ctd -> "CTD";
+      _ -> ""
+  end,
+  SPoints = lists:map(fun({A,B,C}) ->
+                          safe_fmt(["~.2.0f","~.2.0f","~.2.0f"], [A, B, C], ",")
+                      end, Lst),
+  STail = lists:map(fun(_) -> ",,," end,
+                    try lists:seq(1,4-length(Lst)) catch _:_ -> [] end),
+  SHead = io_lib:format(",~s,~B,~B", [SType,Total, Idx]),
+  (["PEVOSVP",SHead,SPoints,STail]).
+
 %% Example: $PSXN,10,019,5.100e-2,-5.1e-2,1.234e+0,771598427
 build_sxn(10,Tok,Roll,Pitch,Heave,UTC,nothing) ->
   D2R = math:pi() / 180.0,
@@ -1804,6 +1853,8 @@ from_term_helper(Sentense) ->
       build_evolbp(UTC,Basenodes,Address,Status,Frame,Lat_rad,Lon_rad,Alt,Pressure,Ma,Mi,Dir,SMean,Std);
     {simsvt,Total,Idx,Lst} ->
       build_simsvt(Total, Idx, Lst);
+    {evosvp,Type,Total,Idx,Lst} ->
+      build_evosvp(Type, Total, Idx, Lst);
     {'query',evo,Name} ->
       build_evo(Name);
     {evotdp,Transceiver,Max_range,Sequence,LAx,LAy,LAz,HL,Yaw,Pitch,Roll} ->
