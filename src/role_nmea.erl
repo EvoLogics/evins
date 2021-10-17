@@ -336,12 +336,16 @@ extract_nmea(<<"EVOSVP">>, Params) ->
         _ -> unknown
     end,
     [Total,Idx] = [binary_to_integer(X) || X <- [BTotal,BIdx]],
-    Lst = foldl(fun({A,B,C},Acc) ->
-                    case {safe_binary_to_float(A),safe_binary_to_float(B),safe_binary_to_float(C)} of
-                      {FA,FB,FC} when is_float(FA), is_float(FB), is_float(FC) -> [{FA,FB,FC} | Acc];
-                      _ -> Acc
-                    end
-                end, [], [{A4,B4,C4},{A3,B3,C3},{A2,B2,C2},{A1,B1,C1}]),
+    Lst =
+    case Type of
+      lat -> safe_binary_to_float(A1);
+        _ -> foldl(fun({A,B,C},Acc) ->
+                     case {safe_binary_to_float(A),safe_binary_to_float(B),safe_binary_to_float(C)} of
+                       {FA,FB,FC} when is_float(FA), is_float(FB), is_float(FC) -> [{FA,FB,FC} | Acc];
+                       _ -> Acc
+                     end
+                   end, [], [{A4,B4,C4},{A3,B3,C3},{A2,B2,C2},{A1,B1,C1}])
+    end,
     {nmea, {evosvp, Type, Total, Idx, Lst}}
   catch
     error:_ -> {error, {parseError, evosvp, Params}}
@@ -1389,11 +1393,15 @@ build_evosvp(Type, Total, Idx, Lst) ->
       lat -> "LAT";
       _ -> ""
   end,
-  SPoints = lists:map(fun({A,B,C}) ->
-                          safe_fmt(["~.2.0f","~.2.0f","~.2.0f"], [A, B, C], ",")
-                      end, Lst),
-  STail = lists:map(fun(_) -> ",,," end,
-                    try lists:seq(1,4-length(Lst)) catch _:_ -> [] end),
+  {SPoints, STail} =
+  case Type of
+    lat -> {safe_fmt(["~.5.0f"], [Lst], ","), ",,,,,,,,,,,"};
+    _ -> {lists:map(fun({A,B,C}) ->
+                        safe_fmt(["~.2.0f","~.2.0f","~.2.0f"], [A, B, C], ",")
+                    end, Lst),
+          lists:map(fun(_) -> ",,," end,
+                    try lists:seq(1,4-length(Lst)) catch _:_ -> [] end)}
+  end,
   SHead = io_lib:format(",~s,~B,~B", [SType,Total, Idx]),
   (["PEVOSVP",SHead,SPoints,STail]).
 
