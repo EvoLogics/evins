@@ -332,6 +332,7 @@ extract_nmea(<<"EVOSVP">>, Params) ->
         <<"ZV">> -> zv;
         <<"PTV">> -> ptv;
         <<"CTD">> -> ctd;
+        <<"LAT">> -> lat;
         _ -> unknown
     end,
     [Total,Idx] = [binary_to_integer(X) || X <- [BTotal,BIdx]],
@@ -1385,6 +1386,7 @@ build_evosvp(Type, Total, Idx, Lst) ->
       zv -> "ZV";
       ptv -> "PTV";
       ctd -> "CTD";
+      lat -> "LAT";
       _ -> ""
   end,
   SPoints = lists:map(fun({A,B,C}) ->
