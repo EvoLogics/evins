@@ -1841,8 +1841,8 @@ build_xdr(Lst) ->
                               end, Lst)]).
 
 build_vtg(TMGT,TMGM,Knots) ->
-  KMH = if is_number(Knots) -> Knots*0.539956803456; true -> nothing end,
-  Fields = safe_fmt(["~5.1.0f","~5.1.0f","~5.1.0f","~5.1.0f"],[TMGT,TMGM,Knots,KMH]),
+  KMH = if is_number(Knots) -> Knots*1.852; true -> nothing end,
+  Fields = safe_fmt(["~.1.0f","~.1.0f","~.1.0f","~.1.0f"],[TMGT,TMGM,Knots,KMH]),
   (io_lib:format("GPVTG,~s,T,~s,M,~s,N,~s,K",Fields)).
 
 build_tnthpr(Heading,HStatus,Pitch,PStatus,Roll,RStatus) ->
