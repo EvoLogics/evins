@@ -237,7 +237,14 @@ from_term({async, Async}, Cfg) ->
       {dropcnt,Val} ->
         io_lib:format("DROPCNT,~b",[Val]);
       {eclk,Mono,Clk,Steer,Event,GPS} ->
-        io_lib:format("ECLK,~.6.0f,~b,~b,~p,~.6.0f",[Mono,Clk,Steer,Event,GPS]);
+        SEvent =
+        case Event of
+            power -> 4;
+            gps -> 2;
+            unlocked -> 1;
+            locked -> 0
+        end,
+        io_lib:format("ECLK,~.6.0f,~b,~b,~p,~.6.0f",[Mono/1000000,Clk,Steer,SEvent,GPS/1000000]);
       {rto,Val} ->
         io_lib:format("RTO,~b",[Val]);
       {error, Reason} ->
