@@ -889,6 +889,15 @@ extract_nmea(<<"EVORPY">>, Params) ->
     error:_ -> {error, {parseError, evorpy, Params}}
   end;
 
+%% PEVOCTL,REF,<lat>,<lon>,<alt>
+extract_nmea(<<"EVOCTL">>, <<"REF,",Params/binary>>) ->
+  try
+    BLst = lists:sublist(binary:split(Params,<<",">>,[global]), 3),
+    [Lat,Lon,Alt] = [safe_binary_to_float(X) || X <- BLst],
+    {nmea, {evoctl, ref, #{command => reference, lat => Lat, lon => Lon, alt => Alt}}}
+  catch
+    error:_ ->{error, {parseError, evoctl, Params}}
+  end;
 %% $PEVOCTL,BUSBL,...
 %% ID - configuration id (BUSBL/SBL...)
 %% $PEVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
@@ -916,6 +925,12 @@ extract_nmea(<<"EVOCTL">>, <<"BUSBL,",Params/binary>>) ->
     error:_ ->
       {error, {parseError, evoctl, Params}}
   end;
+%% PEVOCTL,SBL,TX
+extract_nmea(<<"EVOCTL">>, <<"SBL,TX">>) ->
+  {nmea, {evoctl, sbl, tx}};
+%% PEVOCTL,SBL,RX
+extract_nmea(<<"EVOCTL">>, <<"SBL,RX">>) ->
+  {nmea, {evoctl, sbl, rx}};
 %% $PEVOCTL,SBL,X,Y,Z,Mode,IT,MP,AD
 %% X,Y,Z           x.x coordinates of SBL node in local frame in meters
 %% Mode            a   interrogation mode (S = silent / T  = transponder / <I1>:...:<In> = interrogation sequence)
@@ -1557,6 +1572,10 @@ build_evoseq(Sid,Total,MAddr,Range,Seq) ->
   (["PEVOSEQ",safe_fmt(["~B","~B","~B","~B","~s"],
                               [Sid,Total,MAddr,Range,SFun(Seq)],",")]).
 
+build_evoctl(ref, #{command := reference, lat := Lat, lon := Lon, alt := Alt}) ->
+  ["PEVOCTL,REF",
+   safe_fmt(["~.7.0f","~.7.0f","~.2.0f"],
+            [Lat, Lon, Alt], ",")];
 %% $-EVOCTL,BUSBL,Lat,N,Lon,E,Alt,Mode,IT,MP,AD
 build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD}) ->
   SLat = lat_format(Lat),
@@ -1588,6 +1607,12 @@ build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD}) ->
   (["PEVOCTL,SBL",
            safe_fmt(["~.3.0f","~.3.0f","~.3.0f","~s","~B","~B","~B"],
                     [X,Y,Z,SMode,IT,MP,AD],",")]);
+%% $PEVOCTL,SBL,TX
+build_evoctl(slbl,tx) ->
+  "PEVOCTL,SBL,TX";
+%% $PEVOCTL,SBL,RX
+build_evoctl(slbl,rx) ->
+  "PEVOCTL,SBL,RX";
 %% $PEVOCTL,TIMESYNC,L,Shift
 build_evoctl(timesync, {Mode, Shift}) ->
   SMode = case Mode of
@@ -1958,6 +1983,8 @@ from_term_helper(Sentense) ->
       build_evoctl(busbl, {Lat, Lon, Alt, Mode, IT, MP, AD});
     {evoctl, sbl, {X, Y, Z, Mode, IT, MP, AD}} ->
       build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD});
+    {evoctl, sbl, Cmd} when Cmd == rx; Cmd == tx ->
+      build_evoctl(sbl, Cmd);
     {evoctl, timesync, Args} ->
       build_evoctl(timesync, Args);
     {evoctl, susbl, Args} ->
@@ -1968,6 +1995,8 @@ from_term_helper(Sentense) ->
       build_evoctl(qlbl, Args);
     {evoctl, slbl, Args} ->
       build_evoctl(slbl, Args);
+    {evoctl, ref, Args} ->
+      build_evoctl(ref, Args);
     {evoerr, Report} ->
       build_evoerr(Report);
     {hdg,Heading,Dev,Var} ->
