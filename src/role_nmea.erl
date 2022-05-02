@@ -1608,10 +1608,10 @@ build_evoctl(sbl, {X, Y, Z, Mode, IT, MP, AD}) ->
            safe_fmt(["~.3.0f","~.3.0f","~.3.0f","~s","~B","~B","~B"],
                     [X,Y,Z,SMode,IT,MP,AD],",")]);
 %% $PEVOCTL,SBL,TX
-build_evoctl(slbl,tx) ->
+build_evoctl(sbl,tx) ->
   "PEVOCTL,SBL,TX";
 %% $PEVOCTL,SBL,RX
-build_evoctl(slbl,rx) ->
+build_evoctl(sbl,rx) ->
   "PEVOCTL,SBL,RX";
 %% $PEVOCTL,TIMESYNC,L,Shift
 build_evoctl(timesync, {Mode, Shift}) ->
