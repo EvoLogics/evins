@@ -35,7 +35,8 @@ to_term(Tail, Chunk, #{size := Sz, timeout := Tout} = Cfg) ->
       <<H:Sz/binary,Rest/binary>> = L,
       [[{raw, H}], [], [], Rest, ctrl(data_timeout, NCfg)];
     {_,V} when V >= Tout ->
-      io:format("V: ~p~n", [V]),
+      [[{raw, L}], [], [], <<>>, NCfg];
+    {S,_} when S > 0, Chunk == <<>> ->
       [[{raw, L}], [], [], <<>>, NCfg];
     _ ->
       [[], [], [], L, NCfg]
