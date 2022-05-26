@@ -1,6 +1,6 @@
 #include "evo-io.h"
 
-#ifdef __unix
+#if defined(__unix) || defined(__APPLE__)
 
 #include <sys/types.h>
 #include <poll.h>

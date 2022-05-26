@@ -7,7 +7,17 @@ LDFLAGS = -lm
 
 # improve stripping performance (breaks debug info, reduces binary size)
 CFLAGS += -fdata-sections -ffunction-sections
-LDFLAGS += -Wl,--gc-sections
+ifeq ($(OS),Windows_NT)
+   # nothing
+else 
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Linux)
+        LDFLAGS += -Wl,--gc-sections
+    endif
+    ifeq ($(UNAME_S),Darwin)
+        LDFLAGS += -Wl,-dead_strip
+    endif
+endif
 
 # debug info (don't forget to comment stripping out)
 #CFLAGS += -g -DLOGGER -O0 -fsanitize=address
