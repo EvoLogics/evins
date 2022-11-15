@@ -1294,6 +1294,17 @@ extract_nmea(<<"DBT">>, Params) ->
     error:_ -> {error, {parseError, dbt, Params}}
   end;
 
+%% $PRVAT, xx.xxx,M, xxxx.xxx, dBar*hh<CR><LF>
+extract_nmea(<<"RVAT">>, Params) ->
+  try
+    [BM,_MUnits,BP,_PUnits] = binary:split(Params,<<",">>,[global]),
+    M = safe_binary_to_float(BM),
+    P = safe_binary_to_float(BP),
+    {nmea, {rvat, M, P}}
+  catch
+    error:_ -> {error, {parseError, rvat, Params}}
+  end;
+
 extract_nmea(Cmd, _) ->
   {error, {notsupported, Cmd}}.
 
@@ -1904,6 +1915,17 @@ build_dbt(Depth) ->
                           end),
   (io_lib:format("SDDBT,~s,f,~s,M,~s,F",Fields)).
 
+build_rvat(Range, Pressure) ->
+  SRange = case Range of
+             nothing -> ",,";
+             _ -> io_lib:format(",~.1.3f,M", [float(Range)])
+           end,
+  SPressure = case Pressure of
+             nothing -> ",,";
+             _ -> io_lib:format(",~.1.3f,dBar", [float(Pressure)])
+           end,
+  (["PRVAT",SRange,SPressure]).
+
 %% $PSIMSSB,UTC,B01,A,,C,H,M,X,Y,Z,Acc,N,,
 build_simssb(UTC,Addr,S,Err,CS,FS,X,Y,Z,Acc,AddT,Add1,Add2) ->
   SUTC = utc_format(UTC),
@@ -2019,6 +2041,8 @@ from_term_helper(Sentense) ->
       build_dbs(Depth);
     {dbt,Depth} ->
       build_dbt(Depth);
+    {rvat,Range,Pressure} ->
+      build_rvat(Range, Pressure);
     {ixse, atitud, Roll, Pitch} ->
       build_ixse(atitud,Roll,Pitch);
     {ixse, positi, Lat, Lon, Alt} ->
