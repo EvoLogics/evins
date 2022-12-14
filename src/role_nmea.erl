@@ -1051,21 +1051,25 @@ extract_nmea(<<"EVOCTL">>, <<"QLBL,CAL,",Params/binary>>) ->
   catch
     error:_ ->{error, {parseError, evoctl, Params}}    
   end;
-%% PEVOCTL,SLBL,TX,MP,A1:..:AN,F1:...FN,B1:...:BM
-%% DD = Day, 01 to 31
-%% MM = Month, 01 to 12
-%% YYYY = Year
+%% PEVOCTL,SLBL,TX,ES,MP,A1:..:AN,F1:...FN,B1:...:BM
+%% ES - error status: OK or s1|s2|s3
 extract_nmea(<<"EVOCTL">>, <<"SLBL,TX,",Params/binary>>) ->
   try
-    [BMP,BBasenodes,BOffsets,BTargets] = binary:split(Params,<<",">>,[global]),
+    [BES,BMP,BBasenodes,BOffsets,BTargets] = binary:split(Params,<<",">>,[global]),
     MP = binary_to_integer(BMP),
+    ES = 
+      case binary:split(BES, <<"|">>, [global]) of
+        [] -> nothing;
+        ["OK"] -> nothing;
+        Lst -> [binary_to_existing_atom(I,utf8) || I <- Lst]
+      end,
     Extract_list = fun(<<>>) -> [];
                          (BN) -> [binary_to_integer(BV) || BV <- binary:split(BN, <<":">>, [global])]
                       end,
     Basenodes = Extract_list(BBasenodes),
     Offsets = Extract_list(BOffsets),
     Targets = Extract_list(BTargets),
-    CMap = #{command => start, targets => Targets, baseline => Basenodes, offsets => Offsets, pressure_factor => MP},
+    CMap = #{command => start, targets => Targets, baseline => Basenodes, offsets => Offsets, pressure_factor => MP, error_status => ES},
     {nmea, {evoctl, slbl, CMap}}
   catch
     error:_ ->{error, {parseError, evoctl, Params}}    
@@ -1681,16 +1685,20 @@ build_evoctl(qlbl, #{command := reset}) ->
 build_evoctl(qlbl, #{frame := Frame, command := calibrate}) ->
   ["PEVOCTL,QLBL,CAL",
    safe_fmt(["~p"],[Frame],",")];
-build_evoctl(slbl,#{command := start, targets := Targets, baseline := Basenodes, offsets := Offsets, pressure_factor := MP}) ->
+build_evoctl(slbl,#{command := start, targets := Targets, baseline := Basenodes, offsets := Offsets, pressure_factor := MP} = Map) ->
   SFun = fun(nothing) -> "";
             (Lst) -> (
                        lists:reverse(
                          lists:foldl(fun(V,[])  -> [safe_fmt(["~B"],[V])];
                                         (V,Acc) -> [safe_fmt(["~B"],[V]),":"|Acc]
                                      end, "", Lst))) end,
+  ES = case maps:get(error_status, Map, nothing) of
+         nothing -> "OK";
+         Lst -> string:join([atom_to_list(I) || I <- Lst],"|")
+       end,
   ["PEVOCTL,SLBL,TX",
-   safe_fmt(["~2.10.0B","~s","~s","~s"],
-            [MP,SFun(Basenodes),SFun(Offsets),SFun(Targets)],",")];
+   safe_fmt(["~s","~2.10.0B","~s","~s","~s"],
+            [ES,MP,SFun(Basenodes),SFun(Offsets),SFun(Targets)],",")];
 build_evoctl(slbl,#{command := stop, mode := Mode}) ->
   ["PEVOCTL,SLBL,RX",safe_fmt(["~s"],[Mode],",")];
 build_evoctl(slbl, #{command := reference, lat := Lat, lon := Lon, alt := Alt}) ->
