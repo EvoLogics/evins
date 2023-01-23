@@ -1,6 +1,7 @@
 {application,evins,
              [{description,"EvoLogics intelligent Networking Software framework"},
-              {vsn,{cmd, "echo -n $(git describe --abbrev=0)"}},
+              {vsn,string:chomp(os:cmd("git describe --abbrev=0"))},
+              {id,string:chomp(os:cmd("git describe"))},
               {modules,[]},
               {registered,[]},
               {applications,[kernel,stdlib]},
