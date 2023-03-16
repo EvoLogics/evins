@@ -1,0 +1,10 @@
+Dir = os:getenv("PWD"),
+Port_file = Dir ++ "/hooks/ports.config",
+case filelib:is_regular(Port_file) of
+  true ->
+    {ok, PORT} = file:consult(Port_file),
+    CONFIG ++ PORT;
+  _ ->
+    CONFIG
+end.
+
